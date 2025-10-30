@@ -1,0 +1,393 @@
+%getInternalCycle  Collapse a high-frame-rate *.rls recording to one mean period
+%
+%   getInternalCycle(s,fNames) detects an endogenous periodic signal
+%   (cardiac pulse) in each raw LSCI acquisition file
+%   (*.rls), rejects outlier cycles by multiple feature criteria, and
+%   averages the accepted cycles into a single X×Y×T contrast cube.  The
+%   resulting cube represents one “canonical” period sampled at
+%   s.interpFactor points per frame.  Preview JPEGs and three MAT-files are
+%   written per recording:
+%
+%       *_c_K_d.mat   SOURCE – mean-period contrast cube (data) and
+%                                 its time vector in seconds
+%       *_c_K_r.mat   RESULTS – masks, cycle metrics, timestamps
+%       *_c_K_s.mat   SETTINGS – copy of the parameter structure *s*
+%       *_ic1.jpg     – cycle-rejection overview
+%       *_ic2.jpg     – mean-period BFI image + time-course
+%
+%   INPUTS
+%     s        parameter structure (fields include sizeT, framesToAverage,
+%              decimationSpace, contrastKernel*, min/max* limits, fps
+%              correction, spectral search bounds, rejection coefficients,
+%              method = {'sLSCIMM','tLSCIMM','ltLSCIMM','sLSCIMMM'}, etc.).
+%     fNames   cell array of full paths to *.rls files produced by the
+%              in-house acquisition software.
+%
+%   OUTPUTS
+%     None – function acts via side-effects (files listed above).
+%
+%   EXAMPLE
+%     p = defaultInternalCycleParams();
+%     D = dir(fullfile(dataRoot,'*.rls'));
+%     getInternalCycle(p, fullfile({D.folder}',{D.name}'));
+%
+%   DEPENDS ON
+%     readRLS, getFFT, getEdgeSizeSLSCI, and other utilities in the LSCI
+%     processing library.
+%
+%   ----------------------------------------------------------------------
+%   Copyright © 2025 Dmitry D Postnov, Aarhus University
+%   e-mail: dpostnov@cfin.au.dk
+%   Last revision: 05-Aug-2025
+%
+%   Note: Header generated with ChatGPT; minor inconsistencies may remain—
+%   please verify before distribution.
+%   ----------------------------------------------------------------------
+
+% %Example of s structure parametrisation
+% s.libraryFolder=libraryFolder;
+% 
+% %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
+% s.trustLimitsK=[0.01,0.3]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+% s.trustLimitsI=[10,150];
+% s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
+% s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
+% s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
+% 
+% %ADJUSTED IF NECESSARY - EXCLUSION CRITERIA
+% s.excludeFirstNCycles=0; %reject given number of cycles
+% s.coeffsSTD=[3,2,2,2,2,3,3,2,2]; %pulses rejection coefficients relative to the feature standard deviation
+% s.coeffsRel=[0.5,0.1]; %pulses rejection coefficients relative to the feature value
+% s.coeffsAbs=2; %pulses rejection coefficients relative to the absolute feature value
+% 
+% %ADJUSTED IF NECESSARY - CYCLE CALCULATION
+% s.method='sLSCIMM';%,'tLSCIMM','ltLSCIMM' %Typically 'sLSCIMM' is recommended. For high quality data 'ltLSCIMM' will produce better results. Other options are 'tLSCIMM' and 'sLSCIMMM'.
+% % method refers to spatial, temporal or lossless contrast calculation,
+% % while the MM or MMM refers to minimum to minimum stretching or minimum to
+% % maximum + maximum to minimum stretching.
+% s.decimationSpace=4; %spatial decimation used to conserve memory in the pre-processing steps
+% s.framesToAverage=1; %allows averaging multiple raw frames to artificially increase expsoure time
+% s.contrastKernelT=25; %contrast kernel for temporal (tLSCI) and lossless (ltLSCI) processing methods
+% s.contrastKernelPreproc=s.contrastKernelS; %contrast kernel used in preprocessing (spatial)
+% s.rangeFrq=1;%1/2; % relative frq range around the central frequency, Hz
+% s.interpFactor=10; %Sets the number of points that will replace two consequitive values during the interpolation sequence.
+% s.smoothCoef1=1/3; %in respect to minimum points per cycle value
+% s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
+
+function getInternalCycle(s,fNames)
+if ~all( cellfun(@(s) isempty(s) || contains(s,'.rls'), fNames(:)) )
+    error('One or more *non-empty* entries do not contain ".rls".');
+end
+
+for fidx=1:1:length(fNames)
+    tic
+    clearvars results source settings
+    close all
+    s.fName=char(fNames{fidx});
+
+    %read the raw file meta data
+    fid = fopen(s.fName, 'r');
+    fseek(fid,0*1024,-1 );
+    s.sizeX=fread(fid,1,'*uint64');
+    s.sizeY=fread(fid,1,'*uint64');
+    s.sizeT=single(fread(fid,1,'*uint64'))-1;
+    s.exposureTime=single(fread(fid,1,'*uint64'));
+    s.fps=1000./s.exposureTime; %converting time between frames to fps. DOES NOT PROVIDE AN ACCURATE FPS VALUES, RE-EVALUATED BELOW.
+    s.dataSize=1; %set to 1 by default for uint8 data type.
+    s.version=fread(fid,4,'*ubit8')';
+    if strcmp(s.version,'Ver.')
+        s.nVer = fread(fid,1,'*uint64');
+        if nVer>1
+            s.dataSize=fread(fid,1,'*uint64');
+        end
+    end
+    switch s.dataSize
+        case 1
+            s.dataType='*uint8';
+        case 2
+            s.dataType='*uint16';
+        otherwise
+            error('Unindentified data type')
+    end
+
+    s.sizeT=s.sizeT-s.framesToAverage+1;
+    data=zeros(floor(s.sizeY/s.decimationSpace),floor(s.sizeX/s.decimationSpace),s.sizeT,'single');
+    meanI=zeros(1,s.sizeT,'single');
+    imgI=zeros(s.sizeY,s.sizeX);
+    imgK=zeros(s.sizeY,s.sizeX);
+    timeStamps=zeros(s.sizeT,1,'int64');
+
+    %move to the first timeStamp/frame location
+    firstByte=30*1024;
+    fseek(fid,firstByte,-1 );
+
+    %perform data pre-processing, store spacially decimated information
+    kernel=gpuArray(ones(s.contrastKernelPreproc,s.contrastKernelPreproc,1,'single'));
+    for i=1:1:size(data,3)
+        timeStamps(i)=fread(fid,1,'*uint64');
+        tmp=gpuArray(fread(fid,s.sizeX*s.sizeY*s.framesToAverage,s.dataType));
+        meanI(i)=mean(tmp(:));
+        tmp=reshape(tmp,s.sizeY,s.sizeX,s.framesToAverage);
+        tmp=mean(single(tmp),3);
+        imgI=imgI+tmp./size(data,3);
+        tmp=stdfilt(tmp,kernel)./ convn(tmp,kernel,'same') * length(kernel(:));
+        imgK=imgK+tmp./size(data,3);
+        tmp=convn(tmp,ones(s.decimationSpace),'same')./(s.decimationSpace.*s.decimationSpace);
+        data(:,:,i)=gather(tmp(1:s.decimationSpace:end,1:s.decimationSpace:end));
+    end
+    imgI=gather(imgI);
+    imgK=gather(imgK);
+    results.imgI=imgI;
+    results.mask=ones(size(imgI));
+    mask=imgK<s.trustLimitsK(2) & imgK>s.trustLimitsK(1) & ~isnan(imgK) & isfinite(imgK) & imgI<s.trustLimitsI(2) & imgI>s.trustLimitsI(1);
+    mask=imerode(mask,[0,1,0;1,1,1;0,1,0]);
+    mask=(convn(mask,ones(s.decimationSpace),'same')./(s.decimationSpace.*s.decimationSpace))>0;
+
+    mask=mask(1:s.decimationSpace:end,1:s.decimationSpace:end);
+    data(isnan(data))=0;
+    data(~isfinite(data))=0;
+    data=reshape(data,size(data,1)*size(data,2),s.sizeT);
+    tsK=sum(data.*mask(:),1)./sum(mask(:));
+    tsBFI=1./(tsK.*tsK);
+
+    %correct the framerate
+    s.fps=1000./(mean(double(timeStamps(2:end)-timeStamps(1:end-1))));
+    time=((1:1:length(tsK))-1)./s.fps;
+
+    %identify central frequency
+    [fftPow,~,f]=getFFT(tsBFI,s.fps,2.^(nextpow2(s.fps/s.maxFrqIni*50)),'cpu');
+    idxLimits=[find(f(:)>s.minFrqIni,1,'first'),find(f(:)>s.maxFrqIni,1,'first')-1];
+    [~,idx,~,prm]=findpeaks(fftPow(idxLimits(1):idxLimits(2)));
+    [~,idxTMP]=max(prm);
+    idx=idx(idxTMP);
+    idx=idx+idxLimits(1)-1;
+    s.centralFrq=f(idx);
+    s.minFrq=max(s.centralFrq*(1-s.rangeFrq),s.minFrqIni);
+    s.maxFrq=min(s.centralFrq*(1+s.rangeFrq),s.maxFrqIni);
+    s.meanPointsPerCycle=floor(s.fps/s.centralFrq);
+
+    tsBFIF=smooth(tsBFI,max(floor(s.meanPointsPerCycle.*s.smoothCoef1),1),'loess');
+    h=figure;
+    h.WindowState='Maximize';
+    subplot(2,2,1)
+    plot(time(1:s.meanPointsPerCycle*2),tsBFIF(1:s.meanPointsPerCycle*2))
+    hold on
+    plot(time(1:s.meanPointsPerCycle*2),1./(tsK(1:s.meanPointsPerCycle*2).*tsK(1:s.meanPointsPerCycle*2)))
+    hold off
+    xlabel('Time, s')
+    ylabel('BFI')
+    s.minProm=s.minPromCoef.*std(tsBFIF);
+    subplot(2,2,3)
+    plot(f,fftPow)
+    hold on
+    plot(f(idx),fftPow(idx),'or')
+    hold off
+    xlabel('Frq, Hz')
+    ylabel('Amplitude')
+    title(['Central frq=',num2str(s.centralFrq)]);
+
+    [~,locsMin]=findpeaks(-tsBFIF,'MinPeakDistance',floor(s.fps/s.maxFrq),'MinPeakProminence',s.minProm);
+    locsMax=zeros(length(locsMin)-1,1);
+    for i=1:1:length(locsMin)-1
+        [~,idx]=max(tsBFIF(locsMin(i):locsMin(i+1)));
+        locsMax(i)=locsMin(i)+idx-1;
+
+    end
+    pulsesList=zeros(length(locsMax),3);
+    for i=1:1:length(locsMin)-1
+        pulsesList(i,:)=[locsMin(i),locsMax(i),locsMin(i+1)];
+    end
+
+    pulsesFeatures=zeros(size(pulsesList,1),9);
+    for i=1:1:size(pulsesFeatures,1)
+        pulsesFeatures(i,1)=mean(tsBFIF(squeeze(pulsesList(i,:))));
+        pulsesFeatures(i,2)=std(tsBFIF(squeeze(pulsesList(i,:))));
+        pulsesFeatures(i,3)=max(tsBFIF(squeeze(pulsesList(i,:))))-min(tsBFIF(squeeze(pulsesList(i,:))));
+        pulsesFeatures(i,4)=max(squeeze(pulsesList(i,:)))-min(squeeze(pulsesList(i,:)));
+        pulsesFeatures(i,5)=abs(tsBFIF(squeeze(pulsesList(i,1)))-tsBFIF(squeeze(pulsesList(i,3))));
+        pulsesFeatures(i,6)=sum((tsBFIF(pulsesList(i,1)+1:pulsesList(i,2))-tsBFIF(pulsesList(i,1):pulsesList(i,2)-1))<0);
+        pulsesFeatures(i,7)=sum((tsBFIF(pulsesList(i,2)+1:pulsesList(i,3))-tsBFIF(pulsesList(i,2):pulsesList(i,3)-1))>0);
+        pulsesFeatures(i,8)=mean((tsBFIF(pulsesList(i,2)+1:pulsesList(i,3))-tsBFIF(pulsesList(i,2):pulsesList(i,3)-1)));
+        pulsesFeatures(i,9)=mean(meanI(pulsesList(i,1)+1:pulsesList(i,3)));
+    end
+
+    pulsesToReject=zeros(14,size(pulsesList,1));
+    for i=1:1:size(pulsesList,1)
+        for ii=1:1:size(pulsesFeatures,2)
+            if abs(pulsesFeatures(i,ii)-median(squeeze(pulsesFeatures([1:i-1,i+1:end],ii))))>s.coeffsSTD(ii)*std(squeeze(pulsesFeatures([1:i-1,i+1:end],ii)))
+                pulsesToReject(ii,i)=1;
+            end
+        end
+        if pulsesFeatures(i,5)/pulsesFeatures(i,3)>s.coeffsRel(1)
+            pulsesToReject(10,i)=1;
+        end
+        if (s.fps/pulsesFeatures(i,4))<s.minFrq || (s.fps/pulsesFeatures(i,4))>s.maxFrq
+            pulsesToReject(11,i)=1;
+        end
+        if any(strcmp(s.method,'tLSCIMM'))
+            if pulsesList(i,3)>(s.sizeT-s.contrastKernelT)
+                pulsesToReject(12,i)=1;
+            end
+        end
+        if abs(1-pulsesFeatures(i,1)/median(pulsesFeatures(:,1)))>s.coeffsRel(2)
+            pulsesToReject(13,i)=1;
+        end
+    end
+
+    if s.excludeFirstNCycles>0
+        pulsesToReject(1:end,1:s.excludeFirstNCycles)=1;
+    end
+
+    %reject/accept based on number of consequtive accepts/rejects
+    a=max(pulsesToReject,[],1);
+    a=movmean(a,[s.coeffsAbs(1),s.coeffsAbs(1)]);
+    pulsesToReject(14,:)=round(a);
+
+    subplot(2,2,[2,4])
+    hold on
+    for i=1:1:size(pulsesList,1)
+        plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[tsBFIF(pulsesList(i,1)),tsBFIF(pulsesList(i,3))],'ok')
+        if sum(pulsesToReject(:,i))==0
+            plot(time(pulsesList(i,1):pulsesList(i,3)),tsBFIF(pulsesList(i,1):pulsesList(i,3)),'g')
+        else
+            plot(time(pulsesList(i,1):pulsesList(i,3)),tsBFIF(pulsesList(i,1):pulsesList(i,3)),'r')
+        end
+        for ii=1:1:size(pulsesToReject,1)
+            if pulsesToReject(ii,i)==0
+                plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2,min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2],'g');
+            else
+                plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2,min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2],'r');
+            end
+
+        end
+    end
+    hold off
+
+    pulsesListFinal=pulsesList;
+    for i=size(pulsesList,1):-1:1
+        if sum(pulsesToReject(:,i))>0
+            pulsesListFinal(i,:)=[];
+        end
+    end
+
+    xlabel('Time,s')
+    ylabel('BFI')
+    title(['acceptance rate=',num2str(size(pulsesListFinal,1)./size(pulsesList,1))]);
+    drawnow
+    toc
+    print(h,strrep(s.fName,'.rls','_ic1.jpg'), '-djpeg', '-r300');
+    clearvars data;
+
+    s.descendTimePts=round(median(pulsesListFinal(:,3)-pulsesListFinal(:,2)));
+    s.ascendTimePts=round(median(pulsesListFinal(:,2)-pulsesListFinal(:,1)));
+    s.cycleTimePts=s.ascendTimePts+s.descendTimePts-1;
+
+
+    %SLSCI method Min Max Min
+    if any(strcmp(s.method,'sLSCIMMM'))
+        dataASLSCI=zeros(s.ascendTimePts*s.interpFactor,s.sizeY,s.sizeX,'single');
+        dataDSLSCI=zeros(s.descendTimePts*s.interpFactor,s.sizeY,s.sizeX,'single');
+        kernel=ones(s.contrastKernelS,s.contrastKernelS,1);
+        for i=1:1:size(pulsesListFinal,1)
+            data=readRLS(s.fName,pulsesListFinal(i,1)-1,pulsesListFinal(i,3)-pulsesListFinal(i,1)+s.framesToAverage);
+            data=movmean(data,[0,s.framesToAverage-1],3,'Endpoints','discard');
+            data= stdfilt (data,kernel)./ convn(data,kernel,'same') * length(kernel(:));
+            ascendIdxs=1:(pulsesListFinal(i,2)-pulsesListFinal(i,1)+1);
+            descendIdxs=(pulsesListFinal(i,2)-pulsesListFinal(i,1)+1):(pulsesListFinal(i,3)-pulsesListFinal(i,1)+1);
+            data=permute(data,[3,1,2]);
+            dataASLSCI=dataASLSCI+interp1(data(ascendIdxs,:,:),linspace(1,length(ascendIdxs),s.ascendTimePts*s.interpFactor));
+            dataDSLSCI=dataDSLSCI+interp1(data(descendIdxs,:,:),linspace(1,length(descendIdxs),s.descendTimePts*s.interpFactor));
+        end
+        dataASLSCI=permute(dataASLSCI,[2,3,1]);
+        dataDSLSCI=permute(dataDSLSCI,[2,3,1]);
+        source.data=cat(3,dataASLSCI(:,:,1:end-1),dataDSLSCI)./size(pulsesListFinal,1);
+        source.time=(0:1:size(source.data,3)-1)./s.fps./s.interpFactor;
+
+    elseif any(strcmp(s.method,'sLSCIMM'))
+        %SLSCI method Min Min
+        dataCycle=zeros(s.cycleTimePts*s.interpFactor,s.sizeY,s.sizeX,'single');
+        kernel=ones(s.contrastKernelS,s.contrastKernelS,1);
+        for i=1:1:size(pulsesListFinal,1)
+            data=readRLS(s.fName,pulsesListFinal(i,1)-1,pulsesListFinal(i,3)-pulsesListFinal(i,1)+s.framesToAverage);
+            data=movmean(data,[0,s.framesToAverage-1],3,'Endpoints','discard');
+            data= stdfilt (data,kernel)./ convn(data,kernel,'same') * length(kernel(:));
+            data=permute(data,[3,1,2]);
+            idxs=1:1:(pulsesListFinal(i,3)-pulsesListFinal(i,1)+1);
+            dataCycle=dataCycle+interp1(data(idxs,:,:),linspace(1,length(idxs),s.cycleTimePts*s.interpFactor));
+
+        end
+        dataCycle=permute(dataCycle,[2,3,1]);
+        source.data=dataCycle./size(pulsesListFinal,1);
+        source.time=(0:1:size(dataCycle,3)-1)./s.fps./s.interpFactor;
+
+    elseif any(strcmp(s.method,'tLSCIMM'))
+        %TLSCI method Min Min
+        %use with care TLSCI might be contaminated by the rejected pulses
+        dataCycle=zeros(s.cycleTimePts*s.interpFactor,s.sizeY,s.sizeX,'single');
+        for i=1:1:size(pulsesListFinal,1)
+            data=readRLS(s.fName,pulsesListFinal(i,1)-1-(floor(s.contrastKernelT/2*s.framesToAverage)),pulsesListFinal(i,3)-pulsesListFinal(i,1)+s.framesToAverage+(s.contrastKernelT*s.framesToAverage-1));
+            data=movmean(data,[0,s.framesToAverage-1],3,'Endpoints','discard');
+            data= movstd (data,[0,s.contrastKernelT*s.framesToAverage-1],0,3,'Endpoints','discard')...
+                ./ movmean(data,[0,s.contrastKernelT*s.framesToAverage-1],3,'Endpoints','discard');
+            data=permute(data,[3,1,2]);
+            idxs=1:1:(pulsesListFinal(i,3)-pulsesListFinal(i,1)+1);
+            dataCycle=dataCycle+interp1(data(idxs,:,:),linspace(1,length(idxs),s.cycleTimePts*s.interpFactor));
+
+        end
+        dataCycle=permute(dataCycle,[2,3,1]);
+        source.data=dataCycle./size(pulsesListFinal,1);
+        source.time=(0:1:size(dataCycle,3)-1)./s.fps./s.interpFactor;
+
+    elseif any(strcmp(s.method,'ltLSCIMM'))
+        %LTLSCI method Min Min
+        dataCycle=zeros(s.cycleTimePts*s.interpFactor,s.sizeY,s.sizeX,'single');
+        cyclesDurList=(pulsesListFinal(:,3)-pulsesListFinal(:,1)+1);
+        cyclesDur=unique(cyclesDurList);
+        cyclesN=0;
+        for i=1:1:length(cyclesDur)
+            pulsesIdxs=find(cyclesDurList==cyclesDur(i));
+            if length(pulsesIdxs)>=s.contrastKernelT
+                data=zeros(s.sizeY,s.sizeX,cyclesDur(i),length(pulsesIdxs),'single');
+                for ii=1:1:length(pulsesIdxs)
+                    data(:,:,:,ii)=movmean(readRLS(s.fName,pulsesListFinal(pulsesIdxs(ii),1)-1,cyclesDur(i)+s.framesToAverage-1),[0,s.framesToAverage-1],3,'Endpoints','discard');
+                end
+                data=squeeze(std(data,0,4)./mean(data,4));
+                data=permute(data,[3,1,2]);
+                dataCycle=dataCycle+length(pulsesIdxs).*interp1(data,linspace(1,cyclesDur(i),s.cycleTimePts*s.interpFactor));
+                cyclesN=cyclesN+length(pulsesIdxs);
+            end
+        end
+        dataCycle=permute(dataCycle,[2,3,1]);
+        source.data=dataCycle./cyclesN;
+        source.time=(0:1:size(dataCycle,3)-1)./s.fps./s.interpFactor;
+
+    else
+        error('Unknown processing method requested');
+    end
+
+    tmp=strsplit(s.fName,'\');
+    h=figure;
+    h.WindowState='Maximize';
+    subplot(2,1,1)
+    img=squeeze(mean(source.data,3));
+    imagesc(img);
+    clim([prctile(img(:),5),prctile(img(:),99)]);
+    axis image
+    subplot(2,1,2)
+    plot(source.time,1./(squeeze(mean(source.data,[1,2]))).^2);
+    xlabel('Time,s')
+    ylabel('BFI')
+    sgtitle(['sLSCIMMM ',strrep(tmp{end},'_',' ')]);
+    drawnow
+
+    disp('Saving the results');
+    settings.internalCycle=s;
+    results.time=source.time;
+    save(strrep(s.fName,'.rls','_c_K_d.mat'),'source','-v7.3');
+    save(strrep(s.fName,'.rls','_c_K_r.mat'),'results','-v7.3');
+    save(strrep(s.fName,'.rls','_c_K_s.mat'),'settings','-v7.3');
+    disp('Saving complete');
+    toc
+    print(h,strrep(s.fName,'.rls','_ic2.jpg'), '-djpeg', '-r300');
+end
+end
