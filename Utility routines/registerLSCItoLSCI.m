@@ -85,6 +85,7 @@ for fidx=1:1:size(fNames,1)
     img(img(:)<prctile(img(mask(:)==1),1))=prctile(img(mask(:)==1),1);
     img=imcomplement(img);
     fSize=floor((min(size(img))./20))*2+1;
+    img(isnan(img))=0;
     img=img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize));
     img=mat2gray(img).*mask;
     img(mask(:)==1)=histeq(img(mask(:)==1));

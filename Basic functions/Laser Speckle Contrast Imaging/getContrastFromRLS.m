@@ -125,25 +125,29 @@ switch contrastType
             trustMatrix(:,:,2)=trustMatrix(:,:,2)-sum(subdata==intmax(class(subdata)),3);
             trustMatrix(:,:,4)=trustMatrix(:,:,4)+mean(single(subdata),3)./batchesN; % saving intensity
             subdata=getTLSCI(subdata,contrastKernel,procType);
-            trustMatrix(:,:,3)=trustMatrix(:,:,3)-sum(subdata==0,3);            
+            trustMatrix(:,:,3)=trustMatrix(:,:,3)-sum(subdata==0,3);
             timeStamps=double(timeStamps-timeStamp);
-            timeStamps=movmean(timeStamps,[0,decimation-1]);            
+            timeStamps=movmean(timeStamps,[0,decimation-1]);
 
-           if mod(decimation,contrastKernel)==0
-               subdata=subdata(:,:,1:contrastKernel:end);
-               timeStamps=timeStamps(1:contrastKernel:end);
-               subdata=movmean(subdata,[0,decimation./contrastKernel-1],3,'Endpoints','shrink');
-               dataLSCI(:,:,((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/(decimation./contrastKernel))))= subdata(:,:,1:(decimation./contrastKernel):floor(end./(decimation./contrastKernel))*(decimation./contrastKernel));
-               time(((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/(decimation./contrastKernel))))=timeStamps(1:(decimation./contrastKernel):floor(end./(decimation./contrastKernel))*(decimation./contrastKernel));
-           else
-            timeStamps=timeStamps(1:end-contrastKernel+1);
-            subdata=movmean(subdata,[0,decimation-1],3,'Endpoints','shrink');           
-            subdata=subdata(:,:,1:end-contrastKernel+1);           
-            dataLSCI(:,:,((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/decimation)))= subdata(:,:,1:decimation:floor(end./decimation)*decimation);
-            time(((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/decimation)))=timeStamps(1:decimation:floor(end./decimation)*decimation);
-           end                      
-            
+            if mod(decimation,contrastKernel)==0
+                subdata=subdata(:,:,1:contrastKernel:end);
+                timeStamps=timeStamps(1:contrastKernel:end);
+                subdata=movmean(subdata,[0,decimation./contrastKernel-1],3,'Endpoints','shrink');
+                dataLSCI(:,:,((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/(decimation./contrastKernel))))= subdata(:,:,1:(decimation./contrastKernel):floor(end./(decimation./contrastKernel))*(decimation./contrastKernel));
+                time(((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/(decimation./contrastKernel))))=timeStamps(1:(decimation./contrastKernel):floor(end./(decimation./contrastKernel))*(decimation./contrastKernel));
+            else
+                timeStamps=timeStamps(1:end-contrastKernel+1);
+                subdata=movmean(subdata,[0,decimation-1],3,'Endpoints','shrink');
+                subdata=subdata(:,:,1:end-contrastKernel+1);
+                dataLSCI(:,:,((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/decimation)))= subdata(:,:,1:decimation:floor(end./decimation)*decimation);
+                time(((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/decimation)))=timeStamps(1:decimation:floor(end./decimation)*decimation);
+            end
+
             disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
+        end
+        if size(dataLSCI,3)>procFramesN
+            dataLSCI(:,:, procFramesN+1:end)=[];
+            time(procFramesN+1:end)=[];
         end
 end
 time=time*timeScale; %convert time to seconds

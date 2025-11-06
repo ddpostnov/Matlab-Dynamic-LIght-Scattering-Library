@@ -72,7 +72,7 @@ for fidx=1:1:numel(fNames)
 
 
     idxAll    = results.sMetrics.idx(:)';
-    goodMask  = ~isnan(idxAll);
+    goodMask  = ~isnan(idxAll) & idxAll~=0;
     roiIdx    = idxAll(goodMask);
     roiData   = results.sData(:,goodMask);
     roiNames  = matlab.lang.makeValidName(compose("ROI %04d",roiIdx) );
