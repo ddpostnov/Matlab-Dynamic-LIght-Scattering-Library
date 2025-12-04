@@ -47,20 +47,18 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
 end
 
 for fidx=1:1:numel(fNames)
+    
     tic
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     fName=fNames{fidx};
-    clearvars results source settings
-    load(fNames{fidx})
-    load(strrep(fNames{fidx},'_d.mat','_s.mat'));
-    load(strrep(fNames{fidx},'_d.mat','_r.mat'));
+    load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
 
     fName=strrep(fName,'_d.mat','.xlsx');
 
     catNames = ["background"  "parenchyma"  "unsegmented" ...
         "outerWall"   "innerWall"   "lumen"];          % 1×6
 
-    valid   = ~isnan(results.sMetrics.category);                % ignore NaNs
+    results.sMetrics.category(isnan( results.sMetrics.category))=0;
     results.sMetrics.category = categorical( ...
         results.sMetrics.category, 0:5, catNames);          % numeric → cat
 
@@ -68,21 +66,24 @@ for fidx=1:1:numel(fNames)
     T=results.sMetrics;
     T(end,:) = []; % crappy bug workaround
     T(end+1,:) = results.sMetrics(end,:);% crappy bug workaround
+    
     writetable(T,fName,'Sheet','sMetrics','WriteMode','replacefile');
 
 
     idxAll    = results.sMetrics.idx(:)';
-    goodMask  = ~isnan(idxAll) & idxAll~=0;
+    goodMask  = ~isnan(idxAll) & idxAll~=0 & ~isnan(results.sMetrics.BFI(:)');
     roiIdx    = idxAll(goodMask);
     roiData   = results.sData(:,goodMask);
     roiNames  = matlab.lang.makeValidName(compose("ROI %04d",roiIdx) );
     T = [ table(results.time(:),'VariableNames', {'Time'}), array2table(roiData,'VariableNames',roiNames) ];
+    
     writetable(T,fName,'Sheet','sData');
 
-    if ismember('label', results.sMetrics)
+    if ismember('label', results.sMetrics.Properties.VariableNames)
+        
 
-        keep =  strlength(results.sMetrics.label) > 0  ...
-            & ~ismember(results.sMetrics.category, ["outerWall","innerWall"]);
+        keep = goodMask' & strlength(results.sMetrics.label) > 0  ...
+            & ~ismember(results.sMetrics.category, ["outerWall","innerWall","unsegmented"]);
 
         M        = results.sMetrics(keep ,:);
         areaAll  = M.area;                         % weights   (unchanged)
@@ -127,6 +128,7 @@ for fidx=1:1:numel(fNames)
             T.label(g) = labelList(g);
         end
 
+        
         T = movevars(T,{'label','type'},'Before',1);      % final layout
         writetable(T,fName,'Sheet','sMetricsROI');
 
@@ -146,8 +148,10 @@ for fidx=1:1:numel(fNames)
 
         T = [ table(timeVec,'VariableNames',{'Time'}), ...
             array2table(sigAgg,'VariableNames',sigNames) ];
+        
         writetable(T,fName,'Sheet','sDataROI');
     end
+    
 
 
     if isfield(results,"dvsMetrics")
@@ -157,18 +161,20 @@ for fidx=1:1:numel(fNames)
         writetable(T,fName,'Sheet','dvsMetrics');
 
         idxAll   = results.dvsMetrics.idx(:)';       % row vector
-        goodMask = ~isnan(idxAll);                   % ignore NaN indices
+        goodMask = ~isnan(idxAll) & idxAll~=0 & ~isnan(results.dvsMetrics.BFI(:)');
         roiIdx   = idxAll(goodMask);
         roiNames = matlab.lang.makeValidName(compose("ROI %04d", roiIdx));
 
         T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
             array2table(results.dvsData(:,goodMask), ...
             'VariableNames',roiNames) ];
+        
         writetable(T,fName,'Sheet','dvsData');
 
         T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
             array2table(results.dvsDiameter(:,goodMask), ...
             'VariableNames',roiNames) ];
+        
         writetable(T,fName,'Sheet','dvsDiameter');
     end
 
