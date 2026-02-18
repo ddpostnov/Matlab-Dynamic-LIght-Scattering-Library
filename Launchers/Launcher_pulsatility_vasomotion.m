@@ -293,9 +293,14 @@ end
 
 f=vsm(1).vsm.sData.f;
 coordPCTS=vsm(1).vsm.sData.coordPCTS;
+types={'Arteries','Parenchyma','Veins'};
+conds={'AWK','ISO','K/X'};
+
 spctPCTS=zeros(3,3,numel(f),numel(coordPCTS));
+
 adVFR=zeros(numel(vsm),3);
 adCFR=zeros(numel(vsm),3);
+
 
 for i=1:1:numel(vsm)
     adVFR(i,1)= mean(vsm(i).sMetrics.adVFR(strcmp(vsm(i).sMetrics.type,"Artery")));
@@ -316,10 +321,13 @@ for i=1:1:3
 for j=1:1:3
 subplot(3,3,(i-1)*3+j)
 plot(f,squeeze(spctPCTS(i,j,:,:)))
-title(['Condition ',num2str(i),', Type ',num2str(j)])
+title([conds{i},', ',types{j}])
 ylim([0,0.2])
+xlabel('Frequency, Hz')
+ylabel('WT Amplitude')
 end
 end
+set(gcf,'Color','w');
 
 figure
 for i=1:1:3
@@ -329,7 +337,11 @@ hold on
 plot(squeeze(adCFR(i,:)))
 hold off
 xlim([0,4])
-xlabel('Type')
-title(['Condition ',num2str(i)])
-ylim([0,0.08])
+ylabel('Amplitude density')
+legend({'VSM: 0.05-0.25Hz','CTR: 0.4-0.6Hz'})
+xticks([1,2,3]);
+xticklabels(types)
+title(conds{i})
+ylim([0.01,0.07])
 end
+set(gcf,'Color','w');
