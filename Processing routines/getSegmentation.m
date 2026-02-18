@@ -79,8 +79,13 @@ for fidx=1:1:numel(fNames)
     load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
     load(strrep(s.fName,'_d.mat','_r.mat'),'results');
 
-
+%temporary fix - diameter is estimated including inner walls, rest of
+%parameters estimated for lumen and merged walls
     cMask=results.cMask;
+    dMask=cMask>3;
+    cMask(cMask==4)=3;
+
+
     edgeSize=settings.categoricalMask.edgeSize;
     sLines=bwskel(cMask==5);
     tmp=zeros(size(sLines));
@@ -88,7 +93,7 @@ for fidx=1:1:numel(fNames)
     sLines=(tmp==1);
     nodes=logical((conv2(sLines,[1,1,1;1,0,1;1,1,1],'same')>2).*sLines);
     sLines=sLines-nodes;
-    sLines=bwareaopen(sLines,2,8);
+    sLines=bwareaopen(sLines,max(2,floor(s.sMinL./2)),8);
     sLines=int32(bwlabel(sLines)); %labeled segment center lines
 
     labels=nonzeros(unique(sLines));
@@ -99,13 +104,11 @@ for fidx=1:1:numel(fNames)
     [~,tmp] = min(distStack,[],3);
     vsMap     = zeros(size(cMask),'like',sLines);
     vsMap(cMask>2) = labels(tmp(cMask>2)); %labeled segments
-    vsMap(vsMap>0)=(vsMap(vsMap>0)-1).*3+1;
-    sLines(sLines>0)=(sLines(sLines>0)-1).*3+1;
+    vsMap(vsMap>0)=(vsMap(vsMap>0)-1).*2+1;
+    sLines(sLines>0)=(sLines(sLines>0)-1).*2+1;
 
     sMap=vsMap;
-
-    sMap(cMask==4)=sMap(cMask==4)+1;
-    sMap(cMask==3)=sMap(cMask==3)+2;
+    sMap(cMask==3)=sMap(cMask==3)+1;
     idxs=int32(bwlabel(cMask==2))+max(sMap(:));
     sMap(cMask==2)=idxs(cMask==2);
 
@@ -162,14 +165,12 @@ for fidx=1:1:numel(fNames)
                 clr=l./hypot(x(2)-x(1), y(2)-y(1));
 
                 %Get segment diameter
-                d=bwdist(cMask<4).*(sLines==i);
+                d=bwdist(~dMask).*(sLines==i);
                 d=[mean(d(d(:)>0)),std(d(d(:)>0))]*2;
 
                 sMetrics(i,:)={i,c,l,clr,d(1),d(2),area,i};
-            elseif c==4
-                sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,i-1};
             elseif c==3
-                sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,i-2};
+                sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,i-1};
             else
                 sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,NaN};
 
@@ -180,7 +181,7 @@ for fidx=1:1:numel(fNames)
         end
     end
 
-    nodesD=bwdist(cMask<4).*nodes;
+    nodesD=bwdist(~dMask).*nodes;
     [tmp, idxs] = bwdist(nodes);
     rNode = nodesD(nodes==1);
     r=zeros(numel(nodes),1);
@@ -195,7 +196,7 @@ for fidx=1:1:numel(fNames)
     tmp(cMask==0)=nan;
     data=source.data.*tmp;
     data=imcomplement(data);
-    d2C=bwdist(cMask<4).*(cMask>3);
+    d2C=bwdist(~dMask).*(dMask);
     d2MY=islocalmax(mean(data,3,'omitnan'),1).*(cMask==5);
     [~,d2MY]=bwdist(d2MY);
     d2MX=islocalmax(mean(data,3,'omitnan'),2).*(cMask==5);
@@ -364,9 +365,9 @@ for fidx=1:1:numel(fNames)
                     tmp=imresize3(tmp,[numel(limY(1):limY(2)),numel(limX(1):limX(2)),size(dataROI,3) ],'nearest');
 
                     maskROI=vsMap(limY(1):limY(2),limX(1):limX(2))==lineIdx & cMask(limY(1):limY(2),limX(1):limX(2))>3;
-                    test1=(1-sum(abs(maskROI-(mean(tmp,3)==1)),'all')./sum(maskROI+(mean(tmp,3)==1),'all')./2);
-                    test2=(1-sum(abs((mean(tmp,3)==1)-(mean(tmp,3)>0)),'all')./sum((mean(tmp,3)>0),'all'));
-                    [~,test3]=bwlabel(mean(tmp,3)==1,4);
+                    test1=(1-sum(abs(maskROI-mean(tmp,3)),'all')./sum(maskROI+mean(tmp,3),'all')./2);
+                    test2=(1-sum(abs(mean(tmp,3)-(mean(tmp,3)>0)),'all')./sum((mean(tmp,3)>0),'all'));
+                    [~,test3]=bwlabel(mean(tmp,3)>0.9,4);
                     test3=(test3==1);
 
                     dataROI=source.data(limY(1):limY(2),limX(1):limX(2),:);

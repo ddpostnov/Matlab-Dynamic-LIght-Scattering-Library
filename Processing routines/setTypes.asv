@@ -204,7 +204,6 @@ for fidx=1:1:numel(fNames)
             results.dvsMetrics.typeConfidence=guess(ismember(results.sMetrics.idx, results.dvsMetrics.idx));
         end
     else
-        results.mapType=map;
         results.sMetrics.type = strings(height(results.sMetrics),1);
         results.sMetrics.label = strings(height(results.sMetrics),1);
         results.sMetrics.typeConfidence = zeros(height(results.sMetrics),1);
@@ -214,7 +213,7 @@ for fidx=1:1:numel(fNames)
             results.dvsMetrics.typeConfidence = zeros(height(results.dvsMetrics),1);
         end
 
-        if ismember('RegID', results.sMetrics.Properties.VariableNames)
+        if isfield(results.sMetrics,RegID)
             [isHit, loc]   = ismember(results.sMetrics.RegID, idxs);
             results.sMetrics.type(isHit) = type(loc(isHit));
             results.sMetrics.typeConfidence(isHit) = guess(loc(isHit));
@@ -229,7 +228,7 @@ for fidx=1:1:numel(fNames)
         else
             disp('No registration ID found, assuming identical segmentation map')
             results.sMetrics.type=type;
-            results.sMetrics.label=rois';
+            results.sMetrics.label=rois;
             results.sMetrics.typeConfidence=guess;
             if isfield(results,"dvsMetrics")
                 results.dvsMetrics.label=rois(ismember(results.sMetrics.idx, results.dvsMetrics.idx))';

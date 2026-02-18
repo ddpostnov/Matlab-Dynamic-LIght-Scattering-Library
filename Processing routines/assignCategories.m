@@ -1,0 +1,34 @@
+function assignCategories(fNames,fNamesRef)
+
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
+    error('One or more *non-empty* entries do not contain "_K_d.mat".');
+end
+
+if numel(fNames)~=numel(fNamesRef)
+    error('Number of reference and target files should match');
+end
+
+for fidx=1:1:numel(fNames)
+    tic
+    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+    s.fName=fNames{fidx};
+    s.fNameCRef=fNamesRef{fidx};
+    clearvars results source settings
+    load(strrep(s.fNameCRef,'_d.mat','_r.mat'),'results');
+    load(strrep(s.fNameCRef,'_d.mat','_s.mat'),'settings');
+    s.edgeSize=settings.categoricalMask.edgeSize;
+    cMask=results.cMask;
+    clearvars results
+
+    load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
+    load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+    
+    results.cMask=cMask;
+    settings.categoricalMask=s;
+    %Save the data
+    disp(['Saving the results. Elapsed time ',num2str(round(toc)),'s']);
+    save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
+    save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
+    disp('Saving complete');
+end
+end

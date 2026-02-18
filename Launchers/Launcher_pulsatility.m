@@ -68,7 +68,7 @@ s.libraryFolder=libraryFolder;
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.maxK=0.4; % Maximum valid contrast - helps with initial masking
 s.minK=0.0001; % Minimum valid contrast
-s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
+s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
 s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise

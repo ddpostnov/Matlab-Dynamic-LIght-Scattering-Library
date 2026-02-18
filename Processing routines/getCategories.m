@@ -45,9 +45,10 @@
 % s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
 % s.sSizeN=15; % Odd, approximately 2 times larger than small vessels diameter
 % s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+% s.deSens=1; % integer, 1 or higher. 1 - maximally sensitive to smallest vessels but also noisy larger values reduce small vessel sensitivity
 % % %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
 % s.lThinN=2; % Large vessels thinning (appears as internal edges)
-% s.sThinN=2; % Small vessels thinning (appears as internal edges)
+% s.imOpen=2; % Small vessels thinning (appears as internal edges)
 % s.iniSizeN=7; % Odd number equal or larger than the spatial contrast kernel
 % % %DO NOT CHANGE - META DATA
 % s.categories={'background','parenchyma','unsegmented','externalWall','internalWall','lumen'}; %CATEGORIES
@@ -139,7 +140,6 @@ for fidx=1:1:numel(fNames)
     tmp=zeros(size(img));
     tmp(s.edgeSize+1:end-s.edgeSize,s.edgeSize+1:end-s.edgeSize)=mask(s.edgeSize+1:end-s.edgeSize,s.edgeSize+1:end-s.edgeSize);
     mask=(tmp==1);
-    maskIni=mask;
 
     for i=1:1:max(regionsMask(:))
         img(regionsMask(:)==i)=mat2gray(img(regionsMask(:)==i),double(prctile(img(regionsMask(:)==i),[5,99])));
@@ -147,30 +147,51 @@ for fidx=1:1:numel(fNames)
     img=img.*mask+(1-mask);
     img(isnan(img))=0;
 
-
     img=padarray(img,[s.lSizeN,s.lSizeN],'symmetric');
+    [gradThresh,numIter] = imdiffuseest(img,'ConductionMethod','quadratic');
+    %img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',gradThresh,'NumberOfIterations',numIter);
+    img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',[gradThresh,(9/10*min(gradThresh)):(-min(gradThresh)/10):(min(gradThresh)/10)],'NumberOfIterations',numIter+9);
+    pval = medfilt2(img, [s.lSizeN s.lSizeN], 'symmetric');
+    pval=min(pval);
     mask=padarray(mask,[s.lSizeN,s.lSizeN],0);
     tmp=zeros(size(img));
     for i=s.sSizeN:2:s.lSizeN
-        tmp=tmp+imbinarize(img,adaptthresh(img,s.sens,'NeighborhoodSize',i)).*mask;
+        tmp2=imbinarize(imtophat(img,strel('disk',i-s.sSizeN+s.deSens)),adaptthresh(imtophat(img,strel('disk',i-s.sSizeN+s.deSens)),s.sens,'NeighborhoodSize',i));
+        tmp2(img<=pval)=0;        
+        tmp2=bwareaopen(tmp2,s.sSizeN.*s.sSizeN);        
+        tmp=tmp+tmp2;        
     end
+    cMask=int32(mask);
+    cMask(tmp(:)>0)=2;
+
     maskV=tmp>0;
-    maskV=maskV+(conv2(maskV,[1,1,1;1,0,1;1,1,1],'same')>4); %connect pixels with more than 4 neighbours
-    maskV=bwareaopen(maskV,s.sSizeN.*s.sSizeN); % remove tiny specs
-    maskV   = imclose(maskV,strel('disk',s.sThinN));
-    maskV   = imopen(maskV,strel('disk',s.sThinN));
-    maskV=bwareaopen(maskV,s.lSizeN.*s.sSizeN); % remove large specs
-    maskVEE=imdilate(maskV,strel("disk",s.sThinN)).*mask;
+    maskV=(maskV+(conv2(maskV,[1,1,1;1,0,1;1,1,1],'same')>4))>0; %connect pixels with more than 4 neighbours
+    maskV   = imclose(maskV,strel('disk',s.lThinN));
+    tmp(:)=1;
+    tmp(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN)=maskV(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
+    tmp   = imopen(tmp,strel('disk',s.imOpen));
+    maskV=bwareaopen(tmp,s.lSizeN.*s.lSizeN).*mask;
+    tmp(:)=0;
+    tmp(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN)=maskV(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
+    maskV=bwareaopen(tmp,s.lSizeN.*s.sSizeN);
+    tmp=maskV(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
+    maskV=padarray(tmp,[s.lSizeN,s.lSizeN],"symmetric");
+    
+
+
+    maskVEE=imdilate(maskV,strel("disk",s.lThinN));
     maskVIE=maskV;
     maskV=bwmorph(maskV,'thin',s.lThinN);
 
-    cMask=int32(mask);
-    cMask(tmp(:)>0)=2;
+       
+    
     cMask(maskVEE(:)==1)=3;
     cMask(maskVIE(:)==1)=4;
     cMask(maskV(:)==1)=5;
+    tmp=bwareaopen(cMask==2,s.sSizeN.*s.sSizeN);
+    cMask(cMask(:)==2 & ~tmp(:))=1;
 
-    img=img(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
+
     cMask=cMask(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
 
     f=figure(1);
@@ -179,7 +200,8 @@ for fidx=1:1:numel(fNames)
     nexttile
     imagesc(rot90(imgVis , size(imgVis,2) > size(imgVis,1)))
     hold on
-    visboundaries(rot90(cMask>3, size(cMask,2) > size(cMask,1)))
+    visboundaries(rot90(cMask>4, size(cMask,2) > size(cMask,1)),'Color','m')
+    visboundaries(rot90(cMask>2, size(cMask,2) > size(cMask,1)),'Color','w')
     hold off
     clim(prctile(imgVis(:),[10,99]))
     axis image

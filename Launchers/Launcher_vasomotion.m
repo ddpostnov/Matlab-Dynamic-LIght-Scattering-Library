@@ -46,7 +46,7 @@ end
 
 getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 2 Define pixel categories
+%% STEP 2 Define pixel categories (based on temporal contrast data)
 close all
 clearvars -except fNames libraryFolder rootFolder
 
@@ -67,7 +67,7 @@ s.imOpen=3; % Small vessels thinning (appears as internal edges)
 s.iniSizeN=7; % Odd number equal or larger than the spatial contrast kernel
 
 %DO NOT CHANGE - META DATA
-s.categories={'background','parenchyma','unsegmented','empty','walls','lumen'}; %CATEGORIES
+s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
 files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
@@ -159,7 +159,33 @@ fNames     = fullfile({files.folder}', {files.name}');
 
 getBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 7 Assign vessel types and regions of interest
+%% STEP 7 Perform vasomotion analysis
+close all
+clearvars -except fNames libraryFolder rootFolder
+
+s.libraryFolder=libraryFolder;
+s.vFR=[0.05,0.25];
+s.cFR=[0.4,0.6];
+s.wFR=[0.01,1];
+s.wVPO=10;
+s.tgtFS=1; %Hz
+s.pcts=0:10:100;
+
+s.otsuMaxN=5;
+s.otsuElbow= 0.05;
+
+s.analysePerPixel  = false;
+s.keepSpectrum=false;
+s.keepClustering=true;
+s.reconstructData=true;
+
+%SET FILE NAMES HERE
+files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat'));
+fNames     = fullfile({files.folder}', {files.name}');
+
+getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
+
+%% STEP 8 Assign vessel types and regions of interest
 close all
 clearvars -except fNames libraryFolder rootFolder
 

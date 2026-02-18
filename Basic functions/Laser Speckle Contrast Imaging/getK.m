@@ -1,54 +1,76 @@
-%getTLSCI - calculates temporal Laser Speckle Contrast Images
+%getK - Calculates Temporal or Spatial Contrast 
 %
-% Syntax:  output1 = function_name(input1,input2,input3,input4)
+% Syntax:
+%    [data, time] = getK(dataIn, contrastType, 'Name', Value, ...)
+%
+% Description:
+%    Computes contrast images from a 3D intensity matrix. It supports both
+%    Temporal (contrast over time per pixel) and Spatial (contrast over
+%    space per frame) methods. It includes options for temporal decimation,
+%    specific decimation methods (leaking vs sharp), and CPU/GPU computation.
 %
 % Inputs:
-%    data       - raw laser speckle data as 3d [y,x,t] matrix
-%    kernelSize - number of pixels in a side of the kernel
-%    procType   - choose the processor type: use 'cpu', 'gpu', 'fastcpu' or
-%                 'fastgpu'. 'fastcpu' should be used by default.
-% Optional Input:
-%   batchSize   - size of the batch of data to be vectorized for analysis.
+%    dataIn       - Raw  data as a 3D numeric matrix [Y, X, Time].
+%    contrastType - String specifying the analysis type: 'spatial' or 'temporal'.
+%
+% Optional Name-Value Pair Arguments:
+%    'kernelSize'  - (Numeric) Size of the window used for contrast calculation.
+%                    Default: 25 for 'temporal', 5 for 'spatial'.
+%    'procType'    - (String) Processor to use: 'cpu' or 'gpu'. Default: 'gpu'.
+%    'decimFactor' - (Numeric) Factor for temporal decimation/averaging.
+%                    Default: 1 (no decimation).%                    
+%    'decimMethod' - (String) Method for temporal decimation:
+%                    'leaking' (Default): Uses a sliding window (convolution)
+%                    followed by averaging. Preserves temporal resolution but
+%                    introduces some temporal cross-talk for temporal contrast.
+%                    'sharp': strictly non-overlapping block averaging.
+%                    Only valid for 'temporal' contrast. Requires 'decimFactor'
+%                    to be an integer multiple of 'kernelSize'.
+%    'memoryCoef'  - (Numeric) Fraction of available RAM/GPU memory to use
+%                    for batch processing (0 to 1). Default: 0.8.
+%    'time'        - (Vector) Input time vector matching size(dataIn, 3).
+%                    If provided, the function returns a decimated time vector.
 %
 % Outputs:
-%    tLSCI      - processed data as [y,x,t] 3d matrix
+%    data         - Processed contrast data as a 3D matrix [Y, X, OutputTime].
+%                   OutputTime = floor(InputTime / decimFactor).
+%    time         - (Optional) Decimated time vector corresponding to the
+%                   output frames.
 %
-% Example:
-%    tLSCI=getTLSCI(data,25,'gpu','none')
+% Examples:
+%    % 1. Standard Temporal Contrast (GPU, default kernel=25):
+%    K = getK(rawStack, 'temporal');
 %
-% Other m-files required: none
-% Subfunctions: none
-% MAT-files required: none
+%    % 2. Spatial Contrast on CPU with 7x7 kernel:
+%    K = getK(rawStack, 'spatial', 'procType', 'cpu', 'kernelSize', 7);
 %
-% See also: getSLSCI.m
-
+%    % 3. Temporal Contrast with "Sharp" Decimation (Kernel=25, Decim=50):
+%    [K, tOut] = getK(rawStack, 'temporal', 'decimFactor', 50, ...
+%                     'decimMethod', 'sharp', 'time', tIn);
+%
+% See also: readRLS.m
+%
 % Authors: DD Postnov
 % CFIN, Aarhus University
 % email address: dpostnov@cfin.au.dk
-% Last revision: 24-January-2026
-
+% Last revision: 30-January-2026
 %------------- BEGIN CODE --------------
-
-
 function [data, time] = getK(dataIn,contrastType, varargin)
 p = inputParser;
 p.KeepUnmatched = false;
 
-% Required Arguments
 addRequired(p, 'dataIn', @isnumeric);
 addRequired(p, 'contrastType', @(x) any(validatestring(x, {'spatial', 'temporal'})));
 
-% Optional Arguments (Note: kernelSize default is [] to handle dynamic defaults later)
 addParameter(p, 'kernelSize', [], @isnumeric);
 addParameter(p, 'procType', 'gpu', @(x) any(validatestring(x, {'cpu', 'gpu'})));
 addParameter(p, 'decimFactor', 1, @isnumeric);
 addParameter(p, 'decimMethod', 'leaking', @(x) any(validatestring(x, {'leaking', 'sharp'})));
-addParameter(p, 'memoryCoef', 0.8, @isnumeric);
+addParameter(p, 'memoryCoef', 0.8, @(x) isnumeric(x) && isscalar(x) && x > 0 && x <= 1);
 addParameter(p, 'time', [], @isnumeric);
 
 parse(p, dataIn, contrastType, varargin{:});
 
-% Unpack results
 kernelSize  = p.Results.kernelSize;
 procType    = p.Results.procType;
 decimFactor  = p.Results.decimFactor;
@@ -57,24 +79,23 @@ memoryCoef  = p.Results.memoryCoef;
 timeIn      = p.Results.time;
 time        = [];
 
-% --- 1. Apply Dynamic Defaults ---
+
 if isempty(kernelSize)
-    if strcmpi(contrastType, 'time')
+    if strcmpi(contrastType, 'temporal')
         kernelSize = 25;
-    else
+    elseif strcmpi(contrastType, 'spatial')
         kernelSize = 5;
     end
 end
 
-% --- 2. Validate 'Sharp' Method ---
 if strcmpi(decimMethod, 'sharp')
-    if strcmpi(contrastType, 'space')
-        error('getK:InvalidMethod', ...
-            "The 'sharp' decimation method is only valid for 'time' contrast.");
+    if strcmpi(contrastType, 'spatial')
+        error('getContrastFromRLS:InvalidMethod', ...
+            "The 'sharp' decimation method is only valid for 'temporal' contrast.");
     end    
-    if strcmpi(contrastType, 'time') && decimFactor > 1
+    if strcmpi(contrastType, 'temporal') && decimFactor > 1
         if mod(decimFactor, kernelSize) ~= 0
-            error('getK:InvalidDecimation', ...
+            error('getContrastFromRLS:InvalidDecimation', ...
                 "For 'sharp' temporal contrast, decimFactor (%d) must be an integer multiple of kernelSize (%d).", ...
                 decimFactor, kernelSize);
         end
@@ -83,6 +104,7 @@ end
 
 sz = size(dataIn);
 outT = floor(sz(3) / decimFactor);
+outSz = [sz(1), sz(2), outT];
 framesToProc = outT * decimFactor;
 
 [~, memAvailRAM] = memory;
@@ -102,16 +124,16 @@ if ~isempty(timeIn)
     end
 end
 
+
 switch contrastType
     case 'temporal'
-        % 3. Reshape Input to 2D [Pixels, Time]
         dataIn=reshape(dataIn,sz(1)*sz(2),sz(3));
         data=zeros(sz(1)*sz(2),outT,'single');
         switch procType
             case 'gpu'
                 memAvailGPU = gpuDevice;
                 memAvailGPU = memAvailGPU.AvailableMemory;
-                batchNum=ceil(max((3*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1));
+                batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches. 
                 batchSize=floor(size(dataIn,1)./batchNum);
                 kernel=gpuArray(ones(1,kernelSize,'single'))./kernelSize;
                 normMap = conv2(gpuArray.ones(1, sz(3), 'single'), kernel, 'same');
@@ -135,7 +157,7 @@ switch contrastType
                         dataGPU = sqrt(max(dataGPU - m.^2, 0));
                         dataGPU=dataGPU./m;
                         if decimFactor > 1
-                            dataGPU=dataGPU(:,1:framesToProc);
+                            dataGPU=dataGPU(:,1:framesToProc);                            
                             currentBatchSize = size(dataGPU,1);
                             dataGPU = reshape(dataGPU, currentBatchSize, decimFactor, outT);
                             dataGPU = mean(dataGPU, 2);
@@ -184,10 +206,9 @@ switch contrastType
                 data=zeros(outSz,'single');
                 memAvailGPU = gpuDevice;
                 memAvailGPU = memAvailGPU.AvailableMemory;
-                batchNum=ceil(max((3*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1));
+                batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches. 
                 batchSize=floor(size(dataIn,3)./batchNum);
 
-                % Ensure batchSize is a multiple of decimFactor
                 batchSize = floor(batchSize/decimFactor) * decimFactor;
                 if batchSize == 0, batchSize = decimFactor; end
 
@@ -219,7 +240,6 @@ switch contrastType
                 batchNum=ceil(max((4*numel(dataIn)*4)./(memAvailRAM*memoryCoef),1)); % operations below should take aprox 2x batch array size, but, we allocate 3x just for safety
                 batchSize=floor(size(dataIn,3)./batchNum);
 
-                % Ensure batchSize is a multiple of decimFactor
                 batchSize = floor(batchSize/decimFactor) * decimFactor;
                 if batchSize == 0, batchSize = decimFactor; end
 

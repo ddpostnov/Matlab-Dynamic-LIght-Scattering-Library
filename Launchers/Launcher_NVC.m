@@ -13,18 +13,18 @@ s.libraryFolder=libraryFolder;
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.contrastType='temporal'; %'temporal' or 'spatial'
 s.contrastKernel=25; %typical values: 25 for 'temporal', 5 or 7 for 'spatial'
-s.decimation=25; %decimates the contrast. Output framerate = original framerate / s.decimation
+s.decimFactor=25; %decimates the contrast. Output framerate = original framerate / s.decimation
+s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for temporal analysis and and s.decimation being a multiple integer of s.contrastKernel
 
 %ADJUSTED IF NECESSARY - PERFORMANCE ADJUSTEMNTS
-s.procType='fastcpu'; %use 'fastgpu' for spatial contrast type if high-end GPU is availible, 'fastcpu' otherwise
-s.rawBatchSize=1000; %only affects processing speed, depends on availible memory (GPU and RAM)
+s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
 
 %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.minK=0.001; %expected s.minImum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
-s.maxK=0.99; %anything above 1 is an artifact, for most of the applications 0.4-0.7 is expected s.maxImum.
-s.minI=10; %expected s.minImum, usualy 10 or above 
-s.maxI=250; %anything above 254 is an artifact
-s.minTrust=[0.68,0.68,0.68]; %in relation of uncertain frames to the total number
+s.minK=0.001; %expected minimum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
+s.maxK=0.99; %anything above 1 is an artifact, for most of the applications 0.4 would be expected, but can be up to 0.8 in stroke
+s.minI=10; %expected minimum average intensity, defined by the amount of light and the exposure time during the recording. Can not be below 0, usually above 10 is expected
+s.maxI=250; %expected maximum average intensity, define by the amount of light, the exposure time and the bit depth of the recording. Usually below 250 is expected.
+s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
 
 % %SET FILE NAMES HERE

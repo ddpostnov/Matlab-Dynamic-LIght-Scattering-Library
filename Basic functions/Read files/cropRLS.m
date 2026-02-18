@@ -36,6 +36,10 @@ dataSize=1;
 sizeX=fread(fileReadId,1,'*uint64');
 sizeY=fread(fileReadId,1,'*uint64');
 sizeT=single(fread(fileReadId,1,'*uint64'));
+if isempty(fLim)
+    fLim=[1,sizeT];
+end
+
 sampling=single(fread(fileReadId,1,'*uint64'));
 version=fread(fileReadId,4,'*ubit8')';
 if strcmp(version,'Ver.')

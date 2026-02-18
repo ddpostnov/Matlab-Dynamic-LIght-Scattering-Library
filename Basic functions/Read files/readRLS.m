@@ -1,131 +1,137 @@
-%readRLS - reads raw laser speckle (.rls) data files
+%readRLS - reads raw laser speckle (.rls) data files.
 %
-% Syntax:  output1 = function_name(requiredInput1,optionalInput1,optionalInput2,optionalInput3)
+% Syntax:  [data,timeStamps,s] = readRLS(Input1, Name, Value)
 %
 % Required inputs:
-%   fileName      - path to the .rls file
-% Optional Inputs:
-%   framesToSkip  - number of frames to skip at the begining of the recording. 
-%                   Default is 0. Use 0 when you don't want to skip frames
-%                   but need to enter other optional arguments
-%   framesToRead  - number of frames to read. Use [] when you want to read 
-%                   all frames and use ROI. By default reads all frames
-%                   except the skipped ones.
-%   ROI           - Region of Interest:
-%                   [firstRow,      lastRow ;
-%                    firstColumn,   lastColumn]
-%                   Default is the whole frame.
+%   Input1        - Path to the .rls file (String).
+%                   Required for New File mode.
+%                   Omit entirely if 'Stream' structure is provided.
+%
+% Optional Name-Value Pair Inputs:
+%   'Stream'      - Structure containing metadata and fileID from a previous
+%                   call. Use this to continue reading from an open stream
+%                   without re-parsing the header.
+%   'KeepOpen'    - Boolean (true/false). If true, the file remains open after
+%                   reading. Required for batch/stream processing. Default is false.
+%   'FramesToSkip'- Number of frames to skip at the beginning of the recording.
+%                   Default is 0. Ignored (triggers warning) if 'Stream' is provided.
+%   'FramesToRead'- Number of frames to read.
+%                   - In "New File" mode: Default is all remaining frames.
+%                   - In "Stream" mode: Must be specified explicitly.
+%
 % Outputs:
-%    data       - raw laser speckle data as 3d [y,x,t] matrix
-%    sampling   - sampling time in ms
-%    timeStamps - time stamps in microseconds
-%    sizeT      - total number of frames in the file
+%    data       - Raw laser speckle data as 3d [y,x,t] matrix.
+%    timeStamps - Vector of time stamps (int64).
+%    s          - Stream structure containing metadata and the active fileID.
 %
-% Example 1:
-%    [data,sampling,timeStamps,sizeT]=readRLS('D:\stroke_20201001.rls',10,100,[10,100;20,200]);
+% Example 1 (Standard Read):
+%    [data, timeStamps, s] = readRLS('data.rls', 'FramesToSkip', 10, 'FramesToRead', 100);
 %
-% Example 2:
-%    [data,sampling,timeStamps,sizeT]=readRLS('D:\stroke_20201001.rls');
+% Example 2 (Stream/Batch Processing):
+%    % 1. Open and read first batch (KeepOpen = true)
+%    [d1, t1, s] = readRLS('data.rls', 'FramesToRead', 100, 'KeepOpen', true);
 %
-% Other m-files required: none
-% Subfunctions: none
-% MAT-files required: none
+%    % 2. Read next batch using 's' (Notice: fileName is omitted entirely)
+%    [d2, t2, s] = readRLS('Stream', s, 'FramesToRead', 100);
+%
+%    % 3. Close manually when done
+%    fclose(s.fId);
 %
 % See also: getTLSCI.m, getSLSCI.m
-
-% Authors: Dmitry D Postnov, Alberto Gonzalez Olmos
+% Authors: Dmitry D Postnov
 % CFIN, Aarhus University
 % email address: dpostnov@cfin.au.dk
-% Last revision: 23-September-2021
+% Last revision: 25-January-2026
 
 %------------- BEGIN CODE --------------
-function [data,sampling,timeStamps,sizeT]=readRLS(fileName,varargin)
+function [data,timeStamps,s]=readRLS(varargin)
+p = inputParser;
+p.KeepUnmatched = false;
 
-%check if the fileName ends with .rls, add .rls otherwise
-C = strsplit(fileName,'.');
-if ~strcmp(C{end},'rls')
-    fileName=[fileName,'.rls'];
-end
+if nargin == 3 && isstruct(varargin{1}) && strcmpi(varargin{2}, 'FramesToRead')
+    %%STREAM MODE
+    s= varargin{1};
+    s.framesToRead = varargin{3};
+    % Validation
+    if ~isfield(s, 'fId') || isempty(s.fId)
+        error('Invalid stream structure: fId is missing.');
+    end
+    s.keepOpen = true;
+elseif nargin>=1 && (ischar(varargin{1}) || isstring(varargin{1}))
+    %%NEW FILE MODE
+    parserInput = varargin;
+    addRequired(p, 'fileName', @(x) ischar(x) || isstring(x));
 
-%initializing default values for optional and hidden parameters
-framesToSkip=0;
-framesToRead=[];
-ROI=[];
-dataSize=1; %initiate data size as default for 'uint8'
+    % Optional Arguments
+    addParameter(p, 'KeepOpen', false, @(x) islogical(x) || x==1 || x==0);
+    addParameter(p, 'FramesToSkip', 0, @(x) isnumeric(x) && isscalar(x));
+    addParameter(p, 'FramesToRead', [], @(x) isempty(x) || (isnumeric(x) && isscalar(x)));
+    parse(p, parserInput{:});
+    fileName = p.Results.fileName;
+    [~, ~, ext] = fileparts(fileName);
+    if ~strcmpi(ext, '.rls')
+        error('Input file name should have .rls extension');
+    end
+    s = struct();
+    s.framesToSkip = p.Results.FramesToSkip;
+    s.framesToRead = p.Results.FramesToRead;
+    s.keepOpen = p.Results.KeepOpen;
 
-%checking that inputs are in the correct format:
-for iVar = 1:length(varargin)
-    if iVar==1
-        framesToSkip = varargin{1}; 
-        if ~(round(framesToSkip)==framesToSkip)
-            framesToSkip=round(framesToSkip);
-            warning('Rounding number of frames to nearest integer')
+
+    s.fileName=fileName;
+    s.fId = fopen(s.fileName, 'r');
+    if s.fId == -1, error('Cannot open file: %s', fileName); end
+    fseek(s.fId,0*1024,-1 );
+    s.sizeX=double(fread(s.fId,1,'*uint64'));
+    s.sizeY=double(fread(s.fId,1,'*uint64'));
+    s.sizeT=double(fread(s.fId,1,'*uint64'));
+    s.sampling=double(fread(s.fId,1,'*uint64'));
+    s.version=fread(s.fId,4,'*ubit8')';
+    s.dataSize=1; %default uint8
+    if strcmp(char(s.version), 'Ver.') %strcmp(s.version,'Ver.')
+        nVer = fread(s.fId,1,'*uint64');
+        if nVer>1
+            s.dataSize=double(fread(s.fId,1,'*uint64'));
         end
     end
-    if iVar==2 && ~isempty(varargin{2})
-        framesToRead = varargin{2};
-        if ~(round(framesToRead)==framesToRead)
-            framesToRead=round(framesToRead);
-            
-            warning('Rounding number of frames to nearest integer')
-        end
+
+    %correct default values based on meta data
+    if isempty(s.framesToRead), s.framesToRead = s.sizeT-s.framesToSkip; end
+    switch s.dataSize
+        case 1
+            s.dataType='uint8';
+        case 2
+            s.dataType='uint16';
+        otherwise
+            error('Unindentified data type')
     end
-    if iVar==3 
-        ROI = varargin{3};
-        if ~all(size(ROI)==[2,2])
-            error(['ROI format is incorrect, please check that the matrix dimensions are: ',char(13),...
-                    '[firstRow    --> , <--   lastRow   --> ; <--',char(13),...
-                    ' firstColumn --> , <--   lastColumn      ]'])
-        end
-    end
+
+    %move to the first timeStamp/frame location
+    firstByte=30*1024+s.sizeX*s.sizeY*s.framesToSkip*s.dataSize+8*s.framesToSkip;
+    fseek(s.fId,firstByte,-1 );
+else
+    % Fallback for invalid inputs
+    error('readRLS:InvalidInput', ...
+        'Inputs must be either a filename string or a Stream struct with FramesToRead specified.');
+end
+
+timeStamps=zeros(s.framesToRead,1,'double');
+data=zeros(s.sizeY,s.sizeX,s.framesToRead,s.dataType);
+
+sY=s.sizeY;
+sX=s.sizeX;
+dT=s.dataType;
+fId=s.fId;
+for t=1:1:s.framesToRead
+    if feof(fId), break; end
+    timeStamps(t)=double(fread(fId,1,'*uint64'));
+    data(:,:,t)=fread(fId,[sY,sX],['*',dT]);
 end
 
 
-%read the meta data
-fileReadId = fopen(fileName, 'r');
-fseek(fileReadId,0*1024,-1 );
-sizeX=fread(fileReadId,1,'*uint64');
-sizeY=fread(fileReadId,1,'*uint64');
-sizeT=single(fread(fileReadId,1,'*uint64'));
-sampling=single(fread(fileReadId,1,'*uint64'));
-version=fread(fileReadId,4,'*ubit8')';
-if strcmp(version,'Ver.')
-    nVer = fread(fileReadId,1,'*uint64');
-    if nVer>1
-        dataSize=fread(fileReadId,1,'*uint64');
-    end
+s.fId=fId;
+if ~s.keepOpen
+    fclose(s.fId);
 end
-
-%correct default values based on meta data
-if isempty(ROI), ROI = [1,sizeY;1,sizeX]; end
-if isempty(framesToRead), framesToRead = sizeT; end
-switch dataSize
-    case 1
-        dataType='uint8';
-    case 2
-        dataType='uint16';
-    otherwise
-        error('Unindentified data type')
-end
-
-%pre-allocate memory for arrays
-timeStamps=zeros(framesToRead,1,'int64');
-data=zeros(length(ROI(1,1):1:ROI(1,2)),length(ROI(2,1):1:ROI(2,2)),framesToRead,dataType);
-
-%move to the first timeStamp/frame location
-firstByte=30*1024+sizeX*sizeY*uint64(framesToSkip)*dataSize+8*uint64(framesToSkip);
-fseek(fileReadId,firstByte,-1 );
-
-%read data and close the file
-for t=1:1:framesToRead
-    timeStamps(t)=fread(fileReadId,1,'*uint64');
-    frame=fread(fileReadId,[sizeY,sizeX],['*',dataType]);
-    data(:,:,t)=frame(ROI(1,1):1:ROI(1,2),ROI(2,1):1:ROI(2,2));
-end
-fclose(fileReadId);
-
 end
 %------------- END OF CODE --------------
-% Comments: this code can be used only with files that are several times
-% smaller than the available RAM memory. Use the batch version of readRLS
-% (batchReadRLS) to process the data using less RAM memory.

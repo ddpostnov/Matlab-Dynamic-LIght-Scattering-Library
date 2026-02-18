@@ -47,7 +47,7 @@
 % % %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 % s.contrastType='temporal'; %'temporal' or 'spatial'
 % s.contrastKernel=25; %typical values: 25 for 'temporal', 5 or 7 for 'spatial'
-% s.decimation=25; %decimates the contrast. Output framerate = original framerate / s.decimation
+% s.decimFactor=25; %decimates the contrast. Output framerate = original framerate / s.decimation
 % % %ADJUSTED IF NECESSARY - PERFORMANCE ADJUSTEMNTS
 % s.procType='fastcpu'; %use 'fastgpu' for spatial contrast type if high-end GPU is availible, 'fastcpu' otherwise
 % s.rawBatchSize=1000; %only affects processing speed, depends on availible memory (GPU and RAM)
@@ -58,6 +58,7 @@
 % s.maxI=255; %anything above 1 is an artifact, for most of the applications 0.4-0.7 is expected s.maxImum.
 % s.minTrust=[0.68,0.68,0.68]; %in relation of uncertain frames to the total number
 % s.manualMask=0; %allows manual subselection of the area to mask
+% s.decimaMethod='leaking';
 
 function getContrast(s,fNames)
 
@@ -72,7 +73,8 @@ for fidx=1:1:length(fNames)
 
     % Launch contrast calculation from an RLS file
     [source.data,source.time,results.timeStamp,s.trustMatrix]=...
-        getContrastFromRLS(s.fName,s.contrastType,s.contrastKernel,s.rawBatchSize,s.procType,s.decimation,0);
+        getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
+
     imgK=squeeze(mean(source.data,3));
     imgBFI=1./(imgK.*imgK);
     results.imgI=s.trustMatrix(:,:,4);
@@ -81,11 +83,10 @@ for fidx=1:1:length(fNames)
     results.mask=min(~isnan(source.data),[],3)...
         & min(source.data>s.minK,[],3)...
         & min(source.data<s.maxK,[],3)...
-        & squeeze(s.trustMatrix(:,:,4))>=s.minI...
-        & squeeze(s.trustMatrix(:,:,4))<=s.maxI...
+        & squeeze(s.trustMatrix(:,:,3))>=s.minI...
+        & squeeze(s.trustMatrix(:,:,3))<=s.maxI...
         & squeeze(s.trustMatrix(:,:,1))>s.minTrust(1)...
-        & squeeze(s.trustMatrix(:,:,2))>s.minTrust(2)...
-        & squeeze(s.trustMatrix(:,:,3))>s.minTrust(3);
+        & squeeze(s.trustMatrix(:,:,2))>s.minTrust(2);
 
     h=figure;
     h.WindowState='Maximize';
