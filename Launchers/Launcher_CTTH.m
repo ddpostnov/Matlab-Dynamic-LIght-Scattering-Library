@@ -2,7 +2,7 @@
 % Use Launcher_slowDynamics.m. Ensure to edit the file names and settings according to the project needs.
 
 
-%% STEP 1 Process .rls files to get the temporal contrast for segmentation and vasomotion analysis
+%% STEP 1 Process .rls files to get the temoiral contrast for segmentation and vasomotion analysis
 %LIBRARY PATH - add YOUR path manualy here:
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
@@ -10,95 +10,48 @@ libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scat
 addpath(genpath(libraryFolder));
 s.libraryFolder=libraryFolder;
 
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.contrastType='temporal'; %'temporal' or 'spatial'
-s.contrastKernel=25; %typical values: 25 for 'temporal', 5 or 7 for 'spatial'
-s.decimFactor=25; %decimates the contrast. Output framerate = original framerate / s.decimation
-s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for temporal analysis and and s.decimation being a multiple integer of s.contrastKernel
-
-%ADJUSTED IF NECESSARY - PERFORMANCE ADJUSTEMNTS
-s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
-
-%ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
-s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
-s.manualMask=0; %allows manual subselection of the area to mask
+s.fBolus=[301,1500];
+s.fAngio=[2101,9800];
 
 %SET FILE NAMES HERE
 %OPTION 1 - AUTOMATIC LOOKUP USING REGULAR EXPRESSIONS
 s.reCalculate=true; %rewrites the files if existing
-rootFolder = 'O:\HE_LSCImaging\VVM0008_2024_UP_O2SaturationStroke_KateyEickhoff\RawData\LSCI\KE010'; %root folder for the files lookup
-files      = dir(fullfile(rootFolder,'**','*BP.rls')); %<--- use regexp to define the files of interest
+rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
+files      = dir(fullfile(rootFolder,'**','*BB.cxd')); %<--- use regexp to define the files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 if ~s.reCalculate
-    outNames  = regexprep(fNames, '\.rls$', '_t_K_d.mat');
+    outNames  = regexprep(fNames, '\.cxd$', '_I_d.mat');
     hasOut    = cellfun(@(f) isfile(f), outNames);
     fNames    = fNames(~hasOut);
 end
 
-%OPTION 2 - SET PATH MANUALY, REQUIRES COMMENTING OUT OPTION 1. Example:
-% fNames{1}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_2hfollowup.rls";
-% fNames{2}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_baseline.rls";
+getBolus(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 
-getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
-
-% STEP 2 Process .rls files to get the internal cycle data
-
-clearvars -except fNames libraryFolder rootFolder
-
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
-s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
-s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
-s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
-
-%ADJUSTED IF NECESSARY - EXCLUSION CRITERIA
-s.excludeFirstNCycles=0; %reject given number of cycles
-s.coeffsSTD=[3,2,2,2,2,3,3,2,2]; %pulses rejection coefficients relative to the feature standard deviation
-s.coeffsRel=[0.5,0.1]; %pulses rejection coefficients relative to the feature value
-s.coeffsAbs=2; %pulses rejection coefficients relative to the absolute feature value
-
-%ADJUSTED IF NECESSARY - CYCLE CALCULATION
-s.method='sLSCIMM';%,'tLSCIMM','ltLSCIMM' %Typically 'sLSCIMM' is recommended. For high quality data 'ltLSCIMM' will produce better results. Other options are 'tLSCIMM' and 'sLSCIMMM'.
-% method refers to spatial, temporal or lossless contrast calculation,
-% while the MM or MMM refers to minimum to minimum stretching or minimum to
-% maximum + maximum to minimum stretching.
-s.decimationSpace=4; %spatial decimation used to conserve memory in the pre-processing steps
-s.framesToAverage=1; %allows averaging multiple raw frames to artificially increase expsoure time
-s.contrastKernelT=25; %contrast kernel for temporal (tLSCI) and lossless (ltLSCI) processing methods
-s.contrastKernelPreproc=s.contrastKernelS; %contrast kernel used in preprocessing (spatial)
-s.rangeFrq=1;%1/2; % relative frq range around the central frequency, Hz
-s.interpFactor=10; %Sets the number of points that will replace two consequitive values during the interpolation sequence.
-s.smoothCoef1=1/3; %in respect to minimum points per cycle value
-s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
-
-getInternalCycle(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
-%% STEP 3 Define pixel categories (optionally can be done on temporal contrast data only)
+%% STEP 2 Define pixel categories 
 close all
 clearvars -except fNames libraryFolder rootFolder
 
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.maxK=0.5; % Maximum valid contrast - helps with initial masking
+s.minK=0.0001; % Minimum valid contrast
 s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
-s.lSizeN=51; % Odd, approximately 2 times larger than the largest vessel
-s.sSizeN=7; % Odd, approximately 2 times larger than small vessels diameter
-s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+s.lSizeN=121; % Odd, approximately 2 times larger than the largest vessel
+s.sSizeN=5; % Odd, approximately 2 times larger than small vessels diameter
+s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
 s.deSens=1;
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
 s.lThinN=2; % Large vessels thinning (appears as internal edges)
-s.imOpen=2; % Small vessels thinning (appears as internal edges)
+s.imOpen=0; % Small vessels thinning (appears as internal edges)
 s.iniSizeN=7; % Odd number equal or larger than the spatial contrast kernel
 
 %DO NOT CHANGE - META DATA
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*_b_I_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
 getCategories(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
@@ -138,8 +91,12 @@ s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
 s.attmemptDS=false; %attempt to perform automated dynamic segmentation or not
-s.sMinL=10; % Minimum length for segments
-s.prchNSize=30; % Parenchymal pixels neighbourhoud.
+s.sMinL=15; % Minimum length for segments
+s.simR=0.3;
+s.difR=0.4;
+s.correctNodes=true;
+
+s.prchNSize=90; % Parenchymal pixels neighbourhoud.
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
@@ -157,7 +114,7 @@ s.pInterpF=10; % leave as is
 
 %SET FILE NAMES HERE - IF REGIONS SPLIT WAS PERFORMED, OTHERWISE KEEP THE
 %SAME NAMES
-files      = dir(fullfile(rootFolder,'**','*_K_d.mat')); 
+files      = dir(fullfile(rootFolder,'**','*_b_I_d.mat')); 
 fNames     = fullfile({files.folder}', {files.name}');
 
 getSegmentation(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
@@ -266,6 +223,111 @@ files      = dir(fullfile(rootFolder,'**','*_BFI_d.mat')); %<---ALWAYS REFER TO 
 fNames     = fullfile({files.folder}', {files.name}');
 
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
+
+%%
+
+figure
+plot(squeeze(max(source.data,[],[1,2])))
+hold on
+plot(squeeze(mean(source.data,[1,2])))
+hold off
+
+%%
+
+dataBL=source.data(:,:,1:575);
+dataRP=source.data(:,:,576:end-100);
+dataFN=source.data(:,:,end-99:end);
+
+figure
+cval=[mean(dataRP(:,:,1),'all'),prctile(max(dataRP,[],3),99,'all')];
+for i=1:1:size(dataRP,3)
+imagesc(dataRP(:,:,i))
+clim(cval)
+axis image
+colormap gray
+title(num2str(i/100))
+pause(0.05)
+end
+
+
+dataRPN=single(dataRP)-mean(single(dataBL),3);%
+dataRPN=mat2gray(dataRPN);
+fSize=151;
+parfor i=1:1:size(dataRPN,3)
+i
+dataRPN(:,:,i)=dataRPN(:,:,i)-imopen(medfilt2(dataRPN(:,:,i),[15,15],'symmetric'),strel('disk',fSize));
+end
+
+figure
+cval=[mean(dataRPN(:,:,1),'all'),prctile(max(dataRPN,[],3),99,'all')];
+for i=1:1:size(dataRPN,3)
+imagesc(dataRPN(:,:,i))
+clim(cval)
+axis image
+colormap gray
+title(num2str(i/100))
+pause(0.5)
+end
+%%
+img=img-imopen(medfilt2(img,[15,15],'symmetric'),strel('disk',fSize));
+data=applyDirectionalFilter(single(dataRP), img);
+[fitP, fitQ, fitG,bMin,bMax] = fitGammaVariatePerPixel(data, time);
+%%
+figure
+imagesc(mean(data,3))
+mask=roipoly;
+
+
+%%
+figure
+img=squeeze(MTT);
+imagesc(img)
+clim(prctile(img(mask(:)),[0.1,99.9]))
+colorbar
+axis image
+colormap jet
+title('MTT')
+set(gcf,'Color','w');
+xticklabels([]);
+yticklabels([]);
+
+%%
+figure
+img=squeeze(fitP(:,:,3));
+imagesc(img)
+clim([0,2.5])
+colorbar
+axis image
+colormap jet
+title('Arrival time')
+set(gcf,'Color','w');
+xticklabels([]);
+yticklabels([]);
+
+figure
+img=squeeze(fitP(:,:,5));
+imagesc(img)
+clim(prctile(img(mask(:)),[0.1,99.9]))
+colorbar
+axis image
+colormap jet
+title('Peak time')
+set(gcf,'Color','w');
+xticklabels([]);
+yticklabels([]);
+
+figure
+img=squeeze(fitP(:,:,4));
+imagesc(img)
+clim([1,4])
+colorbar
+axis image
+colormap jet
+title('Alpha')
+set(gcf,'Color','w');
+xticklabels([]);
+yticklabels([]);
+
 
 %%
 files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest

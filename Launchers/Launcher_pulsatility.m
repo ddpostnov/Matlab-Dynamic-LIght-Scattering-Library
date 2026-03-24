@@ -15,7 +15,7 @@ s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.trustLimitsK=[0.01,0.3]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[10,150];
+s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
 s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
 s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
@@ -66,8 +66,7 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.maxK=0.4; % Maximum valid contrast - helps with initial masking
-s.minK=0.0001; % Minimum valid contrast
+s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
 s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
 s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter

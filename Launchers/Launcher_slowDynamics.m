@@ -20,10 +20,8 @@ s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for te
 s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
 
 %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.minK=0.001; %expected minimum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
-s.maxK=0.99; %anything above 1 is an artifact, for most of the applications 0.4 would be expected, but can be up to 0.8 in stroke
-s.minI=10; %expected minimum average intensity, defined by the amount of light and the exposure time during the recording. Can not be below 0, usually above 10 is expected
-s.maxI=250; %expected maximum average intensity, define by the amount of light, the exposure time and the bit depth of the recording. Usually below 250 is expected.
+s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
 
@@ -53,8 +51,7 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.maxK=0.5; % Maximum valid contrast - helps with initial masking
-s.minK=0.0001; % Minimum valid contrast
+s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
 s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
 s.lSizeN=71; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter

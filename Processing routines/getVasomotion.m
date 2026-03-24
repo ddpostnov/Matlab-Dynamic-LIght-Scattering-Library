@@ -29,7 +29,7 @@ for fidx=1:1:numel(fNames)
         'VoicesPerOctave', s.wVPO);
 
 
-    [~,fwt,coi]=wt(fb,results.time);
+    [~,fwt,coi]=wt(fb,single(results.time));
     f=cat(1,fwt,s.vFR',s.cFR');
     f=sort(unique(f),'descend');
     idxsVFR=f>=s.vFR(1) & f<=s.vFR(2);
@@ -47,26 +47,26 @@ for fidx=1:1:numel(fNames)
                 if s.reconstructData
                     rData=zeros(numel(timeVSM),sz(2));
                 end
-                spctPCTS=zeros(sz(2),numel(f),numel(s.pcts)-1,2);
-                spctMean=zeros(sz(2),numel(f));
-                spctSTD=zeros(sz(2),numel(f));
-                spctSKW=zeros(sz(2),numel(f));
-                spctKRT=zeros(sz(2),numel(f));
-                spctFLR=zeros(sz(2),numel(f),2);
-                spctSLC=zeros(sz(2),numel(f),2);
-                statFLR=zeros(sz(2),4);
-                statSLC=zeros(sz(2),4);
+                spctPCTS=zeros(sz(2),numel(f),numel(s.pcts)-1,2,'single');
+                spctMean=zeros(sz(2),numel(f),'single');
+                spctSTD=zeros(sz(2),numel(f),'single');
+                spctSKW=zeros(sz(2),numel(f),'single');
+                spctKRT=zeros(sz(2),numel(f),'single');
+                spctFLR=zeros(sz(2),numel(f),2,'single');
+                spctSLC=zeros(sz(2),numel(f),2,'single');
+                statFLR=zeros(sz(2),4,'single');
+                statSLC=zeros(sz(2),4,'single');
 
-                adVFR=zeros(sz(2),2);
-                adFVFR=zeros(sz(2),2);
-                adSVFR=zeros(sz(2),2);
-                adCFR=zeros(sz(2),2);
-                adFCFR=zeros(sz(2),2);
-                adSCFR=zeros(sz(2),2);
+                adVFR=zeros(sz(2),2,'single');
+                adFVFR=zeros(sz(2),2,'single');
+                adSVFR=zeros(sz(2),2,'single');
+                adCFR=zeros(sz(2),2,'single');
+                adFCFR=zeros(sz(2),2,'single');
+                adSCFR=zeros(sz(2),2,'single');
 
                 if s.keepClustering
-                    vTS=zeros(numel(timeVSM),sz(2));
-                    vFlare=zeros(numel(timeVSM),sz(2));
+                    vTS=zeros(numel(timeVSM),sz(2),'single');
+                    vFlare=zeros(numel(timeVSM),sz(2),'single');
                 end
 
                 if s.keepSpectrum
@@ -199,6 +199,7 @@ for fidx=1:1:numel(fNames)
 
                 toc
 
+                results.vsm.time=timeVSM;
                 results.vsm.(fn{k}).adFVFR=adFVFR;
                 results.vsm.(fn{k}).adSVFR=adSVFR;
                 results.vsm.(fn{k}).adFCFR=adFCFR;
@@ -276,7 +277,7 @@ for fidx=1:1:numel(fNames)
         tic
         for i=1:sz(1)
             subDataIn=squeeze((source.data(i,:,:)-mean(source.data(i,:,:),3))./mean(source.data(i,:,:),3));
-            subDataOut=squeeze(results.vsm.rwt(i,:,:,:));
+            subDataOut=squeeze(results.vsm.ppxAD(i,:,:,:));
             parfor j=1:sz(2)
                 wtts=abs(wt(fb,squeeze(subDataIn(j,:))));
                 wtts=abs(wtts(:,coi<0.05));

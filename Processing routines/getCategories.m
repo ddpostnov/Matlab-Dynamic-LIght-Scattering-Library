@@ -8,7 +8,7 @@
 %
 %   INPUTS
 %     s        – parameter structure created by the LSCI processing library.
-%                Fields read here include: iniSizeN, minK, maxK, regionsN,
+%                Fields read here include: iniSizeN, trustLimitsK, regionsN,
 %                lSizeN, sSizeN, sThinN, sens, lThinN.
 %     fNames   – cell array of char vectors or strings containing full paths
 %                to *_K_d.mat files.  Each file must have matching *_s.mat
@@ -39,8 +39,7 @@
 
 % %Example of s structure parametrisation
 % %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-% s.maxK=0.3; % Maximum valid contrast - helps with initial masking
-% s.minK=0.0001; % Minimum valid contrast
+% s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
 % s.regionsN=2; %Numer of regions for manual selection. 0 if using entire window.
 % s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
 % s.sSizeN=15; % Odd, approximately 2 times larger than small vessels diameter
@@ -55,8 +54,8 @@
 
 function getCategories(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat')|| contains(s,'_I_d.mat'), fNames(:)) )
+    error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
 end
 
 for fidx=1:1:numel(fNames)
@@ -64,26 +63,34 @@ for fidx=1:1:numel(fNames)
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     s.fName=fNames{fidx};
     clearvars results source settings
-    load(s.fName,'source')
     load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
     load(strrep(s.fName,'_d.mat','_r.mat'),'results');
 
-    imgIni=mean(source.data,3);
+    if contains(s.fName,'_K_d.mat')
+    imgIni=results.imgK;
     s.edgeSize=getEdgeSizeSLSCI(imgIni,0.8);
     img=imgIni;
     img(img(:)>prctile(img(:),99))=prctile(img(:),99);
     img(img(:)<prctile(img(:),1))=prctile(img(:),1);
     img=imcomplement(img);
+    elseif contains(s.fName,'_I_d.mat')
+    imgIni=results.imgI;
+    s.edgeSize=0;
+    img=imgIni;
+    end
+
     fSize=floor((min(size(img))./20))*2+1;
     img(isnan(img))=0;
-    img=img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize));
+    img=img-imopen(medfilt2(img,[min(15,fSize),min(15,fSize)],"symmetric"),strel('disk',fSize));
     imgVis=img;
 
     mask=ones(size(img));
     if isfield(results,'mask') && size(results.mask,1)==size(img,1) && size(results.mask,2)==size(img,2)
         mask=double(results.mask>0);
-    end
-    mask=mask.*ordfilt2(imgIni,1,ones(s.iniSizeN),'symmetric')>=s.minK & ordfilt2(imgIni,s.iniSizeN.*s.iniSizeN,ones(s.iniSizeN),'symmetric')<=s.maxK;
+    elseif contains(s.fName,'_K_d.mat')
+        mask=mask.*ordfilt2(imgIni,1,ones(s.iniSizeN),'symmetric')>=s.trustLimitsK(1) & ordfilt2(imgIni,s.iniSizeN.*s.iniSizeN,ones(s.iniSizeN),'symmetric')<=s.trustLimitsK(2);
+    end    
+    
 
     regionsMask=zeros(size(mask));
     if s.regionsN>0
@@ -149,14 +156,23 @@ for fidx=1:1:numel(fNames)
 
     img=padarray(img,[s.lSizeN,s.lSizeN],'symmetric');
     [gradThresh,numIter] = imdiffuseest(img,'ConductionMethod','quadratic');
-    %img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',gradThresh,'NumberOfIterations',numIter);
-    img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',[gradThresh,(9/10*min(gradThresh)):(-min(gradThresh)/10):(min(gradThresh)/10)],'NumberOfIterations',numIter+9);
+    if contains(s.fName,'_K_d.mat')    
+    img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',[gradThresh,(9/10*min(gradThresh)):(-min(gradThresh)/10):(min(gradThresh)/10)],'NumberOfIterations',numIter+9);    
+    elseif contains(s.fName,'_I_d.mat')
+        img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',gradThresh,'NumberOfIterations',numIter);
+    end
     pval = medfilt2(img, [s.lSizeN s.lSizeN], 'symmetric');
     pval=min(pval);
     mask=padarray(mask,[s.lSizeN,s.lSizeN],0);
     tmp=zeros(size(img));
     for i=s.sSizeN:2:s.lSizeN
-        tmp2=imbinarize(imtophat(img,strel('disk',i-s.sSizeN+s.deSens)),adaptthresh(imtophat(img,strel('disk',i-s.sSizeN+s.deSens)),s.sens,'NeighborhoodSize',i));
+       % if (i-s.sSizeN)<s.sSizeN
+            tmp2=imtophat(img,strel('disk',i-s.sSizeN+s.deSens));
+            tmp2=imbinarize(tmp2,adaptthresh(tmp2,s.sens,'NeighborhoodSize',i));
+       % else
+       %     tmp2=imbinarize(img,adaptthresh(img,s.sens,'NeighborhoodSize',i));
+       % end
+        
         tmp2(img<=pval)=0;        
         tmp2=bwareaopen(tmp2,s.sSizeN.*s.sSizeN);        
         tmp=tmp+tmp2;        
@@ -177,13 +193,10 @@ for fidx=1:1:numel(fNames)
     tmp=maskV(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
     maskV=padarray(tmp,[s.lSizeN,s.lSizeN],"symmetric");
     
-
-
     maskVEE=imdilate(maskV,strel("disk",s.lThinN));
     maskVIE=maskV;
     maskV=bwmorph(maskV,'thin',s.lThinN);
-
-       
+     
     
     cMask(maskVEE(:)==1)=3;
     cMask(maskVIE(:)==1)=4;
@@ -191,7 +204,7 @@ for fidx=1:1:numel(fNames)
     tmp=bwareaopen(cMask==2,s.sSizeN.*s.sSizeN);
     cMask(cMask(:)==2 & ~tmp(:))=1;
 
-
+    cMask=cMask.*int32(mask);
     cMask=cMask(s.lSizeN+1:end-s.lSizeN,s.lSizeN+1:end-s.lSizeN);
 
     f=figure(1);

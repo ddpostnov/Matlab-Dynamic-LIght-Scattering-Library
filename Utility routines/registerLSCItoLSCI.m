@@ -67,6 +67,7 @@ views=cell(size(fNames));
 commonMask=cell(size(fNames));
 
 for fidx=1:1:size(fNames,1)
+     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     clearvars results source settings
     load(fNames{fidx},'source');
     load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');

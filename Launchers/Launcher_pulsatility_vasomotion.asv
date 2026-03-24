@@ -2,7 +2,7 @@
 % Use Launcher_slowDynamics.m. Ensure to edit the file names and settings according to the project needs.
 
 
-%% STEP 1 Process .rls files to get the temoiral contrast for segmentation and vasomotion analysis
+%% STEP 1 Process .rls files to get the temporal contrast for segmentation and vasomotion analysis
 %LIBRARY PATH - add YOUR path manualy here:
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
@@ -20,18 +20,16 @@ s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for te
 s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
 
 %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.minK=0.001; %expected minimum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
-s.maxK=0.99; %anything above 1 is an artifact, for most of the applications 0.4 would be expected, but can be up to 0.8 in stroke
-s.minI=10; %expected minimum average intensity, defined by the amount of light and the exposure time during the recording. Can not be below 0, usually above 10 is expected
-s.maxI=250; %expected maximum average intensity, define by the amount of light, the exposure time and the bit depth of the recording. Usually below 250 is expected.
+s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
 
 %SET FILE NAMES HERE
 %OPTION 1 - AUTOMATIC LOOKUP USING REGULAR EXPRESSIONS
 s.reCalculate=true; %rewrites the files if existing
-rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
-files      = dir(fullfile(rootFolder,'**','*.rls')); %<--- use regexp to define the files of interest
+rootFolder = 'O:\HE_LSCImaging\VVM0008_2024_UP_O2SaturationStroke_KateyEickhoff\RawData\LSCI\KE010'; %root folder for the files lookup
+files      = dir(fullfile(rootFolder,'**','*BP.rls')); %<--- use regexp to define the files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 if ~s.reCalculate
     outNames  = regexprep(fNames, '\.rls$', '_t_K_d.mat');
@@ -39,21 +37,19 @@ if ~s.reCalculate
     fNames    = fNames(~hasOut);
 end
 
-%OPTION 2 - SET PATH MANUALY, REQUIRES COMMENTING OUT OPTION 1
+%OPTION 2 - SET PATH MANUALY, REQUIRES COMMENTING OUT OPTION 1. Example:
 % fNames{1}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_2hfollowup.rls";
 % fNames{2}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_baseline.rls";
-% fNames{3}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241218_ID251_24hfollowup.rls";
 
 getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 
-
-%% STEP 2 Process .rls files to get the internal cycle data
+% STEP 2 Process .rls files to get the internal cycle data
 
 clearvars -except fNames libraryFolder rootFolder
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.trustLimitsK=[0.01,0.3]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[10,150];
+s.trustLimitsI=[10,250];
 s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
 s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
 s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
@@ -86,17 +82,17 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.maxK=0.5; % Maximum valid contrast - helps with initial masking
+s.maxK=0.99; % Maximum valid contrast - helps with initial masking
 s.minK=0.0001; % Minimum valid contrast
-s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
-s.lSizeN=71; % Odd, approximately 2 times larger than the largest vessel
-s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter
+s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
+s.lSizeN=51; % Odd, approximately 2 times larger than the largest vessel
+s.sSizeN=7; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
 s.deSens=1;
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
 s.lThinN=2; % Large vessels thinning (appears as internal edges)
-s.imOpen=3; % Small vessels thinning (appears as internal edges)
+s.imOpen=2; % Small vessels thinning (appears as internal edges)
 s.iniSizeN=7; % Odd number equal or larger than the spatial contrast kernel
 
 %DO NOT CHANGE - META DATA
@@ -142,7 +138,7 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
-s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
+s.attmemptDS=false; %attempt to perform automated dynamic segmentation or not
 s.sMinL=10; % Minimum length for segments
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
 
@@ -293,8 +289,8 @@ end
 
 f=vsm(1).vsm.sData.f;
 coordPCTS=vsm(1).vsm.sData.coordPCTS;
-types={'Artery','Parenchyma','Vein'};
-conds={'AWKwake','ISO','K/X'};
+types={'Arteries','Parenchyma','Veins'};
+conds={'AWK','ISO','K/X'};
 
 spctPCTS=zeros(3,3,numel(f),numel(coordPCTS));
 
@@ -321,12 +317,13 @@ for i=1:1:3
 for j=1:1:3
 subplot(3,3,(i-1)*3+j)
 plot(f,squeeze(spctPCTS(i,j,:,:)))
-title(['Condition ',num2str(i),', Type ',num2str(j)])
+title([conds{i},', ',types{j}])
 ylim([0,0.2])
 xlabel('Frequency, Hz')
 ylabel('WT Amplitude')
 end
 end
+set(gcf,'Color','w');
 
 figure
 for i=1:1:3
@@ -336,7 +333,11 @@ hold on
 plot(squeeze(adCFR(i,:)))
 hold off
 xlim([0,4])
-xlabel('Type')
-title(['Condition ',num2str(i)])
-ylim([0,0.08])
+ylabel('Amplitude density')
+legend({'VSM: 0.05-0.25Hz','CTR: 0.4-0.6Hz'})
+xticks([1,2,3]);
+xticklabels(types)
+title(conds{i})
+ylim([0.01,0.07])
 end
+set(gcf,'Color','w');

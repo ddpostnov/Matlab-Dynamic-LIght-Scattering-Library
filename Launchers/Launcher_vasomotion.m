@@ -20,10 +20,8 @@ s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for te
 s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
 
 %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.minK=0.001; %expected minimum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
-s.maxK=0.99; %anything above 1 is an artifact, for most of the applications 0.4 would be expected, but can be up to 0.8 in stroke
-s.minI=10; %expected minimum average intensity, defined by the amount of light and the exposure time during the recording. Can not be below 0, usually above 10 is expected
-s.maxI=250; %expected maximum average intensity, define by the amount of light, the exposure time and the bit depth of the recording. Usually below 250 is expected.
+s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
 
@@ -31,7 +29,7 @@ s.manualMask=0; %allows manual subselection of the area to mask
 %OPTION 1 - AUTOMATIC LOOKUP USING REGULAR EXPRESSIONS
 s.reCalculate=true; %rewrites the files if existing
 rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
-files      = dir(fullfile(rootFolder,'**','*.rls')); %<--- use regexp to define the files of interest
+files      = dir(fullfile(rootFolder,'**','*BP.rls')); %<--- use regexp to define the files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 if ~s.reCalculate
     outNames  = regexprep(fNames, '\.rls$', '_t_K_d.mat');
@@ -46,6 +44,31 @@ end
 
 getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 
+%% FOR FLUORESCENCE DATA
+%LIBRARY PATH - add YOUR path manualy here:
+libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
+addpath(genpath(libraryFolder));
+libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
+addpath(genpath(libraryFolder));
+s.libraryFolder=libraryFolder;
+
+s.fBolus=[301,1500];
+s.fAngio=[2101,9800];
+
+%SET FILE NAMES HERE
+%OPTION 1 - AUTOMATIC LOOKUP USING REGULAR EXPRESSIONS
+s.reCalculate=true; %rewrites the files if existing
+rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
+files      = dir(fullfile(rootFolder,'**','*BB.cxd')); %<--- use regexp to define the files of interest
+fNames     = fullfile({files.folder}', {files.name}');
+if ~s.reCalculate
+    outNames  = regexprep(fNames, '\.cxd$', '_I_d.mat');
+    hasOut    = cellfun(@(f) isfile(f), outNames);
+    fNames    = fNames(~hasOut);
+end
+
+getBolus(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
+
 %% STEP 2 Define pixel categories (based on temporal contrast data)
 close all
 clearvars -except fNames libraryFolder rootFolder
@@ -53,10 +76,9 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.maxK=0.5; % Maximum valid contrast - helps with initial masking
-s.minK=0.0001; % Minimum valid contrast
+s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
 s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
-s.lSizeN=71; % Odd, approximately 2 times larger than the largest vessel
+s.lSizeN=101; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
 s.deSens=1;
@@ -70,7 +92,7 @@ s.iniSizeN=7; % Odd number equal or larger than the spatial contrast kernel
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*BP_t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
 getCategories(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
@@ -93,9 +115,12 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
-s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
+s.attmemptDS=false; %attempt to perform automated dynamic segmentation or not
 s.sMinL=10; % Minimum length for segments
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
+s.simR=0.1;
+s.difR=0.4;
+s.correctNodes=true;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
@@ -105,6 +130,7 @@ s.sMaxDK=0.2; %Max accepted std/mean for the initial diameter estimation
 s.sMaxKK=0.3; %Max accepted std/mean for the initial contrast estimation
 s.iniNSize=7; % Odd number equal or larger than the spatial contrast kernel
 s.sMaxP2D=3; %Max accepted deviation of the fit from center estimate
+
 
 %ADJUSTED IF NECESSARY - QUALITY CHECK AND INTERPOALTION
 s.minOverlapMask=0.6; %minimum overlap between the initial center line and segmentation mask present in each frame
@@ -154,7 +180,7 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*t_K_d.mat'));
+files      = dir(fullfile(rootFolder,'**','*BP_t_K_d.mat'));
 fNames     = fullfile({files.folder}', {files.name}');
 
 getBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
@@ -174,13 +200,13 @@ s.pcts=0:10:100;
 s.otsuMaxN=5;
 s.otsuElbow= 0.05;
 
-s.analysePerPixel  = false;
+s.analysePerPixel  = true;
 s.keepSpectrum=false;
 s.keepClustering=true;
 s.reconstructData=true;
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat'));
+files      = dir(fullfile(rootFolder,'**','*BP_t_BFI_d.mat'));
 fNames     = fullfile({files.folder}', {files.name}');
 
 getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
@@ -198,7 +224,7 @@ s.libraryFolder=libraryFolder;
 % setTypes(s,fNames);
 
 % %%IF using a reference
-s.useReference=true; %Assumes PRE-registered files
+s.useReference=false; %Assumes PRE-registered files
 %Settings tabs with a reference has to be done ROI by ROI if split ROIS are used. It also has
 %to be done ANIMAL by ANIMAL if multiple animals are compared. It can be
 %convienintly done in a loop as below, but REQUIRES proper file naming.

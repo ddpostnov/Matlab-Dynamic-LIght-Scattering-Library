@@ -52,10 +52,7 @@
 % s.procType='fastcpu'; %use 'fastgpu' for spatial contrast type if high-end GPU is availible, 'fastcpu' otherwise
 % s.rawBatchSize=1000; %only affects processing speed, depends on availible memory (GPU and RAM)
 % % %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-% s.minK=0.001; %expected s.minImum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
-% s.maxK=0.99; %anything above 1 is an artifact, for most of the applications 0.4-0.7 is expected s.maxImum.
-% s.minI=10; %expected s.minImum contrast, unless exposure time is too long or setup is malfunctioning values below 0.001 are not expected.
-% s.maxI=255; %anything above 1 is an artifact, for most of the applications 0.4-0.7 is expected s.maxImum.
+
 % s.minTrust=[0.68,0.68,0.68]; %in relation of uncertain frames to the total number
 % s.manualMask=0; %allows manual subselection of the area to mask
 % s.decimaMethod='leaking';
@@ -69,22 +66,24 @@ end
 for fidx=1:1:length(fNames)
     %set file name to load data
     s.fName=char(fNames{fidx});
+    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     clearvars results source settings
 
     % Launch contrast calculation from an RLS file
     [source.data,source.time,results.timeStamp,s.trustMatrix]=...
         getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
 
-    imgK=squeeze(mean(source.data,3));
+    imgK=squeeze(mean(source.data,3,'omitmissing'));
     imgBFI=1./(imgK.*imgK);
     results.imgI=s.trustMatrix(:,:,4);
+    results.imgK=imgK;
 
     % Set mask
     results.mask=min(~isnan(source.data),[],3)...
-        & min(source.data>s.minK,[],3)...
-        & min(source.data<s.maxK,[],3)...
-        & squeeze(s.trustMatrix(:,:,3))>=s.minI...
-        & squeeze(s.trustMatrix(:,:,3))<=s.maxI...
+        & min(source.data>=s.trustLimitsK(1),[],3)...
+        & min(source.data<=s.trustLimitsK(2),[],3)...
+        & squeeze(s.trustMatrix(:,:,3))>=s.trustLimitsI(1)...
+        & squeeze(s.trustMatrix(:,:,3))<=s.trustLimitsI(2)...
         & squeeze(s.trustMatrix(:,:,1))>s.minTrust(1)...
         & squeeze(s.trustMatrix(:,:,2))>s.minTrust(2);
 

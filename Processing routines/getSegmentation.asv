@@ -265,7 +265,7 @@ for fidx=1:1:numel(fNames)
                         % Calculate distance along the curve using quasi-euclidean metric
                         geodesicMap = bwdistgeodesic(tmp, seedMask, 'quasi-euclidean');
 
-                        for pointSecond = (pointFirst + 1):numel(y)
+                        for pointSecond = (pointFirst + 1):numPoints
                             pathLength = geodesicMap(y(pointSecond), x(pointSecond));
 
                             % Exclude infinite values occurring if points reside on disconnected segments
