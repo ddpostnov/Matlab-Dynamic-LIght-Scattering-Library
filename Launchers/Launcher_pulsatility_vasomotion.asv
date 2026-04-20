@@ -6,7 +6,7 @@
 %LIBRARY PATH - add YOUR path manualy here:
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
-libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
+libraryFolder = 'C:\Users\au707705\Downloads\Matlab-Dynamic-LIght-Scattering-Library-main\Matlab-Dynamic-LIght-Scattering-Library-main';
 addpath(genpath(libraryFolder));
 s.libraryFolder=libraryFolder;
 
@@ -20,7 +20,7 @@ s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for te
 s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
 
 %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
 s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
@@ -28,7 +28,7 @@ s.manualMask=0; %allows manual subselection of the area to mask
 %SET FILE NAMES HERE
 %OPTION 1 - AUTOMATIC LOOKUP USING REGULAR EXPRESSIONS
 s.reCalculate=true; %rewrites the files if existing
-rootFolder = 'O:\HE_LSCImaging\VVM0008_2024_UP_O2SaturationStroke_KateyEickhoff\RawData\LSCI\KE010'; %root folder for the files lookup
+rootFolder = 'F:\WT_treatment'; %root folder for the files lookup
 files      = dir(fullfile(rootFolder,'**','*BP.rls')); %<--- use regexp to define the files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 if ~s.reCalculate
@@ -36,6 +36,9 @@ if ~s.reCalculate
     hasOut    = cellfun(@(f) isfile(f), outNames);
     fNames    = fNames(~hasOut);
 end
+
+% FOR MIA'S OLD DATA FIRST TIMEPOINT
+%fNames=fNames(contains(fNames,'_PSY'));
 
 %OPTION 2 - SET PATH MANUALY, REQUIRES COMMENTING OUT OPTION 1. Example:
 % fNames{1}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_2hfollowup.rls";
@@ -48,8 +51,8 @@ getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 clearvars -except fNames libraryFolder rootFolder
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.trustLimitsK=[0.01,0.3]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[10,250];
+s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
 s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
 s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
@@ -82,12 +85,12 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.maxK=0.99; % Maximum valid contrast - helps with initial masking
-s.minK=0.0001; % Minimum valid contrast
+s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
 s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
-s.lSizeN=51; % Odd, approximately 2 times larger than the largest vessel
+s.lSizeN=141; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=7; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+s.sSizeScale=1.5; % scaler for small objects assignment to background or to unregognized regions
 s.deSens=1;
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
@@ -102,7 +105,9 @@ s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','l
 files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
-getCategories(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
+for i=1:1:numel(fNames)
+getCategories(s,fNames(i)); %LAUNCHES THE PROCESSING ROUTINE
+end
 
 %% STEP 4 Assign same categories to the internal cycle (pulsatility) data 
 % (OPTIONAL: used in combination with categories extration based on temporal contrast analysis only)
@@ -138,9 +143,12 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
-s.attmemptDS=false; %attempt to perform automated dynamic segmentation or not
-s.sMinL=10; % Minimum length for segments
-s.prchNSize=30; % Parenchymal pixels neighbourhoud.
+s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
+s.sMinL=15; % Minimum length for segments
+s.prchNSize=50; % Parenchymal pixels neighbourhoud.
+s.simR=0.05;
+s.difR=0.5;
+s.correctNodes=true;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
@@ -151,10 +159,12 @@ s.sMaxKK=0.3; %Max accepted std/mean for the initial contrast estimation
 s.iniNSize=7; % Odd number equal or larger than the spatial contrast kernel
 s.sMaxP2D=3; %Max accepted deviation of the fit from center estimate
 
+
 %ADJUSTED IF NECESSARY - QUALITY CHECK AND INTERPOALTION
+s.gSizeN=3;
 s.minOverlapMask=0.6; %minimum overlap between the initial center line and segmentation mask present in each frame
 s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial ROI
-s.pInterpF=10; % leave as is
+s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE - IF REGIONS SPLIT WAS PERFORMED, OTHERWISE KEEP THE
 %SAME NAMES
@@ -174,13 +184,50 @@ s.libraryFolder=libraryFolder;
 s.optimizer.MaximumIterations=500;
 s.tFormType='affine';
 s.matchSegmentation=true;
-s.prchNSize=30; % Parenchymal pixels neighbourhoud.
+s.prchNSize=50; % Parenchymal pixels neighbourhoud.
 
-files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
-fNamesVSM  = fullfile({files.folder}', {files.name}');
-fNamesPLS=regexprep(fNamesVSM, '\_t_K_d.mat$', '_c_K_d.mat');
-fNames=cat(1,fNamesPLS,fNamesVSM);
-registerLSCItoLSCI(s,fNames); %LAUNCHES THE UTILITY ROUTINE
+files      = dir(fullfile(rootFolder,'**','*_PSY*_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+files={files.name};
+
+% Extract unique PSY groups
+psyIdentifiers = regexp(files, 'PSY\d+', 'match', 'once');
+uniqueGroups = unique(psyIdentifiers(~cellfun(@isempty, psyIdentifiers)));
+groupCount = length(uniqueGroups);
+
+% Preallocate the final cell array
+fNamesList = cell(groupCount, 6);
+
+% Define the column sorting logic using regular expressions (\d* handles optional numbers)
+patternList = {'_a\d*_t_K_d\.mat', '_a\d*_c_K_d\.mat', ...
+               '_k\d*_t_K_d\.mat', '_k\d*_c_K_d\.mat', ...
+               '_i\d*_t_K_d\.mat', '_i\d*_c_K_d\.mat'};
+
+% Populate the cell array
+for rowIdx = 1:groupCount
+    currentGroup = uniqueGroups{rowIdx};
+    % Isolate files belonging to the current PSY group
+    groupFiles = files(contains(files, currentGroup));
+    
+    for colIdx = 1:6
+        % Find the specific file matching the column pattern
+        matchIndex = ~cellfun(@isempty, regexp(groupFiles, patternList{colIdx}));
+        if any(matchIndex)
+            matchedFile = groupFiles(matchIndex);
+            fNamesList{rowIdx, colIdx} =fullfile(rootFolder, matchedFile{1});
+        end
+    end
+end
+
+
+for i=1:1:size(fNamesList,1)
+    fNames=fNamesList(i,:)';
+    registerLSCItoLSCI(s,fNames); %LAUNCHES THE UTILITY ROUTINE
+end
+% fNamesVSM  = fullfile({files.folder}', {files.name}');
+% fNamesPLS=regexprep(fNamesVSM, '\_t_K_d.mat$', '_c_K_d.mat');
+% fNames=cat(1,fNamesPLS,fNamesVSM);
+
+%registerLSCItoLSCI(s,fNames); %LAUNCHES THE UTILITY ROUTINE
 
 %% STEP 8 Convert contrast to blood flow index
 close all
@@ -213,7 +260,7 @@ s.pcts=0:10:100;
 s.otsuMaxN=5;
 s.otsuElbow= 0.05;
 
-s.analysePerPixel  = false;
+s.analysePerPixel  = true;
 s.keepSpectrum=false;
 s.keepClustering=true;
 s.reconstructData=true;
@@ -254,12 +301,55 @@ s.libraryFolder=libraryFolder;
 s.useReference=true; 
 s.libraryFolder=libraryFolder;
 
+
+% files      = dir(fullfile(rootFolder,'**','*_PSY*_BFI_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+% files={files.name};
+% 
+% % Extract unique PSY groups
+% psyIdentifiers = regexp(files, 'PSY\d+', 'match', 'once');
+% uniqueGroups = unique(psyIdentifiers(~cellfun(@isempty, psyIdentifiers)));
+% groupCount = length(uniqueGroups);
+% 
+% % Preallocate the final cell array
+% fNamesList = cell(groupCount, 6);
+% 
+% % Define the column sorting logic using regular expressions (\d* handles optional numbers)
+% patternList = {'_a\d*_c_BFI_d\.mat', '_a\d*_t_BFI_d\.mat', ...
+%                '_k\d*_c_BFI_d\.mat', '_k\d*_t_BFI_d\.mat', ...
+%                '_i\d*_c_BFI_d\.mat', '_i\d*_t_BFI_d\.mat'};
+% 
+% % Populate the cell array
+% for rowIdx = 1:groupCount
+%     currentGroup = uniqueGroups{rowIdx};
+%     % Isolate files belonging to the current PSY group
+%     groupFiles = files(contains(files, currentGroup));
+% 
+%     for colIdx = 1:6
+%         % Find the specific file matching the column pattern
+%         matchIndex = ~cellfun(@isempty, regexp(groupFiles, patternList{colIdx}));
+%         if any(matchIndex)
+%             matchedFile = groupFiles(matchIndex);
+%             fNamesList{rowIdx, colIdx} =fullfile(rootFolder, matchedFile{1});
+%         end
+%     end
+% end
+% 
+% 
+% for i=1:1:size(fNamesList,1)
+%     fNames=fNamesList(i,:)';
+%     s.refFName=fNames{1};
+%     setTypes(s,fNames);
+% end
+% 
+% 
 files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
 fNamesVSM  = fullfile({files.folder}', {files.name}');
 fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_d.mat$', '_c_BFI_d.mat');
-fNames=cat(1,fNamesPLS,fNamesVSM);
+for i=1:1:numel(fNamesVSM)
+    fNames=cat(1,fNamesPLS(i),fNamesVSM(i));
 s.refFName=fNames{1};
 setTypes(s,fNames);
+end
 
 %% STEP 11 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
@@ -341,3 +431,14 @@ title(conds{i})
 ylim([0.01,0.07])
 end
 set(gcf,'Color','w');
+
+%%
+clear all
+rootFolder = 'F:\'; %root folder for the files lookup
+files      = dir(fullfile(rootFolder,'**','*_t_BFI_d.mat')); %<--- use regexp to define the files of interest
+fNames     = fullfile({files.folder}', {files.name}');
+
+for i=1:1:numel(fNames)
+results=load(fNames(i),'results');
+r(i)=results;
+end

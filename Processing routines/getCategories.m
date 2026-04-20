@@ -45,6 +45,7 @@
 % s.sSizeN=15; % Odd, approximately 2 times larger than small vessels diameter
 % s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
 % s.deSens=1; % integer, 1 or higher. 1 - maximally sensitive to smallest vessels but also noisy larger values reduce small vessel sensitivity
+% s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
 % % %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
 % s.lThinN=2; % Large vessels thinning (appears as internal edges)
 % s.imOpen=2; % Small vessels thinning (appears as internal edges)
@@ -174,7 +175,7 @@ for fidx=1:1:numel(fNames)
        % end
         
         tmp2(img<=pval)=0;        
-        tmp2=bwareaopen(tmp2,s.sSizeN.*s.sSizeN);        
+        tmp2=bwareaopen(tmp2,round(s.sSizeN.*s.sSizeN.*s.sSizeScale));        
         tmp=tmp+tmp2;        
     end
     cMask=int32(mask);

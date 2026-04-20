@@ -41,7 +41,7 @@ for fidx=1:1:numel(fNames)
     fn = fieldnames(results);
     for k=1:numel(fn)
         if strcmp(fn{k}, 'sData') || strcmp(fn{k}, 'dvsData') || strcmp(fn{k}, 'dvsDiameter')
-            subDataIn=(results.(fn{k})-mean(results.(fn{k}),1))./mean(results.(fn{k}),1);
+            subDataIn=single((results.(fn{k})-mean(results.(fn{k}),1))./mean(results.(fn{k}),1));
             if numel(subDataIn)>0
                 sz=size(subDataIn);
                 if s.reconstructData
@@ -276,9 +276,10 @@ for fidx=1:1:numel(fNames)
         results.vsm.ppxAD=zeros(sz(1),sz(2),2,sum(coi<0.05),'single');
         tic
         for i=1:sz(1)
-            subDataIn=squeeze((source.data(i,:,:)-mean(source.data(i,:,:),3))./mean(source.data(i,:,:),3));
+            subDataIn=single(squeeze((source.data(i,:,:)-mean(source.data(i,:,:),3))./mean(source.data(i,:,:),3)));
             subDataOut=squeeze(results.vsm.ppxAD(i,:,:,:));
             parfor j=1:sz(2)
+                if sum(isnan(subDataIn(j,:)),'all')==0
                 wtts=abs(wt(fb,squeeze(subDataIn(j,:))));
                 wtts=abs(wtts(:,coi<0.05));
                 wtts=interp1(fwt,wtts,f);
@@ -287,6 +288,7 @@ for fidx=1:1:numel(fNames)
                 tsc=-trapz(f(idxsCFR),wtts(idxsCFR,:),1);
                 tsc=tsc(:)./(cFR(2)-cFR(1));
                 subDataOut(j,:,:)=cat(1,ts',tsc');
+                end
             end
             results.vsm.ppxAD(i,:,:,:)=subDataOut;
             fprintf('Batch %d/%d processed. Elapsed: %.2fs\n', i, sz(1), toc);

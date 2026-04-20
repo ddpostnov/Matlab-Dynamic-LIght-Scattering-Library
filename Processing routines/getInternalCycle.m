@@ -244,24 +244,26 @@ for fidx=1:1:length(fNames)
     pulsesToReject(14,:)=round(a);
 
     subplot(2,2,[2,4])
-    hold on
-    for i=1:1:size(pulsesList,1)
-        plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[tsBFIF(pulsesList(i,1)),tsBFIF(pulsesList(i,3))],'ok')
-        if sum(pulsesToReject(:,i))==0
-            plot(time(pulsesList(i,1):pulsesList(i,3)),tsBFIF(pulsesList(i,1):pulsesList(i,3)),'g')
-        else
-            plot(time(pulsesList(i,1):pulsesList(i,3)),tsBFIF(pulsesList(i,1):pulsesList(i,3)),'r')
-        end
-        for ii=1:1:size(pulsesToReject,1)
-            if pulsesToReject(ii,i)==0
-                plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2,min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2],'g');
-            else
-                plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2,min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2],'r');
-            end
+   plot(time,1./(tsK.*tsK));
 
-        end
-    end
-    hold off
+    % hold on
+    % for i=1:1:size(pulsesList,1)
+    %     plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[tsBFIF(pulsesList(i,1)),tsBFIF(pulsesList(i,3))],'ok')
+    %     if sum(pulsesToReject(:,i))==0
+    %         plot(time(pulsesList(i,1):pulsesList(i,3)),tsBFIF(pulsesList(i,1):pulsesList(i,3)),'g')
+    %     else
+    %         plot(time(pulsesList(i,1):pulsesList(i,3)),tsBFIF(pulsesList(i,1):pulsesList(i,3)),'r')
+    %     end
+    %     for ii=1:1:size(pulsesToReject,1)
+    %         if pulsesToReject(ii,i)==0
+    %             plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2,min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2],'g');
+    %         else
+    %             plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2,min(tsBFIF)-(max(tsBFIF)-min(tsBFIF)).*ii/size(pulsesToReject,1)/2],'r');
+    %         end
+    % 
+    %     end
+    % end
+    % hold off
 
     pulsesListFinal=pulsesList;
     for i=size(pulsesList,1):-1:1
@@ -379,6 +381,7 @@ for fidx=1:1:length(fNames)
     ylabel('BFI')
     sgtitle(['sLSCIMMM ',strrep(tmp{end},'_',' ')]);
     drawnow
+    print(h,strrep(s.fName,'.rls','_ic2.jpg'), '-djpeg', '-r300');
 
     disp('Saving the results');
     settings.internalCycle=s;
@@ -388,6 +391,6 @@ for fidx=1:1:length(fNames)
     save(strrep(s.fName,'.rls','_c_K_s.mat'),'settings','-v7.3');
     disp('Saving complete');
     toc
-    print(h,strrep(s.fName,'.rls','_ic2.jpg'), '-djpeg', '-r300');
+    
 end
 end

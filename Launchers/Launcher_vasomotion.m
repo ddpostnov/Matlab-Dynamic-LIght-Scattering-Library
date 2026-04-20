@@ -81,6 +81,7 @@ s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
 s.lSizeN=101; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
 s.deSens=1;
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS

@@ -387,6 +387,27 @@ for fidx=1:1:numel(fNames)
                     sD=sD.*s.pInterpF;
                     xx = round( (xx - limX(1)) * s.pInterpF ) + 1;
                     yy = round( (yy - limY(1)) * s.pInterpF ) + 1;
+
+                    xx=xx(:);
+                    yy=yy(:);
+                    stepDist = hypot(diff(xx), diff(yy));
+
+                    % Identify gaps larger than adjacent diagonals but smaller than the threshold
+                    gapIndices = find(stepDist > 1.5 & stepDist < s.gSizeN.*s.pInterpF);
+
+                    for k = flip(gapIndices(:)')
+                        pointCount = ceil(stepDist(k));
+                        % Generate linear coordinate insertions
+                        fillX = round(linspace(xx(k), xx(k+1), pointCount + 1)');
+                        fillY = round(linspace(yy(k), yy(k+1), pointCount + 1)');
+                        % Splice arrays to insert interpolated pixels, excluding existing endpoints
+                        xx = [xx(1:k); fillX(2:end-1); xx(k+1:end)];
+                        yy = [yy(1:k); fillY(2:end-1); yy(k+1:end)];
+                    end
+
+
+
+
                     v     = pca([xx(:) yy(:)]);
                     theta = atan2d(v(2,1), v(1,1));
 
@@ -400,7 +421,13 @@ for fidx=1:1:numel(fNames)
 
 
                     if (max(xx)-min(xx))>=(max(yy)-min(yy))
+                        try
                         dataProfile=nan(numel(xx),sum(sD)*2+1,size(dataROI,3));
+                        catch
+                            warning('Segment is too large - skipping due to memory limitaion')
+                            continue;
+                        end
+                        
                         if (min(yy)-sum(sD))>0 && (max(yy)+sum(sD))<size(dataROI,1)
                             for i=1:1:numel(xx)
                                 dataProfile(i,:,:)=dataROI(yy(i)-sum(sD):yy(i)+sum(sD),xx(i),:);
@@ -410,7 +437,12 @@ for fidx=1:1:numel(fNames)
                             continue;
                         end
                     else
+                        try
                         dataProfile=nan(numel(yy),sum(sD)*2+1,size(dataROI,3));
+                        catch
+                            warning('Segment is too large - skipping due to memory limitaion')
+                            continue;
+                        end
                         if (min(xx)-sum(sD))>0 && (max(xx)+sum(sD))<size(dataROI,2)
                             for i=1:1:numel(yy)
                                 dataProfile(i,:,:)=dataROI(yy(i),xx(i)-sum(sD):xx(i)+sum(sD),:);
@@ -473,6 +505,8 @@ for fidx=1:1:numel(fNames)
                         end
                     end
 
+
+
                     tmp=zeros(size(dataROI));
                     if (max(xx)-min(xx))>=(max(yy)-min(yy))
                         for i=1:1:numel(xx)
@@ -497,8 +531,6 @@ for fidx=1:1:numel(fNames)
 
                     dataROI=source.data(limY(1):limY(2),limX(1):limX(2),:);
                     compVal=max(dataROI(:));
-                    dataROI=compVal-dataROI;
-
 
 
                     if test1>=s.minOverlapMask && test2>=s.minOverlapSelf && test3

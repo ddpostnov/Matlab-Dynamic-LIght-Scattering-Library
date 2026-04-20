@@ -56,6 +56,7 @@ s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
 s.lSizeN=81; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=19; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
 s.lThinN=2; % Large vessels thinning (appears as internal edges)
@@ -146,6 +147,9 @@ s.libraryFolder=libraryFolder;
 s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
 s.sMinL=15; % Minimum length for segments
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
+s.simR=0.3;
+s.difR=0.4;
+s.correctNodes=true;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
