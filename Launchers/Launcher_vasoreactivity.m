@@ -1,5 +1,4 @@
-% Used for analysis of externally triggered neurovascular coupling responses.
-% Use Launcher_NVC.m. Ensure to edit the file names and settings according to the project needs.
+% Launcher example for vasoreactivity or vasomotion analysis. For vasomotion - 25 fps or higher raw data is advised
 
 %% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
 %LIBRARY PATH - add YOUR path manualy here:
@@ -78,58 +77,8 @@ fNames=setFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names wer
 
 %RUN THE PROCESSING ROUTINE
 splitRegions(s,fNames(:));
-%% STEP 4 Get external cycle
-close all
-clearvars -except fNames libraryFolder rootFolder
-s.libraryFolder=libraryFolder;
 
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - STIM PARAMETERS
-s.enablelRejectionModification=1;
-%Type of stimulation start information. Use either 'manual' for a list of
-%starting times to be used in the 'HH:mm:ss.SSS' format,or 'offset' for
-%stimulation that starts at a fixed time from the recording start
-%Note: stim start time corresponds to start of the first epoch, not the
-%stimulation itself
-s.stimStartType='offset';
-%Set the stim offset (for offset stim start mode)
-s.stimOffset=0; %seconds
-%Set the list of stimulation start timestamps (for manual stim start mode)
-stimStart{1}='09:23:31.346'; %'HH:mm:ss.SSS'
-
-%define epochs (repeated stimulations) parameters
-s.epochsN=20;
-s.epochDurationSec=30;
-%duration of single epoch, seconds
-%time from start of the epoch considered to be baseline. Example [0,5]
-%means that baseline starts with the epoch start (thus 0) and ends in 5
-%seconds.
-s.epochBaselineSec=[0,10];
-s.epochStimStartSec=10; %time when stimulation actually starts
-
-%time from the end of the epoch when flow is expected to return to baseline
-%Example: [-5,0] means that finale starts 5 seconds before the end of the
-%epoch and ends when the epoch ends.
-s.epochFinaleSec=[-5,0];
-
-s.maskType='cMask'; %'basic','cMask','selection';
-
-%ADJUSTED IF NECESSARY - QUALITY CHECK
-s.rejectBlCoef=1; %use Inf to disable rejection by this parameter
-s.rejectEpochCoef=1; %use Inf to disable rejection by this parameter
-s.rejectFinCoef=1; %use Inf to disable rejection by this parameter
-s.rejectPeakCoef=1; %use Inf to disable rejection by this parameter
-s.rejectBlSimCoef=1; %use Inf to disable rejection by this parameter
-s.rejectSimCoef=1; %use Inf to disable rejection by this parameter
-s.rejectTimeLoss=0.5; %allowed time loss due to grabbing faluere in seconds per epoch
-s.rejectFirstEpoch=1; %always reject the first epoch
-
-%SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-getExternalCycle(s,fNames(:));
-
-
-%% STEP 5 Perform segmentation
+%% STEP 4 Perform segmentation
 close all
 clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
@@ -142,7 +91,6 @@ s.prchNSize=30; % Parenchymal pixels neighbourhoud.
 s.correctNodes=true; % Enable/disable branching correction (e.g. when a vessel is suspected to be crossed by another vessel, rather than to branch)
 s.simR=0.3; % minimal similarity ratio between branches to be considered the same vessel
 s.difR=0.4; % minimal difference ratio to be considered different vessels
-
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
@@ -161,7 +109,7 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=setFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 getSegmentation(s, fNames(:));
@@ -180,7 +128,7 @@ s.matchSegmentation=true;
 s.prchNSize=30; % Parenchymal pixels neighbourhoud - same as in the segmentation step
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_K_d.mat','[A-Z]+\d+');
+fNames=setFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -199,9 +147,34 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=setFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
+
+%% STEP 7 (Optional) Perform vasomotion analysis
+close all
+clearvars -except fNames libraryFolder rootFolder
+
+s.libraryFolder=libraryFolder;
+s.vFR=[0.05,0.25];
+s.cFR=[0.4,0.6];
+s.wFR=[0.01,1];
+s.wVPO=10;
+s.tgtFS=1; %Hz
+s.pcts=0:10:100;
+
+s.otsuMaxN=5;
+s.otsuElbow= 0.05;
+
+s.analysePerPixel  = true;
+s.keepSpectrum=false;
+s.keepClustering=true;
+s.reconstructData=true;
+
+%SET FILE NAMES HERE
+fNames=setFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 8 Assign vessel types and regions of interest
 close all
@@ -217,7 +190,7 @@ s.libraryFolder=libraryFolder;
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_BFI_d.mat','[A-Z]+\d+');
+fNames=setFileNamesList(rootFolder,'*_t_BFI_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -227,7 +200,7 @@ end
 
 %% STEP 8 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=setFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 

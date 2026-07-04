@@ -47,7 +47,7 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
 end
 
 for fidx=1:1:numel(fNames)
-    
+     if ~isempty(fNames{fidx})
     tic
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     fName=fNames{fidx};
@@ -177,6 +177,6 @@ for fidx=1:1:numel(fNames)
         
         writetable(T,fName,'Sheet','dvsDiameter');
     end
-
+     end
 end
 end

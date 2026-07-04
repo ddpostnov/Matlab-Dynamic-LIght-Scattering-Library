@@ -71,6 +71,7 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat')|| contains(s,'_I_d.ma
 end
 
 for fidx=1:1:numel(fNames)
+     if ~isempty(fNames{fidx})
     tic
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     s.fName=fNames{fidx};
@@ -108,86 +109,86 @@ for fidx=1:1:numel(fNames)
     sLines = int32(bwlabel(sLines));
 
     if s.correctNodes
-    numLabels = max(sLines(:));
+        numLabels = max(sLines(:));
 
-    % Compute segment lumen distances
-    
-    segmentMetrics = zeros(numLabels, 2);
-    for labelIndex = 1:numLabels
-        segmentMask = (sLines == labelIndex);
-        segmentMetrics(labelIndex, 1) = sum(segmentMask(:));
-        segmentMetrics(labelIndex, 2) = mean(dtLumen(segmentMask));
-    end
+        % Compute segment lumen distances
 
-    % Define topological criteria
-    similarityTolerance = s.simR;
-    differenceRatio = s.difR;
+        segmentMetrics = zeros(numLabels, 2);
+        for labelIndex = 1:numLabels
+            segmentMask = (sLines == labelIndex);
+            segmentMetrics(labelIndex, 1) = sum(segmentMask(:));
+            segmentMetrics(labelIndex, 2) = mean(dtLumen(segmentMask));
+        end
 
-    % --- Implement Connected Components Node Clustering ---
-    labeledNodes = bwlabel(nodes,8);
-    numNodeClusters = max(labeledNodes(:));
+        % Define topological criteria
+        similarityTolerance = s.simR;
+        differenceRatio = s.difR;
 
-    for clusterIndex = 1:numNodeClusters
-        % Isolate the current contiguous node cluster
-        currentClusterMask = (labeledNodes == clusterIndex);
+        % --- Implement Connected Components Node Clustering ---
+        labeledNodes = bwlabel(nodes,8);
+        numNodeClusters = max(labeledNodes(:));
 
-        % Dilate the cluster by 1 pixel to detect all adjacent segment labels
-        dilatedCluster = imdilate(currentClusterMask, strel('square', 3));
+        for clusterIndex = 1:numNodeClusters
+            % Isolate the current contiguous node cluster
+            currentClusterMask = (labeledNodes == clusterIndex);
 
-        % Extract non-zero labels from sLines that intersect the dilated perimeter
-        connectingPixels = sLines(dilatedCluster & (sLines > 0));
-        connectedLabels = nonzeros(unique(connectingPixels));
+            % Dilate the cluster by 1 pixel to detect all adjacent segment labels
+            dilatedCluster = imdilate(currentClusterMask, strel('square', 3));
 
-        if numel(connectedLabels) >= 3
-            % Retrieve mean radii estimates for connecting segments
-            segmentRadii = zeros(numel(connectedLabels), 2);
-            for branchIndex = 1:numel(connectedLabels)
-                labelIdx = connectedLabels(branchIndex);
-                segmentRadii(branchIndex, 1) = double(labelIdx);
-                segmentRadii(branchIndex, 2) = segmentMetrics(labelIdx, 2);
-            end
+            % Extract non-zero labels from sLines that intersect the dilated perimeter
+            connectingPixels = sLines(dilatedCluster & (sLines > 0));
+            connectedLabels = nonzeros(unique(connectingPixels));
 
-            % Sort segments by diameter descendantly
-            [~, sortIdx] = sort(segmentRadii(:, 2), 'descend');
-            sortedSegments = segmentRadii(sortIdx, :);
-            r1 = sortedSegments(1, 2);
-            r2 = sortedSegments(2, 2);
-            r3 = sortedSegments(3, 2);
-
-            % Evaluate continuity and bifurcation conditions
-            isSimilar = r1 < (similarityTolerance * r2 + r2);
-            isBifurcation = r2 >= (differenceRatio * r3 + r3);
-
-            if (isSimilar && isBifurcation) || (r1 < (similarityTolerance/2 * r2 + r2)) || (r1>10 && abs(r2 - r1) < 1) || (r2 >= (differenceRatio*2 * r3 + r3))
-                % Define truncation limit as average radius of the parent vessel
-                truncationDistance = ceil((r1 + r2)/2);
-
-                % Apply geodesic truncation to daughter branches
-                for smallBranchIndex = 3:size(sortedSegments, 1)
-                    smallLabel = sortedSegments(smallBranchIndex, 1);
-                    branchMask = (sLines == smallLabel);
-
-                    % Seed the geodesic transform using the entire junction cluster
-                    combinedMask = branchMask | currentClusterMask;
-
-                    % Calculate constrained path distance originating from the cluster edge
-                    geoDist = bwdistgeodesic(combinedMask, currentClusterMask, 'quasi-euclidean');
-
-                    % Eliminate intraluminal pixels of the branching vessel
-                    pixelsToRemove = (geoDist > 0) & (geoDist <= truncationDistance);
-                    sLinesIni(pixelsToRemove) = 0;
+            if numel(connectedLabels) >= 3
+                % Retrieve mean radii estimates for connecting segments
+                segmentRadii = zeros(numel(connectedLabels), 2);
+                for branchIndex = 1:numel(connectedLabels)
+                    labelIdx = connectedLabels(branchIndex);
+                    segmentRadii(branchIndex, 1) = double(labelIdx);
+                    segmentRadii(branchIndex, 2) = segmentMetrics(labelIdx, 2);
                 end
-                % Remove the modified node cluster from the mask
-                nodes(currentClusterMask) = 0;
+
+                % Sort segments by diameter descendantly
+                [~, sortIdx] = sort(segmentRadii(:, 2), 'descend');
+                sortedSegments = segmentRadii(sortIdx, :);
+                r1 = sortedSegments(1, 2);
+                r2 = sortedSegments(2, 2);
+                r3 = sortedSegments(3, 2);
+
+                % Evaluate continuity and bifurcation conditions
+                isSimilar = r1 < (similarityTolerance * r2 + r2);
+                isBifurcation = r2 >= (differenceRatio * r3 + r3);
+
+                if (isSimilar && isBifurcation) || (r1 < (similarityTolerance/2 * r2 + r2)) || (r1>10 && abs(r2 - r1) < 1) || (r2 >= (differenceRatio*2 * r3 + r3))
+                    % Define truncation limit as average radius of the parent vessel
+                    truncationDistance = ceil((r1 + r2)/2);
+
+                    % Apply geodesic truncation to daughter branches
+                    for smallBranchIndex = 3:size(sortedSegments, 1)
+                        smallLabel = sortedSegments(smallBranchIndex, 1);
+                        branchMask = (sLines == smallLabel);
+
+                        % Seed the geodesic transform using the entire junction cluster
+                        combinedMask = branchMask | currentClusterMask;
+
+                        % Calculate constrained path distance originating from the cluster edge
+                        geoDist = bwdistgeodesic(combinedMask, currentClusterMask, 'quasi-euclidean');
+
+                        % Eliminate intraluminal pixels of the branching vessel
+                        pixelsToRemove = (geoDist > 0) & (geoDist <= truncationDistance);
+                        sLinesIni(pixelsToRemove) = 0;
+                    end
+                    % Remove the modified node cluster from the mask
+                    nodes(currentClusterMask) = 0;
+                end
             end
         end
-    end
-    sLines = sLinesIni - nodes;
-    sLines=bwareaopen(sLines,s.sMinL);
-    
+        sLines = sLinesIni - nodes;
+        sLines=bwareaopen(sLines,s.sMinL);
 
-    % Final topological cleanup and reassignment
-    sLines = int32(bwlabel(sLines > 0));
+
+        % Final topological cleanup and reassignment
+        sLines = int32(bwlabel(sLines > 0));
     end
 
     labels=nonzeros(unique(sLines));
@@ -231,19 +232,21 @@ for fidx=1:1:numel(fNames)
     sMap(valid & cMask==1)         = lbl(valid & cMask==1);                   % updated label map
 
 
-
-
-
     %Build segments table
     varTypes = ["double","double","double","double","double","double","double","double"];
     varNames = ["idx","category","length","CLR","diameter","std(diameter)","area","nearestVesIdx"];
     sMetrics=table('Size',[max(sMap(:)),8],'VariableTypes',varTypes,'VariableNames',varNames);
     sData=zeros(size(source.data,3),max(sMap(:)));
-    data=reshape(source.data,[],size(source.data,3));
+    dataSize=size(source.data);
+    source.data=reshape(source.data,[],dataSize(3));
     for i=1:1:max(sMap(:))
         area=sum(sMap(:)==i);
         if area>0
-            sData(:,i)=mean(data(sMap(:)==i,:),1,'omitnan');
+            if strcmp(s.sStat,'mean')
+            sData(:,i)=mean(source.data(sMap(:)==i,:),1,'omitnan');
+            else %DEFAULT 
+            sData(:,i)=median(source.data(sMap(:)==i,:),1,'omitnan');
+            end
             c=unique(cMask(sMap==i));
             if numel(c)~=1
                 error("Mix of categories detected in the region");
@@ -303,7 +306,7 @@ for fidx=1:1:numel(fNames)
         end
     end
     toc
-
+    source.data=reshape(source.data,dataSize);
 
     if s.attmemptDS
         nodesD=bwdist(~dMask).*nodes;
@@ -320,12 +323,13 @@ for fidx=1:1:numel(fNames)
 
         tmp=ones(size(cMask));
         tmp(cMask==0)=nan;
-        data=source.data.*tmp;
-        data=imcomplement(data);
+        img=mean(source.data,3,'omitnan');
+        img=img.*tmp;
+        img=imcomplement(img);
         d2C=bwdist(~dMask).*(dMask);
-        d2MY=islocalmax(mean(data,3,'omitnan'),1).*(cMask==5);
+        d2MY=islocalmax(img,1).*(cMask==5);
         [~,d2MY]=bwdist(d2MY);
-        d2MX=islocalmax(mean(data,3,'omitnan'),2).*(cMask==5);
+        d2MX=islocalmax(img,2).*(cMask==5);
         [~,d2MX]=bwdist(d2MX);
         dvsDiameter=zeros(size(source.data,3),max(sLines(:)));
         varTypes = ["int32","single","single","single","single","single"];
@@ -412,22 +416,26 @@ for fidx=1:1:numel(fNames)
                     theta = atan2d(v(2,1), v(1,1));
 
                     maskROI=single(~((vsMap(limY(1):limY(2),limX(1):limX(2))~=lineIdx & vsMap(limY(1):limY(2),limX(1):limX(2))~=0) | cMask(limY(1):limY(2),limX(1):limX(2))==2));
-                    dataROI=source.data(limY(1):limY(2),limX(1):limX(2),:);
+                    dataROI=single(source.data(limY(1):limY(2),limX(1):limX(2),:));
                     compVal=max(dataROI(:));
                     maskROI(maskROI==0)=NaN;
-                    dataROI=compVal-dataROI;
+                    if contains(s.fName,'_K_d.mat')
+                        dataROI=compVal-dataROI;
+                    elseif contains(s.fName,'_I_d.mat')
+                        dataROI=dataROI-min(dataROI(dataROI(:)>0));
+                    end
                     dataROI=dataROI.*maskROI;
                     dataROI=imresize3(dataROI,[size(dataROI,1)*s.pInterpF,size(dataROI,2)*s.pInterpF,size(dataROI,3)]);
 
 
                     if (max(xx)-min(xx))>=(max(yy)-min(yy))
                         try
-                        dataProfile=nan(numel(xx),sum(sD)*2+1,size(dataROI,3));
+                            dataProfile=nan(numel(xx),sum(sD)*2+1,size(dataROI,3));
                         catch
                             warning('Segment is too large - skipping due to memory limitaion')
                             continue;
                         end
-                        
+
                         if (min(yy)-sum(sD))>0 && (max(yy)+sum(sD))<size(dataROI,1)
                             for i=1:1:numel(xx)
                                 dataProfile(i,:,:)=dataROI(yy(i)-sum(sD):yy(i)+sum(sD),xx(i),:);
@@ -438,7 +446,7 @@ for fidx=1:1:numel(fNames)
                         end
                     else
                         try
-                        dataProfile=nan(numel(yy),sum(sD)*2+1,size(dataROI,3));
+                            dataProfile=nan(numel(yy),sum(sD)*2+1,size(dataROI,3));
                         catch
                             warning('Segment is too large - skipping due to memory limitaion')
                             continue;
@@ -543,7 +551,11 @@ for fidx=1:1:numel(fNames)
                         dvsMetrics(counter,:)={lineIdx,sL,sCLR,sR2,test1,test2};
                         dvsDiameter(:,counter)=(idxR-idxL)* abs(sind(theta))./s.pInterpF;
                         for i=1:1:size(dataProfile,2)
-                            dvsData(i,counter)=compVal-mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan');
+                            if contains(s.fName,'_K_d.mat')
+                                dvsData(i,counter)=compVal-mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan');
+                            elseif contains(s.fName,'_I_d.mat')
+                                dvsData(i,counter)=mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan')-min(dataROI(dataROI(:)>0));
+                            end
                         end
                         counter=counter+1;
                     else
@@ -569,7 +581,12 @@ for fidx=1:1:numel(fNames)
 
     img=mean(source.data,3);
     img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
-    img=imcomplement(img);
+    if contains(s.fName,'_K_d.mat')
+        img=imcomplement(img);
+    elseif contains(s.fName,'_I_d.mat')
+        img=img-min(img(cMask(:)>0 & img(:)>0));
+    end
+
     fSize=floor((min(size(img))./20))*2+1;
     img=(img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize))).*(cMask>0);
 
@@ -604,10 +621,11 @@ for fidx=1:1:numel(fNames)
     print(f,strrep(s.fName,'.mat','_vs.jpg'), '-djpeg', '-r300');
 
     %Save the data
-    settings.vesselsSegmentation=s;
+    settings.getSegmentation=s;
     disp(['Saving the results. Elapsed time ',num2str(round(toc)),'s']);
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
     disp('Saving complete');
+end
 end
 end

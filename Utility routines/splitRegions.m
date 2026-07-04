@@ -58,64 +58,66 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
 end
 
 for fidx=1:1:numel(fNames)
-    tic
-    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
-    s.fName=fNames{fidx};
-    clearvars results source settings
-    load(s.fName,'source')
-    load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-    load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+    if ~isempty(fNames{fidx})
+        tic
+        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        s.fName=fNames{fidx};
+        clearvars results source settings
+        load(s.fName,'source')
+        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
+        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
 
-    resultsIni=results;
-    sourceIni=source;
+        resultsIni=results;
+        sourceIni=source;
 
-    if ~isfield(results,'regionsMask')
-        error('No regionsMask detected in the file.');
-    end
-
-    regionsMask=resultsIni.regionsMask;
-    for ridx=1:1:max(regionsMask(:))
-        results=resultsIni;
-        source=sourceIni;
-        [y,x] = find(regionsMask==ridx);
-        y=[min(y),max(y)];
-        x=[min(x),max(x)];
-
-        fn = fieldnames(results);
-        for k=1:numel(fn)
-            if size(results.(fn{k}),1)==size(regionsMask,1) & size(results.(fn{k}),2)==size(regionsMask,2)
-                tmp=zeros(y(2)-y(1)+1,x(2)-x(1)+1,size(results.(fn{k}),3),class(results.(fn{k})));
-                for i=1:1:size(results.(fn{k}),3)
-                    tmp(:,:,i)=results.(fn{k})(y(1):y(2),x(1):x(2),i);
-                end
-                results.(fn{k})=tmp;
-            end
+        if ~isfield(results,'regionsMask')
+            error('No regionsMask detected in the file.');
         end
 
-        fn = fieldnames(source);
-        for k=1:numel(fn)
-            if size(source.(fn{k}),1)==size(regionsMask,1) & size(source.(fn{k}),2)==size(regionsMask,2)
-                tmp=zeros(y(2)-y(1)+1,x(2)-x(1)+1,size(source.(fn{k}),3),class(source.(fn{k})));
-                for i=1:1:size(source.(fn{k}),3)
-                    tmp(:,:,i)=source.(fn{k})(y(1):y(2),x(1):x(2),i);
+        regionsMask=resultsIni.regionsMask;
+        for ridx=1:1:max(regionsMask(:))
+            results=resultsIni;
+            source=sourceIni;
+            [y,x] = find(regionsMask==ridx);
+            y=[min(y),max(y)];
+            x=[min(x),max(x)];
+
+            fn = fieldnames(results);
+            for k=1:numel(fn)
+                if size(results.(fn{k}),1)==size(regionsMask,1) & size(results.(fn{k}),2)==size(regionsMask,2)
+                    tmp=zeros(y(2)-y(1)+1,x(2)-x(1)+1,size(results.(fn{k}),3),class(results.(fn{k})));
+                    for i=1:1:size(results.(fn{k}),3)
+                        tmp(:,:,i)=results.(fn{k})(y(1):y(2),x(1):x(2),i);
+                    end
+                    results.(fn{k})=tmp;
                 end
-                source.(fn{k})=tmp;
             end
+
+            fn = fieldnames(source);
+            for k=1:numel(fn)
+                if size(source.(fn{k}),1)==size(regionsMask,1) & size(source.(fn{k}),2)==size(regionsMask,2)
+                    tmp=zeros(y(2)-y(1)+1,x(2)-x(1)+1,size(source.(fn{k}),3),class(source.(fn{k})));
+                    for i=1:1:size(source.(fn{k}),3)
+                        tmp(:,:,i)=source.(fn{k})(y(1):y(2),x(1):x(2),i);
+                    end
+                    source.(fn{k})=tmp;
+                end
+            end
+
+            disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames)),'. Region ',num2str(ridx),' out of ',num2str(max(regionsMask(:)))])
+
+            settings.splitRegions=s;
+            [path,name,extension]=fileparts(fNames{fidx});
+            fName = fullfile(path,['Roi' num2str(ridx) '_' name extension]);
+            save(fName,'source','-v7.3');
+            save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
+            save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
         end
-
-        disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames)),'. Region ',num2str(ridx),' out of ',num2str(max(regionsMask(:)))])
-
-        settings.splitRegions=s;
-        [path,name,extension]=fileparts(fNames{fidx});
-        fName = fullfile(path,['Roi' num2str(ridx) '_' name extension]);
-        save(fName,'source','-v7.3');
-        save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
-        save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
-    end
-    if s.deleteOriginal
-        delete(fNames{fidx});
-        delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
-        delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
+        if s.deleteOriginal
+            delete(fNames{fidx});
+            delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
+            delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
+        end
     end
 end
 end

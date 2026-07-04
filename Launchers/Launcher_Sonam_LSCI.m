@@ -3,9 +3,9 @@
 
 %% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
 %LIBRARY PATH - add YOUR path manualy here:
-libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
+libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
-rootFolder = 'C:\Dropbox\Work\Data\Line'; %root folder for the files lookup
+rootFolder = 'O:\HE_BFI-DATA\Sonam\B3_Black batch\LSCI\T1\FM1'; %root folder for the files lookup
 
 
 %% STEP 1 Process .rls files to get the temporal contrast for segmentation and vasomotion analysis
@@ -22,27 +22,23 @@ s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for te
 s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
 
 %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
-s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
+s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsI=[1,255]; %minimum (first value) and maximum (second value) of expected intensity.
 s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getContrast',false);
-
+fNames=setFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 2 Process .rls files to get the internal cycle data
+% STEP 2 Process .rls files to get the internal cycle data
 clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.trustLimitsK=[0.01,0.3]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
+s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
+s.trustLimitsI=[1,255]; %minimum (first value) and maximum (second value) of expected intensity.
 s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
 s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
 s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
@@ -65,19 +61,14 @@ s.contrastKernelPreproc=s.contrastKernelS; %contrast kernel used in preprocessin
 s.rangeFrq=1;%1/2; % relative frq range around the central frequency, Hz
 s.interpFactor=10; %Sets the number of points that will replace two consequitive values during the interpolation sequence.
 s.smoothCoef1=1/3; %in respect to minimum points per cycle value
-s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
-
-
+s.minPromCoef=1/20;%1/2; % in respect to the std of the signal
 
 %SET FILE NAMES HERE
 fNames=setFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getInternalCycle',false);
-
 %RUN THE PROCESSING ROUTINE
 getInternalCycle(s,fNames(:));
-%% STEP 3 Define pixel categories (optionally may be done on temporal contrast data only)
+%% STEP 3 Define pixel categories (optionally can be done on temporal contrast data only)
 close all
 clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
@@ -87,15 +78,15 @@ s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
 s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
-s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
+s.lSizeN=121; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=7; % Odd, approximately 2 times larger than small vessels diameter
-s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
 s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
 s.deSens=1; %can be used to reduce sensitivity to small objects
 s.lThinN=2; % Large vessels thinning 
 s.imOpen=0; % Small vessels thinning 
-s.iEdge=2; %setting internal edges for segmented vessels
-s.eEdge=2; %setting external edges for segmented vessels
+s.iEdge=3; %setting internal edges for segmented vessels
+s.eEdge=3; %setting external edges for segmented vessels
 
 %DO NOT CHANGE - META DATA
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
@@ -103,15 +94,12 @@ s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','l
 %SET FILE NAMES HERE
 fNames=setFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getCategories',false);
-
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
     getCategories(s,fNames(i,:)');
 end
 
-%% STEP 4 Assign same categories to the internal cycle (pulsatility) data 
+% STEP 4 Assign same categories to the internal cycle (pulsatility) data 
 % (OPTIONAL: used in combination with categories extration based on temporal contrast analysis only)
 close all
 clearvars -except fNames libraryFolder rootFolder
@@ -120,29 +108,9 @@ s.libraryFolder=libraryFolder;
 fNames=setFileNamesList(rootFolder,'*c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 fNamesRef=regexprep(fNames, '\_c_K_d.mat$', '_t_K_d.mat');
 
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getCategories',false);
-
 assignCategories(fNames,fNamesRef); %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 5 (OPTIONAL. Only use if 1 or more regions are defined in step 2) Split the regions. 
-close all
-clearvars -except fNames libraryFolder rootFolder
-
-s.libraryFolder=libraryFolder;
-%ADJUSTED IF NECESSARY - DELETE THE ORIGINAL FILES
-s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
-
-%SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','splitRegions',false);
-
-%RUN THE PROCESSING ROUTINE
-splitRegions(s,fNames(:));
-
-%% STEP 6 Perform segmentation
+%% STEP 5 Perform segmentation
 close all
 clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
@@ -175,12 +143,9 @@ s.pInterpF=4; % leave as is
 %SET FILE NAMES HERE -
 fNames=setFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getSegmentation',false);
-
 getSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 7 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
+%% STEP 7 Register LSCI files to the first file in the list
 close all
 clearvars -except fNames libraryFolder rootFolder
 
@@ -192,39 +157,16 @@ s.optimizer.MaximumIterations=500;
 s.tFormType='affine';
 s.matchSegmentation=true;
 s.prchNSize=50; % Parenchymal pixels neighbourhoud. Same as in segmentation
-s.silent=true; %run registration silently and generate report images
-s.forceMethod=''; % 'intensity' or 'correlation' to force in silent mode
-s.rotationLimit=45; % degrees; reject registrations rotating > 45 ([] = none)
-
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_K_d.mat','[A-Z]+\d+','_1WT.*_t_K_d\.mat$');
-
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','registerLSCItoLSCI',false);
-
-%OPTIONAL - backup files
-m=~cellfun(@isempty,fNames); cellfun(@copyfile,fNames(m),strrep(fNames(m),'.mat','_bckp.mat'));
+fNames=setFileNamesList(rootFolder,'*_K_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
     registerLSCItoLSCI(s,fNames(i,:)');
 end
 
-%% OPTIONAL - fix registration issues (MANUAL) - follows right after registration uses the same settings - therefore has to be launched sequentially or the settings have to be re-assigned
-
-%Example of manual fixing of badly registered files
-fNames=strrep(fNames,'.mat','_bckp.mat');
-fileIndexes=[1,17,18]; % should be [1,N1,N2,N3,N4] where 1 is always present as a reference, N1, N2 etc are badly registered files that require manual registration
-
-s.silent=false; %run registration silently and generate report images
-registerLSCItoLSCI(s,fNames(1,[1,17,18])');
-
-%Delete backups
-fNames=setFileNamesList(rootFolder,'*bckp.mat');
-cellfun(@delete,fNames);
-
-%% STEP 8 Convert contrast to blood flow index
+% STEP 8 Convert contrast to blood flow index
 close all
 clearvars -except fNames libraryFolder rootFolder
 
@@ -236,9 +178,6 @@ s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
 fNames=setFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getBFI',false);
 
 getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -265,9 +204,6 @@ s.reconstructData=true;
 %SET FILE NAMES HERE
 fNames=setFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-% Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getVasomotion',false);
-
 getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 10 Perform pulsatility analysis (strictly after conversion to BFI)
@@ -289,8 +225,6 @@ s.coefNames={'a1','a2','a3','a4','a5','b1','b2','b3','b4','b5','c','PR2'};
 %SET FILE NAMES HERE
 fNames=setFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getPulsatility',false);
-
 getPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 11 Assign vessel types and regions of interest
@@ -308,8 +242,6 @@ s.libraryFolder=libraryFolder;
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
 fNames=setFileNamesList(rootFolder,'*_BFI_d.mat','[A-Z]+\d+','1BP_c_BFI_d\.mat');
-
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','setTypes',false);
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)

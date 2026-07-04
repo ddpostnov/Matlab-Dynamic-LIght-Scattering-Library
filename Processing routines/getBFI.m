@@ -54,6 +54,7 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
 end
 
 for fidx=1:1:numel(fNames)
+     if ~isempty(fNames{fidx})
     tic
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     s.fName=fNames{fidx};
@@ -101,6 +102,7 @@ for fidx=1:1:numel(fNames)
         delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
         delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
     end
+     end
 end
 
     function data=calculateBFI(data,method)

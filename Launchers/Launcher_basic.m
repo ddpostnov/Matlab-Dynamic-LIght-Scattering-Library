@@ -2,13 +2,15 @@
 % A minimal Launcher that consists of contrast calculation and BFI conversion. 
 % Won’t fit the requirements for most of the research projects
 
+%% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
+%LIBRARY PATH - add YOUR path manualy here:
+libraryFolder = 'C:\Data\Martin\Matlab-Dynamic-LIght-Scattering-Library';
+addpath(genpath(libraryFolder));
+
 
 %% STEP 1 Process .rls files to get the contrast
-%LIBRARY PATH - add YOUR path manualy here:
-libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
-addpath(genpath(libraryFolder));
-libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
-addpath(genpath(libraryFolder));
+close all
+clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
@@ -26,6 +28,7 @@ s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of exp
 s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 s.manualMask=0; %allows manual subselection of the area to mask
 
+%Set the file names to process
 fNames{1}='C:\Dropbox\Work\Data\20230116_PSY01_a1_crop.rls';
 
 getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
@@ -33,14 +36,14 @@ getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 %% STEP 2 Convert contrast to blood flow index
 close all
 clearvars -except fNames libraryFolder rootFolder
-
 s.libraryFolder=libraryFolder;
+
 %ADJUSTED IF NECESSARY - DELETE ORIGINAL FILES
 s.deleteOriginal=true; %true or false
 %ADJUSTED IF NECESSARY - CONVERSION METHOD
 s.method="basic"; %only "basic" is avaliable
 
-%SET FILE NAMES HERE
+%Set the file names to process
 fNames{1}='C:\Dropbox\Work\Data\20230116_PSY01_a1_crop_t_K_d.mat';
 
 getBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE

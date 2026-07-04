@@ -64,59 +64,61 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.rls'), fNames(:)) )
 end
 
 for fidx=1:1:length(fNames)
-    %set file name to load data
-    s.fName=char(fNames{fidx});
-    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
-    clearvars results source settings
+    if ~isempty(fNames{fidx})
+        %set file name to load data
+        s.fName=char(fNames{fidx});
+        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        clearvars results source settings
 
-    % Launch contrast calculation from an RLS file
-    [source.data,source.time,results.timeStamp,s.trustMatrix]=...
-        getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
+        % Launch contrast calculation from an RLS file
+        [source.data,source.time,results.timeStamp,s.trustMatrix]=...
+            getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
 
-    imgK=squeeze(mean(source.data,3,'omitmissing'));
-    imgBFI=1./(imgK.*imgK);
-    results.imgI=s.trustMatrix(:,:,4);
-    results.imgK=imgK;
+        imgK=squeeze(mean(source.data,3,'omitmissing'));
+        imgBFI=1./(imgK.*imgK);
+        results.imgI=s.trustMatrix(:,:,4);
+        results.imgK=imgK;
 
-    % Set mask
-    results.mask=min(~isnan(source.data),[],3)...
-        & min(source.data>=s.trustLimitsK(1),[],3)...
-        & min(source.data<=s.trustLimitsK(2),[],3)...
-        & squeeze(s.trustMatrix(:,:,3))>=s.trustLimitsI(1)...
-        & squeeze(s.trustMatrix(:,:,3))<=s.trustLimitsI(2)...
-        & squeeze(s.trustMatrix(:,:,1))>s.minTrust(1)...
-        & squeeze(s.trustMatrix(:,:,2))>s.minTrust(2);
+        % Set mask
+        results.mask=min(~isnan(source.data),[],3)...
+            & min(source.data>=s.trustLimitsK(1),[],3)...
+            & min(source.data<=s.trustLimitsK(2),[],3)...
+            & squeeze(s.trustMatrix(:,:,3))>=s.trustLimitsI(1)...
+            & squeeze(s.trustMatrix(:,:,3))<=s.trustLimitsI(2)...
+            & squeeze(s.trustMatrix(:,:,1))>s.minTrust(1)...
+            & squeeze(s.trustMatrix(:,:,2))>s.minTrust(2);
 
-    h=figure;
-    h.WindowState='Maximize';
-    subplot(1,2,1)
-    imagesc(imgBFI)
-    clim([prctile(imgBFI(:),1),prctile(imgBFI(:),99)])
-    axis image
-    subplot(1,2,2)
-    imagesc(results.mask)
-    axis image
-    fNameshort=split(s.fName,'\');
-    fNameshort=fNameshort(end);
-    if s.manualMask==1
+        h=figure;
+        h.WindowState='Maximize';
         subplot(1,2,1)
-        results.mask=results.mask & roipoly;
-        hold on
-        visboundaries(results.mask)
-        hold off
+        imagesc(imgBFI)
+        clim([prctile(imgBFI(:),1),prctile(imgBFI(:),99)])
+        axis image
         subplot(1,2,2)
         imagesc(results.mask)
-    end
-    sgtitle(strrep(fNameshort,'_',' '));
-    drawnow
-    print(h,strrep(s.fName,'.rls','_c.jpg'), '-djpeg', '-r300');
+        axis image
+        fNameshort=split(s.fName,'\');
+        fNameshort=fNameshort(end);
+        if s.manualMask==1
+            subplot(1,2,1)
+            results.mask=results.mask & roipoly;
+            hold on
+            visboundaries(results.mask)
+            hold off
+            subplot(1,2,2)
+            imagesc(results.mask)
+        end
+        sgtitle(strrep(fNameshort,'_',' '));
+        drawnow
+        print(h,strrep(s.fName,'.rls','_c.jpg'), '-djpeg', '-r300');
 
-    % Save the settings and results
-    disp('Saving the results');
-    settings.contrastCalculation=s;
-    results.time=source.time;
-    save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3');
-    save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3');
-    save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3');
+        % Save the settings and results
+        disp('Saving the results');
+        settings.getContrast=s;
+        results.time=source.time;
+        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3');
+        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3');
+        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3');
+    end
 end
 end

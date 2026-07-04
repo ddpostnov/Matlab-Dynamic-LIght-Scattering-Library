@@ -1,16 +1,16 @@
-% Pulsatility-enabled data
-% Pulsatility analysis provides steady state pulsatility and blood flow information. Currently it is designed only for data with rich vascular features and high quality images.
-% Are your recordings captured accordingly? 194 frames per second, cranial window etc?
-% If you record multiple conditions – are they all in individual files?
-% Use Launcher_pulsatility.m. Ensure to edit the file names and settings according to the project needs.
+% Launcher example for pulsatility analysis. Cranial window and 194 fps raw data are advised.
+
+%% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
+%LIBRARY PATH - add YOUR path manualy here:
+libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
+addpath(genpath(libraryFolder));
+rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
+
 
 
 %% STEP 1 Process .rls files to get the internal cycle data
-%LIBRARY PATH - add YOUR path manualy here:
-libraryFolder = 'C:\Dropbox\Work\GitHub\DDPLab-private\Dynamic LIght Scattering Library v2.0';
-addpath(genpath(libraryFolder));
-libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\DDPLab-private\Dynamic LIght Scattering Library v2.0';
-addpath(genpath(libraryFolder));
+close all
+clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
@@ -41,76 +41,70 @@ s.smoothCoef1=1/3; %in respect to minimum points per cycle value
 s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 
 %SET FILE NAMES HERE
-%OPTION 1 - AUTOMATIC LOOKUP USING REGULAR EXPRESSIONS
-s.reCalculate=false; %rewrites the files if existing
-rootFolder = 'O:\HE_BFI-DATA\Sonam\B1_Red batch\LSCI\Female mouse 1'; %root folder for the files lookup
-files      = dir(fullfile(rootFolder,'**','*BP.rls')); %<--- use regexp to define the files of interest
-fNames     = fullfile({files.folder}', {files.name}');
-if ~s.reCalculate
-    outNames  = regexprep(fNames, '\.rls$', '_c_K_d.mat');
-    hasOut    = cellfun(@(f) isfile(f), outNames);
-    fNames    = fNames(~hasOut);
-end
+fNames=setFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-%OPTION 2 - SET PATH MANUALY, REQUIRES COMMENTING OUT OPTION 1
-% fNames{1}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_2hfollowup.rls";
-% fNames{2}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241217_ID251_baseline.rls";
-% fNames{3}="O:\HE_VSM\ChristianStaehr\data\Cardiac_arrest_CBF_mouse\LSCI\ID251\20241218_ID251_24hfollowup.rls";
-
-getInternalCycle(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
+%RUN THE PROCESSING ROUTINE
+getInternalCycle(s,fNames(:));
 
 %% STEP 2 Define pixel categories
 close all
 clearvars -except fNames libraryFolder rootFolder
-
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.trustLimitsK=[0.001,0.5]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.regionsN=0; %Numer of regions for manual selection. 0 if using entire window.
-s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
-s.sSizeN=11; % Odd, approximately 2 times larger than small vessels diameter
-s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
-s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
 
 %ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
-s.lThinN=2; % Large vessels thinning (appears as internal edges)
-s.sThinN=2; % Small vessels thinning (appears as internal edges)
-s.iniSizeN=7; % Odd number equal or larger than the spatial contrast kernel
+s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
+s.lSizeN=121; % Odd, approximately 2 times larger than the largest vessel
+s.sSizeN=7; % Odd, approximately 2 times larger than small vessels diameter
+s.sens=0.3; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
+s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
+s.deSens=1; %can be used to reduce sensitivity to small objects
+s.lThinN=2; % Large vessels thinning 
+s.imOpen=0; % Small vessels thinning 
+s.iEdge=3; %setting internal edges for segmented vessels
+s.eEdge=3; %setting external edges for segmented vessels
 
 %DO NOT CHANGE - META DATA
-s.categories={'background','parenchyma','unsegmented','externalWalls','internalWalls','lumen'}; %CATEGORIES
+s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*c_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
-fNames     = fullfile({files.folder}', {files.name}');
+fNames=setFileNamesList(rootFolder,'*_c_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getCategories(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
+%RUN THE PROCESSING ROUTINE
+for i=1:1:size(fNames,1)
+    getCategories(s,fNames(i,:)');
+end
 
-%% STEP 3 (OPTIONAL. Only use if 1 or more regions are defined in step 2) Split the regions. 
+
+%% STEP 3 (OPTIONAL. Only use if 1 or more regions are defined in step 2) Split the regions.
 close all
 clearvars -except fNames libraryFolder rootFolder
-
 s.libraryFolder=libraryFolder;
+
 %ADJUSTED IF NECESSARY - DELETE THE ORIGINAL FILES
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
-%USES THE SAME FILE NAMES AS ABOVE as STEP 2
-splitRegions(s,fNames); %LAUNCHES THE UTILITY ROUTINE
+%SET FILE NAMES HERE
+fNames=setFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+%RUN THE PROCESSING ROUTINE
+splitRegions(s,fNames(:));
 
 %% STEP 4 Perform segmentation
 close all
 clearvars -except fNames libraryFolder rootFolder
-
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
+s.sStat='median'; % Statistics used for calculation of traces per segment. 'median' or 'mean'. Median is used by default.
 s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
 s.sMinL=15; % Minimum length for segments
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
-s.simR=0.3;
-s.difR=0.4;
-s.correctNodes=true;
+s.correctNodes=true; % Enable/disable branching correction (e.g. when a vessel is suspected to be crossed by another vessel, rather than to branch)
+s.simR=0.3; % minimal similarity ratio between branches to be considered the same vessel
+s.difR=0.4; % minimal difference ratio to be considered different vessels
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
@@ -121,22 +115,22 @@ s.sMaxKK=0.3; %Max accepted std/mean for the initial contrast estimation
 s.iniNSize=7; % Odd number equal or larger than the spatial contrast kernel
 s.sMaxP2D=3; %Max accepted deviation of the fit from center estimate
 
+
 %ADJUSTED IF NECESSARY - QUALITY CHECK AND INTERPOALTION
+s.gSizeN=3;
 s.minOverlapMask=0.6; %minimum overlap between the initial center line and segmentation mask present in each frame
 s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial ROI
-s.pInterpF=10; % leave as is
+s.pInterpF=4; % leave as is
 
-%SET FILE NAMES HERE - IF REGIONS SPLIT WAS PERFORMED, OTHERWISE KEEP THE
-%SAME NAMES
-files      = dir(fullfile(rootFolder,'**','*c_K_d.mat')); 
-fNames     = fullfile({files.folder}', {files.name}');
+%SET FILE NAMES HERE
+fNames=setFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getSegmentation(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
+%RUN THE PROCESSING ROUTINE
+getSegmentation(s, fNames(:));
 
 %% STEP 5 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all
 clearvars -except fNames libraryFolder rootFolder
-
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED IF NECESSARY - REGISTRATION SETTINGS
@@ -146,18 +140,14 @@ s.tFormType='affine';
 s.matchSegmentation=true;
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
 
-%SET FILE NAMES HERE.
-%Registration has to be done ROI by ROI if split ROIS are used. It also has
-%to be done ANIMAL by ANIMAL if multiple animals are compared. It can be
-%convienintly done in a loop as below, but REQUIRES proper file naming.
-for idxA=24 %animals index list, can include all of the animal indexes, e.g.  [1,2,3,4,5] etc
-    for idxR=1:1 %ROIs index list - corresponds to the number of rois used in STEP 3
-        %files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*c_K_d.mat', idxR))); %Assuming the naming format as advised, e.g. LSCI_202304158_09WT_TN_MLH004BP and ROI splitting
-        files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*LH%03d*c_K_d.mat', idxR, idxA))); %Assuming the naming format as advised, e.g. LSCI_202304158_09WT_TN_MLH004BP and ROI splitting
-        fNames     = fullfile({files.folder}', {files.name}');
-        registerLSCItoLSCI(s,fNames); %LAUNCHES THE UTILITY ROUTINE
-    end
+%SET FILE NAMES HERE
+fNames=setFileNamesList(rootFolder,'*_c_K_d.mat','[A-Z]+\d+');
+
+%RUN THE PROCESSING ROUTINE
+for i=1:1:size(fNames,1)
+    registerLSCItoLSCI(s,fNames(i,:)');
 end
+
 
 %% STEP 6 Convert contrast to blood flow index
 close all
@@ -170,10 +160,9 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*c_K_d.mat'));
-fNames     = fullfile({files.folder}', {files.name}');
+fNames=setFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
+getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 7 Perform pulsatility analysis (strictly after conversion to BFI)
 close all
@@ -192,41 +181,34 @@ s.fitEquation = fittype('a1*sin(2*pi*x+b1)+a2*sin(4*pi*x+b2)+a3*sin(6*pi*x+b3)+a
 s.coefNames={'a1','a2','a3','a4','a5','b1','b2','b3','b4','b5','c','PR2'};
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*c_BFI_d.mat')); %<---ALWAYS REFER TO "_BFI_d.mat" files, but you may use regexp to define specific "_BFI_d.mat" files of interest
-fNames     = fullfile({files.folder}', {files.name}');
+fNames=setFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getPulsatility(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
+getPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 8 Assign vessel types and regions of interest
 close all
 clearvars -except fNames libraryFolder rootFolder
 
 s.libraryFolder=libraryFolder;
+
 %%IF DOING IT FILE BY FILE
-% s.useReference=false; 
+% s.useReference=false;
 % s.refFName=''; %use '' instead of " "
-%files      = dir(fullfile(rootFolder,'**','Roi*c_BFI_d.mat')); %<---ALWAYS REFER TO "_BFI_d.mat" files, but you may use regexp to define specific "_BFI_d.mat" files of interest
-%fNames     = fullfile({files.folder}', {files.name}');
-%setTypes(s,fNames);
+%fNames=setFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%setTypes(s,fNames(:));
 
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
-%Settings tabs with a reference has to be done ROI by ROI if split ROIS are used. It also has
-%to be done ANIMAL by ANIMAL if multiple animals are compared. It can be
-%convienintly done in a loop as below, but REQUIRES proper file naming.
-for idxA=24  %animals index list, can include all of the animal indexes, e.g.  [1,2,3,4,5] etc
-    for idxR=1:1 %ROIs index list - corresponds to the number of rois used in STEP 3
-        files      = dir(fullfile(rootFolder,'**','*c_BFI_d.mat')); %Assuming the naming format as advised, e.g. LSCI_202304158_09WT_TN_MLH004BP and ROI splitting
-        %files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*LH%03d*c_BFI_d.mat', idxR, idxA)));  %Assuming the naming format as advised, e.g. LSCI_202304158_09WT_TN_MLH004BP and ROI splitting
-        fNames     = fullfile({files.folder}', {files.name}');
-        s.refFName=fNames{1};
-        setTypes(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
-    end
+%SET FILE NAMES HERE
+fNames=setFileNamesList(rootFolder,'*_c_BFI_d.mat','[A-Z]+\d+','1BP_c_BFI_d\.mat');
+
+%RUN THE PROCESSING ROUTINE
+for i=1:1:size(fNames,1)
+    s.refFName=fNames{i,1};
+    setTypes(s,fNames(i,:)');
 end
 
 %% STEP 9 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','Roi1*c_BFI_d.mat')); %<---ALWAYS REFER TO "_BFI_d.mat" files, but you may use regexp to define specific "_BFI_d.mat" files of interest
-fNames     = fullfile({files.folder}', {files.name}');
-
-exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
+fNames=setFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+exportToExcel(fNames(:)); %LAUNCHES THE UTILITY ROUTINE

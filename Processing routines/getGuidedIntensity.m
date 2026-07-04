@@ -7,6 +7,7 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.cxd'), fNames(:)) & cellfun(@(s
 end
 
 for fidx=1:1:length(fNames)
+     if ~isempty(fNames{fidx})
     %set file name to load data
     s.fName=char(fNames{fidx});
     s.fNameRef=char(fNamesRef{fidx});
@@ -79,5 +80,6 @@ for fidx=1:1:length(fNames)
     end
     save(strrep(s.fName,'.cxd','_I_r.mat'),'results','-v7.3');
     save(strrep(s.fName,'.cxd','_I_s.mat'),'settings','-v7.3');
+end
 end
 end

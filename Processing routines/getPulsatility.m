@@ -63,7 +63,7 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_d.mat'), fNames(:)) )
 end
 
 for fidx=1:1:numel(fNames)
-
+ if ~isempty(fNames{fidx})
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     s.fName=fNames{fidx};
     clearvars results source settings
@@ -284,12 +284,13 @@ for fidx=1:1:numel(fNames)
     results.extendedMetrics.imgIntegralRBFI=trapz(source.time,source.data./minVal,3);
     results.extendedMetrics.imgIntegralDBFI=trapz(source.time,source.data-minVal,3);
 
-    settings.pulsatilityCalculation=s;
+    settings.getPulsatility=s;
     disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     if strcmp(s.fitData,"all")
         save(fNames{fidx},'source','-v7.3');
     end
     save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
     save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+end
 end
 end
