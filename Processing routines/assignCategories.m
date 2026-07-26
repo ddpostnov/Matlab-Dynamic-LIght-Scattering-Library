@@ -1,3 +1,30 @@
+%assignCategories - Copy a reference category mask (cMask) onto other datasets.
+%
+%   For each target/reference pair of *_K_d.mat datasets, copies the reference
+%   file's category mask (results.cMask) and the getCategories edge size into the
+%   target's RESULTS and SETTINGS.  Use it to reuse one categorisation across
+%   co-registered recordings instead of re-running getCategories.
+%
+% Syntax:
+%    assignCategories(fNames, fNamesRef)
+%
+% Inputs:
+%    fNames    - cell array of target *_K_d.mat paths.
+%    fNamesRef - cell array of reference *_K_d.mat paths (same size as fNames);
+%                each provides the cMask copied onto the matching target.
+%
+% Outputs:
+%    (none) - updates each target's *_K_r.mat (results.cMask) and *_K_s.mat
+%             (settings.getCategories) in place.
+%
+% See also: getCategories, setVesselTypes, registerLSCItoLSCI
+%
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
+
+%------------- BEGIN CODE --------------
 function assignCategories(fNames,fNamesRef)
 
 if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )

@@ -35,14 +35,10 @@
 %     readRLS, getFFT, getEdgeSizeSLSCI, and other utilities in the LSCI
 %     processing library.
 %
-%   ----------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 05-Aug-2025
-%
-%   Note: Header generated with ChatGPT; minor inconsistencies may remain—
-%   please verify before distribution.
-%   ----------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;

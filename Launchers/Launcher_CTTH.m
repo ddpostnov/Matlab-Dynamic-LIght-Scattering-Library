@@ -1,10 +1,17 @@
-% Used to perform bolus injection analysis from wide-field fluorescent data
+% Launcher_CTTH - Bolus-injection (CTTH) analysis from wide-field fluorescence.
+%
+%   Example launcher for bolus-injection analysis of wide-field fluorescence
+%   data.  Run STEP 0 once per MATLAB session, then run the step cells (%%) in
+%   order.
+%
+% Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
+% script formatting were done with Claude Code.
 
-%% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
-%LIBRARY PATH - add YOUR path manualy here:
+%% STEP 0 - RUN EVERY TIME YOU RESTART MATLAB - THEN PROCEED TO THE STEP YOU STOPPED AT (BY DEFAULT STEP 1)
+%LIBRARY PATH - add YOUR path manually here:
 libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
-rootFolder = 'C:\Users\AU707705\Dropbox\Work\Data'; %root folder for the files lookup
+rootFolder = 'C:\Data\mia'; %root folder for the files lookup
 
 
 %% STEP 1 Process .rls files to get the temoiral contrast for segmentation and vasomotion analysis
@@ -16,7 +23,7 @@ s.fBolus=[];%[301,1500]; %expected frame indexes for bolus injection, leave empt
 s.fAngio=[];%[1600,2000]; % expected frame indexes for angiogram, leave empty if unknown
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*BB.cxd'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*BB0.cxd'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getBolus(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -42,7 +49,7 @@ s.eEdge=1; %setting external edges for segmented vessels
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getCategories(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -55,7 +62,7 @@ s.libraryFolder=libraryFolder;
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
 %SAME NAMES
-fNames=setFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %USES THE SAME FILE NAMES AS ABOVE as STEP 2
 splitRegions(s,fNames(:)); %LAUNCHES THE UTILITY ROUTINE
@@ -92,7 +99,7 @@ s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE - IF REGIONS SPLIT WAS PERFORMED, OTHERWISE KEEP THE
 %SAME NAMES
-fNames=setFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -128,7 +135,7 @@ s.libraryFolder=libraryFolder;
     s.slopeWin=9; s.promFrac=0.2;      % robust upslope / peak
     s.minStep=1;                       % uint16 resolution
 
-fNames=setFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 
 getCTTH(s,fNames(:))
@@ -158,16 +165,23 @@ s.vFR=[0.05,0.25];
 s.cFR=[0.4,0.6];
 s.wFR=[0.01,1];
 s.wVPO=10;
+s.normalisation='median'; %'mean'/'median' (global) or 'mmean'/'mmedian' (moving). Change only if needed
+s.normsize=101; %window for 'mmean'/'mmedian'; inf or 0 -> global. Change only if needed
 s.tgtFS=1; %Hz
 s.pcts=0:10:100;
 
 s.otsuMaxN=5;
 s.otsuElbow= 0.05;
+s.nPeakProm=0.10;   %VB peak-count prominence = fraction of per-time band max-min range
 
-s.analysePerPixel  = false;
-s.keepSpectrum=false;
-s.keepClustering=true;
-s.reconstructData=true;
+s.ppxVsmReturn = [];         %per-pixel analysis OFF ([] = off); set non-empty (e.g. {'bands'}) to turn it ON -> RESULTS.vasomotion.ppx. No analysePerPixel flag.
+s.ppxSegmentAveraging=[]; %TEMPORARY scaffolding (to be removed): per-segment averaging demo, subset of {'coherent','incoherent'}; [] = off. Change only if needed
+s.vsmSignals={'sData','dvsData','dvsDiameter','gsData'};  %which data-type signals get vasomotion analysis
+%s.segVsmReturn selects which levels to store in results.vasomotion: 'bands' (scalars.VB/CB),
+%'moments' (fVectors ampMean/Std/Skew + VB.ampMeanPct), 'series' (timeVectors amp/fCent/fSprd/nPeak),
+%'clustering' (flare/silence scalars+spectra+maskFlare), 'reconstruction' (timeVectors.VB.rData),
+%'spectrum' (spectrum.amp/.phase grid). Change only if needed.
+s.segVsmReturn={'bands','moments','series','clustering','reconstruction'};
 
 %SET FILE NAMES HERE
 files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat'));
@@ -180,16 +194,17 @@ close all
 clearvars -except fNames libraryFolder rootFolder
 
 s.libraryFolder=libraryFolder;
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - Waveform fitting
-s.fitData="regions"; %"regions" - for all segmented data, "all" - for segmented data AND pixel by pixel fits, or "none"
-%ADJUSTED IF NECESSARY - Waveform fitting
-fitSettings={'Method','NonlinearLeastSquares','Algorithm','Trust-Region','Display','off'};%,'Robust','Bisquare','MaxFunEvals',1200,'MaxIter',1000};
-fitLimits={'Lower',[0,0,0,0,0,-pi,-pi,-pi,-pi,-pi,0],...
-    'Upper',[Inf,Inf,Inf,Inf,Inf,pi,pi,pi,pi,pi,Inf],...
-    'StartPoint',[0.9,0.8,0.7,0.6,0.5,0.1,0.2,0.3,0.4,0.5,100]};
-s.fitOptions = fitoptions(fitSettings{:},fitLimits{:});
-s.fitEquation = fittype('a1*sin(2*pi*x+b1)+a2*sin(4*pi*x+b2)+a3*sin(6*pi*x+b3)+a4*sin(8*pi*x+b4)+a5*sin(10*pi*x+b5)+c','options',s.fitOptions);
-s.coefNames={'a1','a2','a3','a4','a5','b1','b2','b3','b4','b5','c','PR2'};
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - Harmonic model
+s.nHarm=5;              % number of harmonics in y=SUM a_n*sin(2*pi*n*x+b_n)+c
+%ADJUSTED IF NECESSARY - Which per-segment analysis levels to compute/store
+s.segPulsReturn={'markers','model','reconstruction'};  % markers = model-free scalars
+                        % (PI/RI/mean/extrema/timing/symmetry); model = harmonic
+                        % hAmp/hPhase/R2 (runs the fit); reconstruction = the
+                        % timeVectors.fData model cube (runs the fit). Default = all three.
+%ADJUSTED IF NECESSARY - Per-pixel maps (GATE + selector; [] = per-pixel analysis off)
+s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel marker maps ON
+                        % (results.pulsatility.ppx); add 'model'/'reconstruction' to
+                        % also fit every masked pixel (large full-resolution cubes).
 
 %SET FILE NAMES HERE
 files      = dir(fullfile(rootFolder,'**','*c_BFI_d.mat')); %<---ALWAYS REFER TO "c_BFI_d.mat" files, but you may use regexp to define specific "c_BFI_d.mat" files of interest
@@ -210,7 +225,7 @@ fNamesVSM  = fullfile({files.folder}', {files.name}');
 fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_d.mat$', '_c_BFI_d.mat');
 fNames=cat(1,fNamesPLS,fNamesVSM);
 s.refFName=fNames{1};
-setTypes(s,fNames);
+setVesselTypes(s,fNames);
 
 %% STEP 11 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
@@ -343,36 +358,36 @@ pls(i)=results;
 clearvars results
 end
 
-f=vsm(1).vsm.sData.f;
-coordPCTS=vsm(1).vsm.sData.coordPCTS;
+f=vsm(1).vasomotion.f;
+pctCenters=vsm(1).vasomotion.pctCenters;
 types={'Arteries','Parenchyma','Veins'};
 conds={'AWK','ISO','K/X'};
 
-spctPCTS=zeros(3,3,numel(f),numel(coordPCTS));
+pctSpc=zeros(3,3,numel(f),numel(pctCenters));
 
-adVFR=zeros(numel(vsm),3);
-adCFR=zeros(numel(vsm),3);
+ampVB=zeros(numel(vsm),3);
+ampCB=zeros(numel(vsm),3);
 
 
 for i=1:1:numel(vsm)
-    adVFR(i,1)= mean(vsm(i).sMetrics.adVFR(strcmp(vsm(i).sMetrics.type,"Artery")));
-    adVFR(i,2)=mean(vsm(i).sMetrics.adVFR(vsm(i).sMetrics.category==1));
-    adVFR(i,3)= mean(vsm(i).sMetrics.adVFR(strcmp(vsm(i).sMetrics.type,"Vein")));
+    ampVB(i,1)= mean(vsm(i).sMetrics.ampMeanVB(strcmp(vsm(i).sMetrics.type,"Artery")));
+    ampVB(i,2)=mean(vsm(i).sMetrics.ampMeanVB(vsm(i).sMetrics.category==1));
+    ampVB(i,3)= mean(vsm(i).sMetrics.ampMeanVB(strcmp(vsm(i).sMetrics.type,"Vein")));
 
-    adCFR(i,1)= mean(vsm(i).sMetrics.adCFR(strcmp(vsm(i).sMetrics.type,"Artery")));
-    adCFR(i,2)=mean(vsm(i).sMetrics.adCFR(vsm(i).sMetrics.category==1));
-    adCFR(i,3)= mean(vsm(i).sMetrics.adCFR(strcmp(vsm(i).sMetrics.type,"Vein")));
+    ampCB(i,1)= mean(vsm(i).sMetrics.ampMeanCB(strcmp(vsm(i).sMetrics.type,"Artery")));
+    ampCB(i,2)=mean(vsm(i).sMetrics.ampMeanCB(vsm(i).sMetrics.category==1));
+    ampCB(i,3)= mean(vsm(i).sMetrics.ampMeanCB(strcmp(vsm(i).sMetrics.type,"Vein")));
 
-    spctPCTS(i,1,:,:)= mean(vsm(i).vsm.sData.spctPCTS(strcmp(vsm(i).sMetrics.type,"Artery"),:,:,1),1);
-    spctPCTS(i,2,:,:)= mean(vsm(i).vsm.sData.spctPCTS(vsm(i).sMetrics.category==1,:,:,1),1);
-    spctPCTS(i,3,:,:)= mean(vsm(i).vsm.sData.spctPCTS(strcmp(vsm(i).sMetrics.type,"Vein"),:,:,1),1);
+    pctSpc(i,1,:,:)= mean(vsm(i).vasomotion.sData.fVectors.VB.ampMeanPct(strcmp(vsm(i).sMetrics.type,"Artery"),:,:),1);
+    pctSpc(i,2,:,:)= mean(vsm(i).vasomotion.sData.fVectors.VB.ampMeanPct(vsm(i).sMetrics.category==1,:,:),1);
+    pctSpc(i,3,:,:)= mean(vsm(i).vasomotion.sData.fVectors.VB.ampMeanPct(strcmp(vsm(i).sMetrics.type,"Vein"),:,:),1);
 end
 
 figure
 for i=1:1:3
 for j=1:1:3
 subplot(3,3,(i-1)*3+j)
-plot(f,squeeze(spctPCTS(i,j,:,:)))
+plot(f,squeeze(pctSpc(i,j,:,:)))
 title([conds{i},', ',types{j}])
 ylim([0,0.2])
 xlabel('Frequency, Hz')
@@ -384,9 +399,9 @@ set(gcf,'Color','w');
 figure
 for i=1:1:3
 subplot(1,3,i)
-plot(squeeze(adVFR(i,:)))
+plot(squeeze(ampVB(i,:)))
 hold on
-plot(squeeze(adCFR(i,:)))
+plot(squeeze(ampCB(i,:)))
 hold off
 xlim([0,4])
 ylabel('Amplitude density')

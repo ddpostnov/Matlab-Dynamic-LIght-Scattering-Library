@@ -1,296 +1,339 @@
-%getPulsatility  Derive pulsatility indices and optional harmonic fits
+%getPulsatility  Harmonic pulsatility analysis into the results.pulsatility tree
 %
-%   getPulsatility(s,fNames) loads every *_BFI_d.mat file in fNames (the
-%   “cycle” datasets from getExternalCycle / getInternalCycle), calculates
-%   classical pulsatility metrics for each spatial ROI and for every pixel,
-%   and—if s.fitData is "regions" or "all"—fits the user-supplied harmonic
-%   model (s.fitEquation) to the BFI waveform:
+%   getPulsatility(s,fNames) loads every *_BFI_d.mat cardiac-cycle triplet in
+%   fNames (produced by getInternalCycle/getExternalCycle -> getSegmentation ->
+%   getBFI: results.sData/dvsData/dvsDiameter [nT x nSeg] on results.time, plus
+%   the source cube source.data [Y x X x nT]) and reduces every averaged cycle to
+%   classical pulsatility markers and, optionally, an nHarm-harmonic sine fit
 %
-%        y(x) = Σ aₙ·sin(2π·n·x + bₙ)  +  c      ,  n = 1‥5
+%        y(x) = SUM_{n=1..nHarm} a_n*sin(2*pi*n*x + b_n) + c
 %
-%   Fit coefficients and R² are appended to sMetrics, dvsMetrics, and
-%   (when "all") stored as 3-D maps in RESULTS.fCoeffs.  Updated MAT-files
-%   overwrite the originals; SOURCE is re-saved only when pixel-wise
-%   fitting is requested.
+%   The per-cycle "science" lives in the shared core getPulsatilityMetrics; this
+%   producer is the multi-file GLUE: it builds the fit layout once, runs the core
+%   over every segment (parfor) and every masked pixel, and assembles the results
+%   into the RESULTS.pulsatility tree (mirroring RESULTS.vasomotion).
+%
+%   OUTPUT TREE  (RESULTS.pulsatility)
+%     Shared root axes:
+%       .time       [nT x 1]     one-cycle time base (= results.time), single
+%       .harmonics  [nHarm x 1]  [1;2;...;nHarm] column index for scalars.hAmp/hPhase
+%     One sub-tree per analysed signal, all floats SINGLE, with a field-name PREFIX
+%     encoding the physical quantity (ps = pulsatile flow, pd = pulsatile diameter):
+%       .sData        { scalars(ps*), timeVectors.fData }   (-> results.sMetrics)
+%       .dvsData      { scalars(ps*), timeVectors.fData }   (-> results.dvsMetrics)
+%       .dvsDiameter  { scalars(pd*), timeVectors.fData }   (-> results.dvsMetrics)
+%       .ppx          { scalars(ps*) [Y x X] maps, timeVectors.fData [Y x X x nT] }
+%     scalars.* (per segment [nSeg x 1], per pixel [Y x X]):
+%       <p>Min <p>Max <p>TimeMin <p>TimeMax <p>Mean <p>Std <p>PI <p>RI <p>SymRatio
+%       (markers, always computed) and hAmp/hPhase [.. x nHarm] + <p>R2 (the fit;
+%       hAmp/hPhase are bare - the sub-tree key disambiguates flow vs diameter).
+%       PI=(max-min)/mean (Gosling), RI=(max-min)/max (Pourcelot), SymRatio=
+%       descend/ascend cycle asymmetry.  timeVectors.fData [nT x nSeg] is the model
+%       reconstruction.  An INVALID cycle (non-finite / all-NaN) is NaN in EVERY field.
+%
+%   LEVELS  (selector cell arrays; a subset of {'markers','model','reconstruction'})
+%     s.segPulsReturn  per-segment levels; default {'markers','model','reconstruction'}.
+%     s.ppxPulsReturn  per-pixel levels + GATE: NON-EMPTY runs the per-pixel path,
+%                      [] skips it; default (absent) {'markers'} (maps ON, fit OFF).
+%     'markers' stores the model-free scalars (also duplicated into the metrics
+%     tables regardless); 'model'/'reconstruction' run the fit (coefficients /
+%     reconstruction cube).  s.nHarm (default 5) sets the number of harmonics.
+%
+%   METRICS-TABLE DUPLICATION (a small key set, same names as the tree, single)
+%     results.sMetrics    (from sData)      : psPI psRI psMean psTimeMin psTimeMax psSymRatio
+%     results.dvsMetrics  (from dvsData)    : the six ps*
+%                         (from dvsDiameter): the six pd*
+%     BFI / std(BFI) are getBFI's columns and are LEFT UNTOUCHED (not written here).
 %
 %   INPUTS
-%     s        parameter struct with fields  
-%                • fitData      "none" | "regions" | "all"  
-%                • fitEquation  fittype object (see example)  
-%                • fitOptions   fitoptions handle  
-%                • coefNames    cell/array of coefficient labels  
+%     s        parameter struct with fields
+%                • nHarm          number of harmonics in the sine model (default 5)
+%                • segPulsReturn  per-segment level cell (default all three)
+%                • ppxPulsReturn  per-pixel level cell / gate (default {'markers'};
+%                                 [] = per-pixel analysis off)
+%                • fitOptions     (optional) fitoptions override for the model
 %     fNames   cell array of *_BFI_d.mat paths.
 %
-%   OUTPUT FILES (side-effects)
-%       *_BFI_d.mat   SOURCE   – BFI cube (unchanged or refitted)  
-%       *_BFI_r.mat   RESULTS  – extended ROI metrics + imgPI/imgRI layers  
-%       *_BFI_s.mat   SETTINGS – field settings.pulsatilityCalculation added
+%   OUTPUT FILES (side-effects) - NON-DESTRUCTIVE: the raw cycle is preserved
+%       *_BFI_d.mat   SOURCE   - NEVER re-saved (source.data read, never modified)
+%       *_BFI_r.mat   RESULTS  - RESULTS.pulsatility.* + the ps*/pd* metrics columns
+%       *_BFI_s.mat   SETTINGS - field settings.getPulsatility added
 %
 %   EXAMPLE
-%     p = defaultPulsatilityParams();        % fills fit* fields
+%     s.nHarm=5;
+%     s.segPulsReturn={'markers','model','reconstruction'};
+%     s.ppxPulsReturn={'markers'};
 %     files = dir(fullfile(dataRoot,'*_BFI_d.mat'));
-%     getPulsatility(p, fullfile({files.folder}',{files.name}'));
+%     getPulsatility(s, fullfile({files.folder}',{files.name}'));
 %
 %   DEPENDS ON
-%     MATLAB Curve Fitting Toolbox for ‘fit’; core LSCI library utilities.
+%     Basic functions/getPulsatilityMetrics (shared harmonic pulsatility core),
+%     MATLAB Curve Fitting Toolbox (fit); core LSCI library utilities.
 %
-%   ----------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 05-Aug-2025
-%
-%   Note: Header generated with ChatGPT; minor inconsistencies may remain—
-%   please verify before distribution.
-%   ----------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 25-July-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
-% %ADJUSTED (OR VERIFIED) PER PROTOCOL - Waveform fitting
-% s.fitData="all"; % "regions" or "all". Any other option e.g. "none" will not perform data fitting
-% %ADJUSTED IF NECESSARY - Waveform fitting
-% fitSettings={'Method','NonlinearLeastSquares','Algorithm','Trust-Region','Display','off'};%,'Robust','Bisquare','MaxFunEvals',1200,'MaxIter',1000};
-% fitLimits={'Lower',[0,0,0,0,0,-pi,-pi,-pi,-pi,-pi,0],...
-%     'Upper',[Inf,Inf,Inf,Inf,Inf,pi,pi,pi,pi,pi,Inf],...
-%     'StartPoint',[0.9,0.8,0.7,0.6,0.5,0.1,0.2,0.3,0.4,0.5,100]};
-% s.fitOptions = fitoptions(fitSettings{:},fitLimits{:});
-% s.fitEquation = fittype('a1*sin(2*pi*x+b1)+a2*sin(4*pi*x+b2)+a3*sin(6*pi*x+b3)+a4*sin(8*pi*x+b4)+a5*sin(10*pi*x+b5)+c','options',s.fitOptions);
-% s.coefNames={'a1','a2','a3','a4','a5','b1','b2','b3','b4','b5','c','PR2'};
+% %ADJUSTED (OR VERIFIED) PER PROTOCOL - Harmonic model
+% s.nHarm=5;              % number of harmonics in y=SUM a_n*sin(2*pi*n*x+b_n)+c
+% %ADJUSTED IF NECESSARY - Which per-segment analysis levels to compute/store
+% s.segPulsReturn={'markers','model','reconstruction'};  % markers (scalars),
+%                         % model (hAmp/hPhase/R2 - runs the fit), reconstruction
+%                         % (timeVectors.fData - runs the fit). Default = all three.
+% %ADJUSTED IF NECESSARY - Per-pixel maps/cubes (GATE + selector)
+% s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel maps ON (RESULTS.pulsatility.ppx),
+%                         % [] = off. {'markers'} gives the light [Y x X] marker maps
+%                         % (reproduces the old always-computed imgPI/imgRI); add
+%                         % 'model'/'reconstruction' to fit every masked pixel (large
+%                         % cubes at full field resolution).
 
 function getPulsatility(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_d.mat'), fNames(:)) )
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_BFI_d.mat".');
 end
 
+%resolve defaults so they are recorded in the saved settings (the core defaults
+%the same values internally).  nHarm and segPulsReturn default when absent OR empty;
+%ppxPulsReturn defaults ONLY when the field is ABSENT - an explicit [] must stay
+%empty (per-pixel analysis off), exactly like getVasomotion's s.ppxVsmReturn.
+if ~isfield(s,'nHarm') || isempty(s.nHarm)
+    s.nHarm=5;
+end
+if ~isfield(s,'segPulsReturn') || isempty(s.segPulsReturn)
+    s.segPulsReturn={'markers','model','reconstruction'};
+end
+if ~isfield(s,'ppxPulsReturn')
+    s.ppxPulsReturn={'markers'};
+end
+
 for fidx=1:1:numel(fNames)
- if ~isempty(fNames{fidx})
-    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
-    s.fName=fNames{fidx};
-    clearvars results source settings
-    load(s.fName)
-    load(strrep(fNames{fidx},'_d.mat','_s.mat'));
-    load(strrep(fNames{fidx},'_d.mat','_r.mat'));
+    if ~isempty(fNames{fidx})
+        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        s.fName=fNames{fidx};
+        clearvars results source settings
+        %SOURCE is read only for the per-pixel path (and never written back).
+        if ~isempty(s.ppxPulsReturn)
+            load(s.fName,'source')
+        end
+        load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
+        load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
 
-    if strcmp(s.fitData,"all") || strcmp(s.fitData,"regions")
-        eq=s.fitEquation;
-        data=single(results.sData);
-        fCoeffs=zeros(size(data,2),numel(s.coefNames),'single');        
-        x=linspace(0,5,size(data,1).*5);
-        xx=linspace(0,1,size(data,1));
-        for ii=1:size(data,2)
-            ts=double(repmat(squeeze(data(:,ii)),5,1));
-            if all(~isnan(ts) & ts~=inf)
-                [f,gof] = fit(x',ts,eq);
-                data(:,ii)=feval(f,xx);
-                fCoeffs(ii,:)=[coeffvalues(f),gof.rsquare];
-            else
-                data(:,ii)=NaN;
-                fCoeffs(ii,:)=NaN;
-            end
-        end
-        for i=6:1:10
-            tmp=fCoeffs(:,i);
-            tmp(tmp<0)=tmp(tmp<0)+2*pi;
-            tmp=unwrap(tmp,[],3);
-            if (sum(tmp<0)>0)
-                tmp=tmp+2*pi;
-            end
-            fCoeffs(:,i)=tmp;
-        end
-        results.sData=data;
-        for i=1:numel(s.coefNames)
-            results.sMetrics.(s.coefNames{i})=fCoeffs(:,i);
+        %getPulsatility owns RESULTS.pulsatility entirely; rebuild it from scratch so
+        %no stale sub-branch survives a re-run with different levels.
+        if isfield(results,'pulsatility')
+            results=rmfield(results,'pulsatility');
         end
 
-        if isfield(results,"dvsData")
-            data=single(results.dvsData);
-            fCoeffs=zeros(size(data,2),numel(s.coefNames),'single');   
-            x=linspace(0,5,size(data,1).*5);
-            xx=linspace(0,1,size(data,1));
-            for ii=1:size(data,2)
-                ts=double(repmat(squeeze(data(:,ii)),5,1));
-                if all(~isnan(ts) & ts~=inf)
-                    [f,gof] = fit(x',ts,eq);
-                    data(:,ii)=feval(f,xx);
-                    fCoeffs(ii,:)=[coeffvalues(f),gof.rsquare];
-                    else
-                data(:,ii)=NaN;
-                fCoeffs(ii,:)=NaN;
-                end
-            end
-            for i=6:1:10
-                tmp=fCoeffs(:,i);
-                tmp(tmp<0)=tmp(tmp<0)+2*pi;
-                tmp=unwrap(tmp,[],3);
-                if (sum(tmp<0)>0)
-                    tmp=tmp+2*pi;
-                end
-                fCoeffs(:,i)=tmp;
-            end
-            results.dvsData=data;
-            for i=1:numel(s.coefNames)
-                results.dvsMetrics.(s.coefNames{i})=fCoeffs(:,i);
-            end
+        %SETUP once for the results.time base (compiling the fittype is the one
+        %non-trivial per-time-base cost).  All three per-segment signals share it.
+        layout=getPulsatilityMetrics(results.time,s);
+        nHarm=layout.nHarm; want=layout.want; nT=numel(results.time);
 
-            data=single(results.dvsDiameter);
-            fCoeffs=zeros(size(data,2),numel(s.coefNames),'single');   
-            x=linspace(0,5,size(data,1).*5);
-            xx=linspace(0,1,size(data,1));
-            for ii=1:size(data,2)
-                ts=double(repmat(squeeze(data(:,ii)),5,1));
-                if all(~isnan(ts) & ts~=inf)
-                    [f,gof] = fit(x',ts,eq);
-                    data(:,ii)=feval(f,xx);
-                    fCoeffs(ii,:)=[coeffvalues(f),gof.rsquare];
-                    else
-                data(:,ii)=NaN;
-                fCoeffs(ii,:)=NaN;
-                end
-            end
-            for i=6:1:10
-                tmp=fCoeffs(:,i);
-                tmp(tmp<0)=tmp(tmp<0)+2*pi;
-                tmp=unwrap(tmp,[],3);
-                if (sum(tmp<0)>0)
-                    tmp=tmp+2*pi;
-                end
-                fCoeffs(:,i)=tmp;
-            end
-            results.dvsDiameter=data;
-            for i=1:numel(s.coefNames)
-                results.dvsMetrics.([s.coefNames{i},'D'])=fCoeffs(:,i);
-            end
-        end
-    end
+        %shared root axes (single; the tree's OWN copy - results.time stays double)
+        results.pulsatility.time=single(results.time(:));
+        results.pulsatility.harmonics=single((1:nHarm)');
 
-    [maxVal,maxTime]=max(results.sData,[],1);
-    [minVal,minTime]=min(results.sData,[],1);
-    maxTime=results.time(maxTime);
-    minTime=results.time(minTime);
-    idxs=minTime>maxTime;
-    minTime(idxs)=minTime(idxs)-results.time(end);
-    results.sMetrics.('BFI')=mean(results.sData,1,'omitnan')';
-    results.sMetrics.('std(BFI)')=std(results.sData,0,1,'omitnan')';
-    results.sMetrics.('totalTime')=results.time(end).*ones(height(results.sMetrics),1);
-    results.sMetrics.('PI(BFI)')=((maxVal-minVal)./mean(results.sData,1,'omitnan'))';
-    results.sMetrics.('RI(BFI)')=((maxVal-minVal)./maxVal)';
-    results.sMetrics.('minBFI')=minVal';
-    results.sMetrics.('maxBFI')=maxVal';
-    results.sMetrics.('timeMaxBFI')=maxTime';
-    results.sMetrics.('timeMinBFI')=minTime';    
-    results.sMetrics.('integralBFI')=trapz(results.time,results.sData,1)';
-    results.sMetrics.('integralRBFI')=trapz(results.time,results.sData./minVal,1)';
-    results.sMetrics.('integralDBFI')=trapz(results.time,results.sData-minVal,1)';
+        % =============================================================
+        % Per-segment analysis: sData/dvsData (ps prefix), dvsDiameter (pd prefix).
+        % =============================================================
+        sigNames={'sData','dvsData','dvsDiameter'};
+        for kSig=1:numel(sigNames)
+            sigName=sigNames{kSig};
+            if ~isfield(results,sigName), continue; end
+            if strcmp(sigName,'dvsDiameter'), prefix='pd'; else, prefix='ps'; end
 
+            %pull the signal matrix into a plain local (one dynamic-field access rather
+            %than one per iteration; the marker source cube is chosen inside the core).
+            sigMat=results.(sigName);
+            if isempty(sigMat), continue; end
+            nSeg=size(sigMat,2);
 
-    if isfield(results,"dvsData")
-        [maxVal,maxTime]=max(results.dvsData,[],1);
-        [minVal,minTime]=min(results.dvsData,[],1);
-        maxTime=results.time(maxTime);
-        minTime=results.time(minTime);
-        idxs=minTime>maxTime;
-        minTime(idxs)=minTime(idxs)-results.time(end);
-        results.dvsMetrics.('BFI')=mean(results.dvsData,1,'omitnan')';
-        results.dvsMetrics.('std(BFI)')=std(results.dvsData,0,1,'omitnan')';
-        results.dvsMetrics.('totalTime')=results.time(end).*ones(height(results.dvsMetrics),1);
-        results.dvsMetrics.('PI(BFI)')=((maxVal-minVal)./mean(results.dvsData,1,'omitnan'))';
-        results.dvsMetrics.('RI(BFI)')=((maxVal-minVal)./maxVal)';
-        results.dvsMetrics.('minBFI')=minVal';
-        results.dvsMetrics.('maxBFI')=maxVal';
-        results.dvsMetrics.('timeMaxBFI')=maxTime';
-        results.dvsMetrics.('timeMinBFI')=minTime';        
-        results.dvsMetrics.('integralBFI')=trapz(results.time,results.dvsData,1)';
-        results.dvsMetrics.('integralRBFI')=trapz(results.time,results.dvsData./minVal,1)';
-        results.dvsMetrics.('integralDBFI')=trapz(results.time,results.dvsData-minVal,1)';
+            %NaN-preallocate every accumulator; an invalid segment is written by no
+            %branch and therefore stays NaN across every field (invalid -> NaN).
+            [mMin,mMax,mTimeMin,mTimeMax,mMean,mStd,mPI,mRI,mSym,mR2]=deal(nan(nSeg,1,'single'));
+            mHAmp=nan(nSeg,nHarm,'single'); mHPhase=nan(nSeg,nHarm,'single');
+            mFData=nan(nT,nSeg,'single');
 
-        [maxVal,maxTime]=max(results.dvsDiameter,[],1);
-        [minVal,minTime]=min(results.dvsDiameter,[],1);
-        maxTime=results.time(maxTime);
-        minTime=results.time(minTime);
-        idxs=minTime>maxTime;
-        minTime(idxs)=minTime(idxs)-results.time(end);
-        results.dvsMetrics.('D')=mean(results.dvsDiameter,1,'omitnan')';
-        results.dvsMetrics.('PI(D)')=((maxVal-minVal)./mean(results.dvsDiameter,1,'omitnan'))';
-        results.dvsMetrics.('RI(D)')=((maxVal-minVal)./maxVal)';
-        results.dvsMetrics.('minD')=minVal';
-        results.dvsMetrics.('maxD')=maxVal';
-        results.dvsMetrics.('timeMaxD')=maxTime';
-        results.dvsMetrics.('timeMinD')=minTime';
-        results.dvsMetrics.('integralD')=trapz(results.time,results.dvsDiameter,1)';
-        results.dvsMetrics.('integralRD')=trapz(results.time,results.dvsDiameter./minVal,1)';
-        results.dvsMetrics.('integralDD')=trapz(results.time,results.dvsDiameter-minVal,1)';
-    end
-
-
-
-    if strcmp(s.fitData,"all")
-        data=single(source.data);
-        fCoeffs=zeros(size(data,1),size(data,2),numel(s.coefNames),'single');   
-        x=linspace(0,5,size(data,3).*5);
-        xx=linspace(0,1,size(data,3));
-        mask=results.cMask>0;
-        for i=1:1:size(data,1)
-            subdata=squeeze(data(i,:,:));
-            subcoeffs=zeros(size(data,2),numel(s.coefNames));
-            parfor ii=1:size(data,2)
-                if mask(i,ii)==1
-                    ts=double(repmat(squeeze(subdata(ii,:)),1,5));
-                    if all(~isnan(ts) & ts~=inf)
-                    [f,gof] = fit(x',ts',eq);
-                    subdata(ii,:)=feval(f,xx);
-                    subcoeffs(ii,:)=[coeffvalues(f),gof.rsquare];
-                    else
-                subdata(ii,:)=NaN;
-                subcoeffs(ii,:)=NaN;
+            %The per-segment harmonic fit runs SERIALLY (a plain for), matching the
+            %pre-refactor code so the coefficients / reconstruction stay bit-identical
+            %at single precision: the Trust-Region NLS is BLAS-threading sensitive, so a
+            %parfor worker converges ~1 single ULP away from the serial client and would
+            %fail the session-1 golden.  The per-segment fit is cheap (nSeg is small); the
+            %expensive per-pixel fit below keeps its parfor (as it did pre-refactor).
+            for i=1:nSeg
+                m=getPulsatilityMetrics(sigMat(:,i),layout,s);
+                if m.valid   %markers/fit written only for a valid cycle; invalid stays NaN
+                    mMin(i)=m.min; mMax(i)=m.max; mTimeMin(i)=m.timeMin; mTimeMax(i)=m.timeMax;
+                    mMean(i)=m.mean; mStd(i)=m.std; mPI(i)=m.PI; mRI(i)=m.RI; mSym(i)=m.symRatio;
+                    if want.model
+                        mHAmp(i,:)=m.hAmp; mHPhase(i,:)=m.hPhase; mR2(i)=m.R2;
+                    end
+                    if want.reconstruction
+                        mFData(:,i)=m.fData;
                     end
                 end
             end
-            if any(i==round(linspace(1,size(data,1),11)))
-                fprintf('\rFitting the source data %3d%%',round(100*i./(size(data,1))));
-                drawnow limitrate
+
+            %assemble the sub-tree; each level is gated by `want` (markers scalars,
+            %model scalars, reconstruction timeVectors).
+            T=struct();
+            if want.markers
+                T.scalars.([prefix 'Min'])     =mMin;
+                T.scalars.([prefix 'Max'])     =mMax;
+                T.scalars.([prefix 'TimeMin']) =mTimeMin;
+                T.scalars.([prefix 'TimeMax']) =mTimeMax;
+                T.scalars.([prefix 'Mean'])    =mMean;
+                T.scalars.([prefix 'Std'])     =mStd;
+                T.scalars.([prefix 'PI'])      =mPI;
+                T.scalars.([prefix 'RI'])      =mRI;
+                T.scalars.([prefix 'SymRatio'])=mSym;
             end
-            data(i,:,:)=subdata;
-            fCoeffs(i,:,:)=subcoeffs;
-        end
-        fprintf('\n');
-
-
-        for i=6:1:10
-            img=fCoeffs(:,:,i);
-            img(img<0)=img(img<0)+2*pi;
-            img=unwrap(img,[],3);
-            if (sum(img<0)>0)
-                img=img+2*pi;
+            if want.model
+                T.scalars.hAmp        =mHAmp;
+                T.scalars.hPhase      =mHPhase;
+                T.scalars.([prefix 'R2'])=mR2;
             end
-            fCoeffs(:,:,i)=img;
+            if want.reconstruction
+                T.timeVectors.fData=mFData;
+            end
+            results.pulsatility.(sigName)=T;
+
+            %duplicate the key marker set into the metrics tables (DATA-MODEL section 11).
+            %Markers are always computed by the core, so this runs regardless of the
+            %`markers` level.  Row order matches the 1:nSeg loop (segment invariant).
+            %BFI/std(BFI) are getBFI's columns and are intentionally NOT written here.
+            switch sigName
+                case 'sData'
+                    results.sMetrics.psPI=mPI;             results.sMetrics.psRI=mRI;
+                    results.sMetrics.psMean=mMean;         results.sMetrics.psTimeMin=mTimeMin;
+                    results.sMetrics.psTimeMax=mTimeMax;   results.sMetrics.psSymRatio=mSym;
+                case 'dvsData'
+                    results.dvsMetrics.psPI=mPI;           results.dvsMetrics.psRI=mRI;
+                    results.dvsMetrics.psMean=mMean;       results.dvsMetrics.psTimeMin=mTimeMin;
+                    results.dvsMetrics.psTimeMax=mTimeMax; results.dvsMetrics.psSymRatio=mSym;
+                case 'dvsDiameter'
+                    results.dvsMetrics.pdPI=mPI;           results.dvsMetrics.pdRI=mRI;
+                    results.dvsMetrics.pdMean=mMean;       results.dvsMetrics.pdTimeMin=mTimeMin;
+                    results.dvsMetrics.pdTimeMax=mTimeMax; results.dvsMetrics.pdSymRatio=mSym;
+            end
         end
-        source.data=data;
-        results.fCoeffs=fCoeffs;
-    end
 
-    [maxVal,maxTime]=max(source.data,[],3);
-    [minVal,minTime]=min(source.data,[],3);
-    maxTime=source.time(maxTime);
-    minTime=source.time(minTime);
-    idxs=minTime>maxTime;
-    minTime(idxs(:))=minTime(idxs(:))-results.time(end);
-    results.imgPI=(maxVal-minVal)./mean(source.data,3,'omitnan');
-    results.imgRI=(maxVal-minVal)./maxVal;
-    results.extendedMetrics.imgMinBFI=minVal;
-    results.extendedMetrics.imgMaxBFI=maxVal;
-    results.extendedMetrics.imgTimeMaxBFI=maxTime;
-    results.extendedMetrics.imgTimeMinBFI=minTime;
-    results.extendedMetrics.imgIntegralBFI=trapz(source.time,source.data,3);
-    results.extendedMetrics.imgIntegralRBFI=trapz(source.time,source.data./minVal,3);
-    results.extendedMetrics.imgIntegralDBFI=trapz(source.time,source.data-minVal,3);
+        % =============================================================
+        % Per-pixel analysis (gated by non-empty s.ppxPulsReturn; ps prefix, since
+        % source.data is a flow cube).  Markers stay VECTORISED over the whole cube
+        % (today's fast path); the fit is a flat pixel parfor when model/reconstruction
+        % is requested.  This replaces the old imgPI/imgRI/extendedMetrics.img*/fCoeffs.
+        % =============================================================
+        if ~isempty(s.ppxPulsReturn)
+            if ~isfield(results,'sMap')
+                error('results.sMap not found; getSegmentation must be run before per-pixel pulsatility.');
+            end
+            sPix=s; sPix.segPulsReturn=s.ppxPulsReturn;
+            layoutPix=getPulsatilityMetrics(results.time,sPix);
+            wantPix=layoutPix.want;
+            fitRanPix=wantPix.model || wantPix.reconstruction;
 
-    settings.getPulsatility=s;
-    disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
-    if strcmp(s.fitData,"all")
-        save(fNames{fidx},'source','-v7.3');
+            sz=size(source.data); Y=sz(1); X=sz(2); nTp=sz(3); npx=Y*X;
+            T=results.time(end);                 %cycle duration for the wrap/symmetry
+            invPix=all(isnan(source.data),3);    %[Y x X] all-NaN cycles (invalid -> NaN)
+
+            if fitRanPix
+                %fit every masked pixel (skip sMap==0 background).  The reconstruction
+                %cube doubles as the marker source, so always evaluate it here even if
+                %only 'model' was requested (a fit-then-eval; coefficients are unchanged).
+                sFit=sPix; lv=sFit.segPulsReturn;
+                if ischar(lv)||isstring(lv), lv=cellstr(lv); end
+                if ~ismember('reconstruction',lv), lv=[lv(:)' {'reconstruction'}]; end
+                sFit.segPulsReturn=lv;
+                layoutFit=getPulsatilityMetrics(results.time,sFit);
+                wFitModel=wantPix.model;
+
+                Dpix=reshape(source.data,npx,nTp);   %[npx x nT] pixel timecourses (plain local)
+                sMapLin=results.sMap(:);
+                %model maps ZERO-init so background (unfitted) stays 0, reproducing the
+                %old results.fCoeffs (zeros); an invalid masked pixel is explicitly NaN.
+                hAmpAcc=zeros(npx,nHarm,'single'); hPhaseAcc=zeros(npx,nHarm,'single');
+                r2Acc=zeros(npx,1,'single');
+                %reconstruction cube seeded from the RAW cube so background stays raw
+                %(the old fit overwrote only masked pixels); masked pixels overwritten below.
+                fDataAcc=single(Dpix);
+
+                tic
+                parfor p=1:npx
+                    if sMapLin(p)==0, continue; end          %background: model 0, fData raw
+                    mp=getPulsatilityMetrics(Dpix(p,:).',layoutFit,sFit);
+                    if mp.valid
+                        fDataAcc(p,:)=mp.fData.';
+                        if wFitModel
+                            hAmpAcc(p,:)=mp.hAmp; hPhaseAcc(p,:)=mp.hPhase; r2Acc(p)=mp.R2;
+                        end
+                    else                                     %invalid masked pixel -> NaN
+                        fDataAcc(p,:)=NaN;
+                        hAmpAcc(p,:)=NaN; hPhaseAcc(p,:)=NaN; r2Acc(p)=NaN;
+                    end
+                end
+                fprintf('Per-pixel pulsatility fit: %d masked pixels in %.2fs\n',nnz(sMapLin>0),toc);
+
+                fDataCube=reshape(fDataAcc,Y,X,nTp);
+                W=fDataCube;                                 %markers on the fitted cube
+            else
+                W=source.data;                               %markers on the raw cube
+            end
+
+            %vectorised model-free markers over the whole cube (identical expressions to
+            %the pre-refactor imgPI/imgRI/extendedMetrics; times index source.time).
+            [maxMap,maxIdx]=max(W,[],3);
+            [minMap,minIdx]=min(W,[],3);
+            tMaxMap=source.time(maxIdx);
+            tMinMap=source.time(minIdx);
+            wrap=tMinMap>tMaxMap;
+            tMinMap(wrap)=tMinMap(wrap)-T;                   %wrap-shift so tMin<=tMax
+            meanMap=mean(W,3,'omitnan');
+            stdMap =std(W,0,3,'omitnan');
+            piMap  =(maxMap-minMap)./meanMap;
+            riMap  =(maxMap-minMap)./maxMap;
+            ascMap =tMaxMap-tMinMap;
+            symMap =(T-ascMap)./ascMap;
+
+            %invalid pixels get time(1)/Inf from the vectorised max/min - override every
+            %marker to NaN (invalid -> NaN, matching the per-segment rule).
+            minMap(invPix)=NaN; maxMap(invPix)=NaN;
+            tMinMap(invPix)=NaN; tMaxMap(invPix)=NaN;
+            meanMap(invPix)=NaN; stdMap(invPix)=NaN;
+            piMap(invPix)=NaN; riMap(invPix)=NaN; symMap(invPix)=NaN;
+
+            %assemble the ppx sub-tree (all single; marker times cast from double).
+            ppx=struct();
+            ppx.scalars.psMin     =single(minMap);
+            ppx.scalars.psMax     =single(maxMap);
+            ppx.scalars.psTimeMin =single(tMinMap);
+            ppx.scalars.psTimeMax =single(tMaxMap);
+            ppx.scalars.psMean    =single(meanMap);
+            ppx.scalars.psStd     =single(stdMap);
+            ppx.scalars.psPI      =single(piMap);
+            ppx.scalars.psRI      =single(riMap);
+            ppx.scalars.psSymRatio=single(symMap);
+            if fitRanPix && wantPix.model
+                ppx.scalars.hAmp  =reshape(hAmpAcc,Y,X,nHarm);
+                ppx.scalars.hPhase=reshape(hPhaseAcc,Y,X,nHarm);
+                ppx.scalars.psR2  =reshape(r2Acc,Y,X);
+            end
+            if fitRanPix && wantPix.reconstruction
+                ppx.timeVectors.fData=fDataCube;
+            end
+            results.pulsatility.ppx=ppx;
+        end
+
+        settings.getPulsatility=s;
+        disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        %NON-DESTRUCTIVE: SOURCE (_d) is never re-saved - only RESULTS and SETTINGS.
+        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
+        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
     end
-    save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-    save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
 end
-end
+
 end

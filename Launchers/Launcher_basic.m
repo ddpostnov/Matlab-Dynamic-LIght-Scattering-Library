@@ -1,9 +1,15 @@
-% Can be used for getting the feeling of your data without complex pre-processing. 
-% A minimal Launcher that consists of contrast calculation and BFI conversion. 
-% Won’t fit the requirements for most of the research projects
+% Launcher_basic - Minimal contrast + BFI pipeline for a first look at .rls data.
+%
+%   A minimal launcher: contrast calculation followed by BFI conversion.  Useful
+%   for getting a feel for your data without full pre-processing; not sufficient
+%   for most research projects.  Run STEP 0 once per MATLAB session, then run the
+%   step cells (%%) in order.
+%
+% Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
+% script formatting were done with Claude Code.
 
-%% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
-%LIBRARY PATH - add YOUR path manualy here:
+%% STEP 0 - RUN EVERY TIME YOU RESTART MATLAB - THEN PROCEED TO THE STEP YOU STOPPED AT (BY DEFAULT STEP 1)
+%LIBRARY PATH - add YOUR path manually here:
 libraryFolder = 'C:\Data\Martin\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 

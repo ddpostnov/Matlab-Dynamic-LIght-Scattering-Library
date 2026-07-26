@@ -44,16 +44,15 @@
 %     registerLSCItoLSCI(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
-%     manualByPointRegistration, LSCI segmentation utilities, MATLAB's
-%     Image Processing Toolbox (imregtform, imregcorr, etc.).
+%     registerToReference (candidate generation + transform selection),
+%     enhanceForRegistration (the vessel-emphasis registration proxy), LSCI
+%     segmentation utilities, and MATLAB's Image Processing Toolbox (imwarp,
+%     imref2d, imshowpair, bwdist, etc.).
 %
-%   ----------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 05-Aug-2025
-%
-%   Note: Header generated with ChatGPT; minor inconsistencies may remain.
-%   ----------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 23-July-2026
 
 
 % %Example of s structure parametrisation
@@ -105,7 +104,7 @@ if isfield(s,'rotationLimit') && isnumeric(s.rotationLimit) && isscalar(s.rotati
 end
 
 tforms=cell(size(fNames));
-views=cell(size(fNames));
+views=cell(size(fNames));      % dead: never assigned; retained so saved s.view stays [] (unchanged)
 commonMask=cell(size(fNames));
 
 % ---- processing order -----------------------------------------------------
@@ -120,11 +119,20 @@ if silentMode && numel(procOrder)>1
     procOrder = [procOrder(1); rest(isT); rest(~isT)];
 end
 
+% ---- registration proxies + masks -----------------------------------------
+% Each file's vessel-emphasised registration proxy (dark vessels -> bright,
+% background removed, within-mask histogram-equalised) is built by the shared
+% primitive enhanceForRegistration - the recipe used to be inline here and is
+% provably identical to it (Tests/Registration/testEnhanceForRegistration).  The
+% transforms estimated from these proxies are applied to the pristine SOURCE/
+% RESULTS data, which is re-loaded further down.  commonMask keeps the category
+% values (not the binary support) for the consensus stage that follows.
+proxy=cell(size(fNames));
 for oidx=1:numel(procOrder)
     fidx=procOrder(oidx);
     if ~isempty(fNames{fidx})
         disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
-        clearvars results source settings
+        clearvars results source
         load(fNames{fidx},'source');
         load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
 
@@ -138,142 +146,115 @@ for oidx=1:numel(procOrder)
             mask=results.mask>0;
             commonMask{fidx}=results.mask;
         end
-        img(img(:)>prctile(img(mask(:)==1),99))=prctile(img(mask(:)==1),99);
-        img(img(:)<prctile(img(mask(:)==1),1))=prctile(img(mask(:)==1),1);
-        img=imcomplement(img);
-        fSize=floor((min(size(img))./20))*2+1;
-        img(isnan(img))=0;
-        img=img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize));
-        img=mat2gray(img).*mask;
-        img(mask(:)==1)=histeq(img(mask(:)==1));
-        imgRef=img;
+        proxy{fidx}=enhanceForRegistration(img,'mask',mask,'equalizeInMask',true);
+    end
+end
+imgRefIni=proxy{1};                          % enhanced reference proxy
 
-        if fidx==1
-            imgRefIni=imgRef;
-            tforms{fidx}=affine2d(eye(3));
-        elseif silentMode
-            % ---- SILENT MODE: pick the transform without asking the user ------
-            % Same acquisition as the reference (differs only in the _c_K_/_t_K_/
-            % _s_K_ token) -> identity.  Same acquisition as a file already
-            % registered -> reuse that transform.  Otherwise apply whichever of
-            % identity / intensity / correlation gives the smallest overlay
-            % difference (Delta); correlation usually wins.
-            matchIdx=0;
-            for j=1:numel(fNames)
-                if ~isempty(tforms{j}) && strcmp(normNames{fidx},normNames{j})
-                    matchIdx=j; break;                % first already-registered file of this acquisition
-                end
-            end
-
-            if matchIdx>0
-                tforms{fidx}=tforms{matchIdx};
-                warped=imwarp(img,tforms{fidx},"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
-                if matchIdx==1
-                    methodStr='original (same acquisition as reference)';
-                else
-                    methodStr=sprintf('reused from file %d (same acquisition)',matchIdx);
-                end
-                deltaStr=sprintf('\\Delta applied=%d  (intensity/correlation not evaluated)', ...
-                    round(sum(abs(imgRefIni(:)-warped(:)))));
-            else
-                tform1 = imregtform(imgaussfilt(img,fSize./5),imgaussfilt(imgRefIni,fSize./5),s.tFormType,s.optimizer,s.metric);
-                tform2 = imregcorr(img,imgRefIni,'similarity');
-                w0=imwarp(img,affine2d(eye(3)),"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
-                w1=imwarp(img,tform1,"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
-                w2=imwarp(img,tform2,"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
-                delta=[sum(abs(imgRefIni(:)-w0(:))),sum(abs(imgRefIni(:)-w1(:))),sum(abs(imgRefIni(:)-w2(:)))];
-                cand={affine2d(eye(3)),tform1,tform2};
-                warpedAll={w0,w1,w2};
-                nameAll={'original','intensity registration','correlation registration'};
-                % Discard obvious failures: a transform rotating beyond the limit
-                % (e.g. an ~180 deg flip) is excluded from the choice, so a low
-                % Delta cannot make such a mis-registration win.
-                rejected=[false, overRotated(tform1,rotationLimit), overRotated(tform2,rotationLimit)];
-                sel=delta; sel(rejected)=Inf;
-                switch forceMethod
-                    case 'intensity'
-                        best=2; reason='forced';
-                    case 'correlation'
-                        best=3; reason='forced';
-                    otherwise
-                        [~,best]=min(sel); reason='smallest \Delta';
-                end
-                if rejected(best)
-                    best=1; reason='forced method over rotation limit -> original';
-                end
-                tforms{fidx}=cand{best};
-                warped=warpedAll{best};
-                methodStr=sprintf('%s (%s)',nameAll{best},reason);
-                r2=''; if rejected(2), r2=' (rot>lim)'; end
-                r3=''; if rejected(3), r3=' (rot>lim)'; end
-                deltaStr=sprintf('\\Delta original=%d, intensity=%d%s, correlation=%d%s', ...
-                    round(delta(1)),round(delta(2)),r2,round(delta(3)),r3);
-            end
-
-            % reporting overlay: warped image on the reference + chosen method/Delta
-            fRep=figure('Visible','off');
-            imshowpair(rot90(imgRefIni , size(imgRefIni,2) > size(imgRefIni,1)), ...
-                rot90(warped , size(warped,2) > size(warped,1)))
-            axis image
-            title({['Silent registration: ',methodStr],deltaStr})
-            [rPth,rNm]=fileparts(fNames{fidx});
-            exportgraphics(fRep,fullfile(rPth,[rNm,'_registration.png']));
-            close(fRep);
-        else
-            tform1 = imregtform(imgaussfilt(img,fSize./5),imgaussfilt(imgRefIni,fSize./5),s.tFormType,s.optimizer,s.metric);
-            tmp1=imwarp(img,tform1,"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
-            tform2 =  imregcorr(img,imgRefIni,'similarity');
-            tmp=imwarp(img,tform2,"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
-            warn1=''; if overRotated(tform1,rotationLimit), warn1=' [ROT>LIM]'; end   % flag obvious failures
-            warn2=''; if overRotated(tform2,rotationLimit), warn2=' [ROT>LIM]'; end
-
-            f=figure(1);
-            f.WindowState='Maximized';
-            tiledlayout(1,4,"TileSpacing","compact","Padding","compact");
-            nexttile
-            imshowpair(rot90(imgRefIni , size(imgRefIni,2) > size(imgRefIni,1)),rot90(img , size(img,2) > size(img,1)))
-            axis image
-            if size(imgRefIni)==size(img)
-                title(['Original, \Delta=',num2str(round(sum(abs(imgRefIni(:)-img(:)))))])
-            else
-                title('Original, size mismatch')
-            end
-            nexttile
-            imshowpair(rot90(imgRefIni , size(imgRefIni,2) > size(imgRefIni,1)),rot90(tmp1 , size(tmp1,2) > size(tmp1,1)))
-            axis image
-            title(['Intensity registration, \Delta=',num2str(round(sum(abs(imgRefIni(:)-tmp1(:))))),warn1]);
-            nexttile
-            imshowpair(rot90(imgRefIni , size(imgRefIni,2) > size(imgRefIni,1)),rot90(tmp , size(tmp,2) > size(tmp,1)))
-            axis image
-            title(['Correlation registration, \Delta=',num2str(round(sum(abs(imgRefIni(:)-tmp(:))))),warn2]);
-
-            ax=nexttile;
-            axis(ax,'off');
-            p = uipanel(f,'Units','normalized', ...
-                'Position', ax.Position, ...
-                'BorderType','none');
-
-            vals = {'Use original','Use intensity registration','Use correlation registration','Start manual'};
-            for k = 1:4
-                label = vals{k};                                      % capture once
-                uicontrol(p,'Style','pushbutton','String',label, ...
-                    'Units','normalized','Position',[0.1 1-0.2*k 0.8 0.15], ...
-                    'Callback',@(src,evt)buttonDone(f,label));
-            end
-            uiwait(f);                          % wait for a click
-            choice = getappdata(f,'choice');    % 1, 2, or 3
-            close(f);
-
-            if find(strcmp(vals,choice))==1
-                tforms{fidx}=affine2d(eye(3));
-            elseif find(strcmp(vals,choice))==2
-                tforms{fidx}=tform1;
-            elseif find(strcmp(vals,choice))==3
-                tforms{fidx}=tform2;
-            else
-                tforms{fidx}=manualByPointRegistration(imgRefIni,img,'sideBySide');
+% ---- acquisition grouping: representatives vs reused siblings --------------
+% Files that are the same acquisition but a different LSCI product differ only in
+% the _c_K_ / _t_K_ / _s_K_ token (normalised in normNames).  In silent mode the
+% first file of each acquisition (in procOrder, so the _t product leads) is its
+% representative and is registered; its siblings reuse the representative's
+% transform.  matchIdx reproduces the old "reused from file N" report exactly -
+% the smallest already-registered input index of the same acquisition.  In GUI
+% mode there is no reuse: every non-empty file is its own representative.
+repOf=zeros(size(fNames));                   % representative fidx for each file
+matchIdx=zeros(size(fNames));                % reuse-source file# for the report (0=none)
+assigned=false(size(fNames));                % set true as procOrder is walked
+for oidx=1:numel(procOrder)
+    fidx=procOrder(oidx);
+    if isempty(fNames{fidx}), continue; end
+    m=0;
+    if silentMode
+        for j=1:numel(fNames)
+            if assigned(j) && strcmp(normNames{fidx},normNames{j})
+                m=j; break;                  % first already-registered file of this acquisition
             end
         end
+    end
+    if m>0
+        repOf(fidx)=repOf(m);                % chain to the true representative
+        matchIdx(fidx)=m;
+    else
+        repOf(fidx)=fidx;                    % representative (the reference included)
+    end
+    assigned(fidx)=true;
+end
+
+% ---- delegate candidate generation + selection to registerToReference ------
+% enhance=false: the proxies above are already registration-ready and are reused
+% for the report overlays, so the engine must not re-enhance.  The engine forms
+% the identity / intensity (imregtform) / correlation (imregcorr) candidates and
+% applies the same silent auto-pick / forceMethod / rotationLimit logic (or the
+% GUI 4-panel chooser with the manual fallback), returning modern *tform2d
+% objects + per-image diagnostics.
+repList=find(~cellfun(@isempty,fNames(:)) & repOf(:)==(1:numel(fNames))');
+repList=[1; repList(repList~=1)];            % reference first
+sEng=struct();
+if silentMode, sEng.mode='silent'; else, sEng.mode='gui'; end
+sEng.enhance=false;
+sEng.allowManual=true;
+switch forceMethod
+    case 'intensity',   sEng.method='intensity';
+    case 'correlation', sEng.method='correlation';
+    otherwise,          sEng.method='auto';  % '' / unrecognised -> smallest Delta
+end
+sEng.rotationLimit=rotationLimit;
+if isfield(s,'tFormType'), sEng.tFormType=s.tFormType; end
+if isfield(s,'optimizer'), sEng.optimizer=s.optimizer; end
+if isfield(s,'metric'),    sEng.metric=s.metric;       end
+[repTforms,repDiag]=registerToReference(proxy(repList),sEng);
+
+repPos=zeros(size(fNames));                  % fidx -> its row in repList / repDiag
+for m=1:numel(repList)
+    tforms{repList(m)}=repTforms{m};
+    repPos(repList(m))=m;
+end
+for fidx=1:numel(fNames)                     % siblings inherit the representative's transform
+    if ~isempty(fNames{fidx}) && repOf(fidx)~=fidx
+        tforms{fidx}=tforms{repOf(fidx)};
+    end
+end
+
+% ---- per-file registration report overlays (silent mode only) --------------
+% Unchanged *_registration.png: the file's warped proxy over the reference proxy,
+% titled with the chosen method and the Delta(s).  Representatives report the
+% engine's choice (from diag); reused siblings report "reused from file N".
+if silentMode
+    nameLong={'original','intensity registration','correlation registration'};
+    for oidx=1:numel(procOrder)
+        fidx=procOrder(oidx);
+        if isempty(fNames{fidx}) || fidx==1, continue; end
+        if matchIdx(fidx)>0
+            warped=imwarp(proxy{fidx},tforms{fidx},"OutputView",imref2d(size(imgRefIni)),'FillValues', 0);
+            if matchIdx(fidx)==1
+                methodStr='original (same acquisition as reference)';
+            else
+                methodStr=sprintf('reused from file %d (same acquisition)',matchIdx(fidx));
+            end
+            deltaStr=sprintf('\\Delta applied=%d  (intensity/correlation not evaluated)', ...
+                round(sum(abs(imgRefIni(:)-warped(:)))));
+        else
+            d=repDiag(repPos(fidx));
+            warped=d.warped;
+            mi=find(strcmp(d.method,{'original','intensity','correlation'}),1);
+            methodStr=sprintf('%s (%s)',nameLong{mi},d.reason);
+            r2=''; if d.rejected(2), r2=' (rot>lim)'; end
+            r3=''; if d.rejected(3), r3=' (rot>lim)'; end
+            deltaStr=sprintf('\\Delta original=%d, intensity=%d%s, correlation=%d%s', ...
+                round(d.delta(1)),round(d.delta(2)),r2,round(d.delta(3)),r3);
+        end
+
+        % reporting overlay: warped image on the reference + chosen method/Delta
+        fRep=figure('Visible','off');
+        imshowpair(rot90(imgRefIni , size(imgRefIni,2) > size(imgRefIni,1)), ...
+            rot90(warped , size(warped,2) > size(warped,1)))
+        axis image
+        title({['Silent registration: ',methodStr],deltaStr})
+        [rPth,rNm]=fileparts(fNames{fidx});
+        exportgraphics(fRep,fullfile(rPth,[rNm,'_registration.png']));
+        close(fRep);
     end
 end
 
@@ -484,23 +465,4 @@ for fidx=1:1:size(fNames,1)
 end
 disp('Saving complete');
 
-
-    function buttonDone(f,sel)
-        setappdata(f,'choice',sel);           % store selection
-        uiresume(f);                          % release uiwait
-    end
-
-end
-
-function tf = overRotated(tform,rotationLimit)
-%overRotated  True if a 2-D transform's |rotation| exceeds rotationLimit (deg).
-%   Used to reject obvious registration failures (e.g. an ~180 deg flip) when
-%   the images are known to share a roughly common orientation.  Empty
-%   rotationLimit -> always false.  Works for any geometric-transform object.
-if isempty(rotationLimit)
-    tf=false; return
-end
-[ox,oy]=transformPointsForward(tform,0,0);          % rotation of the unit x-axis
-[ux,uy]=transformPointsForward(tform,1,0);
-tf = abs(atan2d(uy-oy,ux-ox)) > rotationLimit;
 end

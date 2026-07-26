@@ -1,4 +1,31 @@
-%getIntensity
+%getIntensity - Read .cxd recordings, compute the mean-intensity image and save.
+%
+%   For each .cxd file, reads the frames (Bio-Formats), optionally averages every
+%   decimFactor frames, and stores the intensity stack, its time-mean image and a
+%   diagnostic JPG.  Results are written next to each file as _I_d/_r/_s.mat.
+%
+% Syntax:
+%    getIntensity(s, fNames)
+%
+% Inputs:
+%    s      - parameter struct:
+%               .decimFactor  frames averaged per output frame (1 = none).
+%               .dataTypeOut  output class, e.g. 'single' ([] = source type).
+%               .saveSource   logical; also save the full intensity stack.
+%    fNames - cell array of .cxd file paths.
+%
+% Outputs:
+%    (none) - writes <file>_I_d.mat (source), _I_r.mat (results), _I_s.mat
+%             (settings) and <file>_I.jpg next to each input.
+%
+% Dependencies: the Bio-Formats MATLAB library (bfGetReader, bfGetPlane).
+% See also: getContrast, readCXD, readDV
+%
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
+
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
 % s.decimFactor=1;
@@ -33,12 +60,12 @@ for fidx=1:1:length(fNames)
         time=time(:);
 
         if isempty(s.dataTypeOut)
-            data=zeros(sizeX,sizeY,sizeT,dataType);
+            data=zeros(sizeY,sizeX,sizeT,dataType);
         else
-            data=zeros(sizeX,sizeY,sizeT,s.dataTypeOut);
+            data=zeros(sizeY,sizeX,sizeT,s.dataTypeOut);
         end
 
-        frame=zeros(sizeX,sizeY,dF,dataType);
+        frame=zeros(sizeY,sizeX,dF,dataType);
 
         %read data and close the file
         for t=1:1:sizeT

@@ -1,85 +1,226 @@
-%getGuidedIntensity
+%getGuidedIntensity - Per-segment mean intensity at full temporal resolution.
+%
+%   Uses an existing segmentation (results.sMap) as a guide to extract, for
+%   every labelled region, the mean intensity at the ORIGINAL frame rate of the
+%   recording.  In the standard pipeline the raw recording is decimated (to
+%   contrast or to averaged intensity) before segmentation, so results.sData is
+%   only available at the decimated frame rate.  getGuidedIntensity streams the
+%   raw file in batches and, for each frame, averages the valid pixels of every
+%   region.  The per-region traces are stored at maximum temporal resolution in
+%   results.gsData with the matching time vector results.gsTime (and
+%   results.gsType = "intensity").
+%
+%   "Valid" pixels are those that share the region label in results.sMap AND are
+%   kept in results.mask.  The columns of results.gsData are aligned with the
+%   rows of results.sMetrics (column i corresponds to region label i); regions
+%   with no valid pixels are returned as NaN.
+%
+%   The raw file may be a speckle recording (.rls, giving the raw camera
+%   intensity behind the contrast) or a Bio-Formats intensity recording (.cxd,
+%   e.g. fluorescence); the format is detected from the file extension.  The
+%   recording is never loaded in full: frames are read in memory-sized batches.
+%
+% Syntax:
+%    getGuidedIntensity(s, fNames)
+%    getGuidedIntensity(s, fNames, fNamesRaw)
+%
+% Inputs:
+%    s         - parameter struct (uses s.libraryFolder for traceability;
+%                optional s.memoryCoef, fraction of free RAM to use, default 0.25).
+%    fNames    - cell array of segmented *_I_d.mat (or *_K_d.mat) paths; the
+%                companion *_r.mat must already contain results.sMap.
+%    fNamesRaw - (optional) cell array of the matching raw recordings (.cxd or
+%                .rls), same size as fNames.  If omitted or left empty, the raw
+%                file name is derived from each *_d.mat name and expected in the
+%                same folder (just like the rest of the pipeline).
+%
+% Outputs:
+%    (none) - updates each *_r.mat with results.gsData [nFrames x nRegions],
+%             results.gsTime [nFrames x 1] and results.gsType, and records
+%             settings.getGuidedIntensity.
+%
+% Example:
+%    s.libraryFolder = libraryFolder;
+%    fNames = getFileNamesList(rootFolder,'*_I_d.mat');
+%    getGuidedIntensity(s,fNames(:));
+%
+% Dependencies: getPointerRLS (.rls); Bio-Formats bfGetReader/bfGetPlane (.cxd).
+% See also: getGuidedContrast, getSegmentation, getIntensity, getPointerRLS
+%
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 20-July-2026
+%------------- BEGIN CODE --------------
 
-function getGuidedIntensity(fNamesRef,fNames)
+% %Example of s structure parametrisation
+% s.libraryFolder=libraryFolder;
+% s.memoryCoef=0.25; %fraction of free RAM used per read batch
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'.cxd'), fNames(:)) & cellfun(@(s) isempty(s) || contains(s,'_r.mat'), fNamesRef(:)) )
-    error('One or more *non-empty* entries do not contain ".cxd" or "_r.mat".');
+function getGuidedIntensity(s,fNames,fNamesRaw)
+
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_d.mat'), fNames(:)) )
+    error('One or more *non-empty* entries do not contain "_d.mat".');
 end
+if nargin<3 || isempty(fNamesRaw)
+    fNamesRaw=deriveRawNames(fNames);
+end
+if ~isfield(s,'memoryCoef') || isempty(s.memoryCoef), s.memoryCoef=0.25; end
 
-for fidx=1:1:length(fNames)
-     if ~isempty(fNames{fidx})
-    %set file name to load data
-    s.fName=char(fNames{fidx});
-    s.fNameRef=char(fNamesRef{fidx});
-    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
-    clearvars results source settings
-    load(s.fNameRef,'results');
+for fidx=1:1:numel(fNames)
+    if ~isempty(fNames{fidx})
+        tic
+        s.fName=char(fNames{fidx});
+        s.fNameRaw=char(fNamesRaw{fidx});
+        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        clearvars results settings
 
-    if ~isfield(results, 'sMap') || ~isfield(results, 'cMask')
-        error('Reference file is missing sMap or cMask variables')
-    end
+        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
+        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
 
-    reader = bfGetReader(s.fName);
-    omeMeta = reader.getMetadataStore();
-    sizeX=double(omeMeta.getPixelsSizeX(0).getValue());
-    sizeY=double(omeMeta.getPixelsSizeY(0).getValue());
-    sizeT=double(omeMeta.getPlaneCount(0)); 
-    startT=omeMeta.getImageAcquisitionDate(0);
-    timeStamp = round(posixtime(datetime(string(startT), 'InputFormat', 'yyyy-MM-dd''T''HH:mm:ss', 'TimeZone', 'UTC')))*1000;
-    dataType=char(omeMeta.getPixelsType(0).toString());
-    sampling=double(omeMeta.getPixelsTimeIncrement(0).value()); %s
-    time=(0:1:(sizeT-1))*sampling;
-    time=time(:);
-
-    frame=zeros(sizeX,sizeY,dF,dataType);
-
-    %read data and close the file
-    for t=1:1:sizeT
-        for j=1:1:dF
-            frame(:,:,j) = bfGetPlane(reader, (t-1).*dF+j);
+        if ~isfield(results,'sMap')
+            error('Reference results file is missing sMap. Run getSegmentation first.');
         end
-        data(:,:,t)=mean(frame,3);
+        if ~isfile(s.fNameRaw)
+            error(['Raw recording not found: ',s.fNameRaw,newline,...
+                'Place it next to the *_d.mat file or pass fNamesRaw explicitly.']);
+        end
+
+        % Indicator matrix of valid pixels per region (same sMap index AND kept
+        % in the mask).  A sparse [nValidPix x nRegions] matrix lets us reduce a
+        % whole batch of frames to per-region sums with a single matrix product.
+        sMap=results.sMap;
+        if isfield(results,'mask') && ~isempty(results.mask) ...
+                && isequal(size(results.mask),size(sMap))
+            validMask=(sMap>0) & results.mask;
+        else
+            validMask=(sMap>0);
+        end
+        nRegions=double(max(sMap(:)));
+        pixIdx=find(validMask);
+        labels=double(sMap(pixIdx));
+        regInd=sparse(1:numel(pixIdx),labels,1,numel(pixIdx),nRegions); % [P x nRegions]
+        countPerRegion=full(sum(regInd,1))';                            % [nRegions x 1]
+
+        % Open the raw recording, verify geometry and size the read batches
+        [st,cfg]=openRawStream(s.fNameRaw);
+        if cfg.sizeY~=size(sMap,1) || cfg.sizeX~=size(sMap,2)
+            closeRawStream(st,cfg);
+            error(['Raw frame size (',num2str(cfg.sizeY),'x',num2str(cfg.sizeX),...
+                ') does not match sMap (',num2str(size(sMap,1)),'x',num2str(size(sMap,2)),...
+                '). Guided extraction needs the original, uncropped recording.']);
+        end
+        nT=cfg.sizeT;
+        batchSize=getBatchSize(numel(pixIdx),cfg.sizeY*cfg.sizeX,nT,s.memoryCoef);
+
+        gsData=nan(nT,nRegions);
+        timeStamps=zeros(nT,1);
+        done=0;
+        while done<nT
+            b=min(batchSize,nT-done);
+            [chunk,tsB,st]=readRawBatch(st,cfg,b,done);
+            vals=double(reshape(chunk,cfg.sizeY*cfg.sizeX,b));
+            vals=vals(pixIdx,:);                       % [P x b] valid pixels
+            sumX=regInd'*vals;                         % [nRegions x b]
+            gsData(done+1:done+b,:)=(sumX./countPerRegion)';   % mean intensity per region
+            timeStamps(done+1:done+b)=tsB;
+            done=done+b;
+            disp(['   frames ',num2str(done),'/',num2str(nT),', elapsed ',num2str(round(toc)),'s'])
+        end
+        closeRawStream(st,cfg);
+
+        results.gsData=gsData;
+        results.gsTime=toSeconds(timeStamps,cfg);
+        results.gsType="intensity";
+
+        % Save the settings and results
+        s.rawFrameRate=1./median(diff(results.gsTime));
+        settings.getGuidedIntensity=s;
+        disp(['Saving the results. Elapsed time ',num2str(round(toc)),'s']);
+        save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
+        save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
+        disp('Saving complete');
     end
-    reader.close();
+end
+end
 
-    results.time=time;
-    results.timeStamp=timeStamp;
-    results.imgI=mean(data,3);
-    settings.getIntensity=s;
-
-    h=figure;
-    h.WindowState='Maximize';
-    subplot(1,2,1)
-    imagesc(results.imgI)
-    clim([prctile(results.imgI(:),1),prctile(results.imgI(:),99)])
-    colorbar
-    axis image
-    subplot(1,2,2)
-    semilogy(time,squeeze(mean(data,[1,2])));
-        hold on
-        semilogy(time,squeeze(min(data,[],[1,2])));
-        semilogy(time,squeeze(max(data,[],[1,2])));
-        hold off
-        legend({'Mean','Min','Max'})
-        ylabel('Intensity')
-        xlabel('Time, s')
-        xlim([time(1),time(end)]);
-        ylim([min(data(:)),max(data(:))])   
-        fNameshort=split(s.fName,'\');
-    fNameshort=fNameshort(end);
-    sgtitle(strrep(fNameshort,'_',' '));
-    drawnow
-    print(h,strrep(s.fName,'.cxd','_I.jpg'), '-djpeg', '-r300');
-
-    % Save the settings and results
-    disp('Saving the results');
-    if s.saveSource
-        source.data=data;
-        source.time=time;
-        save(strrep(s.fName,'.cxd','_I_d.mat'),'source','-v7.3');
+%------------- LOCAL FUNCTIONS --------------
+function fNamesRaw=deriveRawNames(fNames)
+% Map each segmented *_d.mat name to its raw recording in the same folder.
+fNamesRaw=cell(size(fNames));
+for i=1:1:numel(fNames)
+    f=fNames{i};
+    if isempty(f), fNamesRaw{i}=''; continue; end
+    if contains(f,'_I_d.mat')
+        fNamesRaw{i}=regexprep(f,'_I_d\.mat$','.cxd');   % intensity pipeline -> .cxd
+    else
+        r=regexprep(f,'_[a-z]_K_d\.mat$','.rls');        % contrast pipeline -> .rls
+        if strcmp(r,f), r=regexprep(f,'_K_d\.mat$','.rls'); end
+        fNamesRaw{i}=r;
     end
-    save(strrep(s.fName,'.cxd','_I_r.mat'),'results','-v7.3');
-    save(strrep(s.fName,'.cxd','_I_s.mat'),'settings','-v7.3');
 end
 end
+
+function batchSize=getBatchSize(nValidPix,nPixFrame,nT,memoryCoef)
+% Frames per read batch, sized so the working arrays fit in free RAM.
+try
+    [~,mem]=memory; avail=mem.PhysicalMemory.Available;
+catch
+    avail=2e9;   % conservative fallback if memory() is unavailable
 end
+perFrameBytes=nValidPix*8*3 + nPixFrame*2;   % vals + vals.^2 + slack + raw chunk
+batchSize=max(1,min(nT,floor(avail*memoryCoef/perFrameBytes)));
+end
+
+function [st,cfg]=openRawStream(fNameRaw)
+% Open a raw recording for batched reading (.rls or Bio-Formats .cxd).
+[~,~,ext]=fileparts(fNameRaw);
+cfg.isRLS=strcmpi(ext,'.rls');
+if cfg.isRLS
+    [st.fp,meta]=getPointerRLS(fNameRaw);
+    cfg.sizeY=double(meta.sizeY);
+    cfg.sizeX=double(meta.sizeX);
+    cfg.sizeT=double(meta.sizeT);
+    cfg.dataType=meta.dataType;
+else
+    st.reader=bfGetReader(fNameRaw);
+    omeMeta=st.reader.getMetadataStore();
+    cfg.sizeY=double(omeMeta.getPixelsSizeY(0).getValue());
+    cfg.sizeX=double(omeMeta.getPixelsSizeX(0).getValue());
+    cfg.sizeT=double(omeMeta.getPlaneCount(0));
+    cfg.dataType=char(omeMeta.getPixelsType(0).toString());
+    cfg.sampling=double(omeMeta.getPixelsTimeIncrement(0).value());  % seconds
+end
+end
+
+function [chunk,ts,st]=readRawBatch(st,cfg,b,done)
+% Read b consecutive frames (and their time stamps) into [sizeY x sizeX x b].
+chunk=zeros(cfg.sizeY,cfg.sizeX,b,cfg.dataType);
+ts=zeros(b,1);
+if cfg.isRLS
+    for j=1:1:b
+        ts(j)=double(fread(st.fp,1,'*uint64'));
+        chunk(:,:,j)=fread(st.fp,[cfg.sizeY,cfg.sizeX],['*',cfg.dataType]);
+    end
+else
+    for j=1:1:b
+        chunk(:,:,j)=bfGetPlane(st.reader,done+j);
+    end
+    ts=((done:done+b-1)').*cfg.sampling;                 % seconds
+end
+end
+
+function closeRawStream(st,cfg)
+if cfg.isRLS, fclose(st.fp); else, st.reader.close(); end
+end
+
+function time=toSeconds(timeStamps,cfg)
+% Relative time vector in seconds, starting at zero.
+if cfg.isRLS
+    time=(timeStamps-timeStamps(1))./1000;               % .rls stamps are in ms
+else
+    time=timeStamps-timeStamps(1);                        % .cxd stamps already in s
+end
+time=time(:);
+end
+%------------- END OF CODE --------------

@@ -15,6 +15,17 @@
 %       dvsMetrics        (if present) raw dynamic-vessel metrics
 %       dvsData           (if present) flow traces per vessel ROI
 %       dvsDiameter       (if present) diameter traces per vessel ROI
+%       pulsatility       (if present) per-segment pulsatility tree scalars for
+%                         the flow signal (markers psMin..psSymRatio/psR2 +
+%                         harmonic hAmp/hPhase), aligned to sMetrics rows by idx
+%       dvsPulsatility    (if present) per dynamic vessel: flow (ps*) + diameter
+%                         (pd*) pulsatility scalars, aligned to dvsMetrics rows
+%
+%   NOTE  getPulsatility is now non-destructive: the sData / dvsData / dvsDiameter
+%   trace sheets carry the RAW averaged cycle (its harmonic-fit reconstruction
+%   lives in results.pulsatility, not in these traces); sMetrics / dvsMetrics gain
+%   the ps*/pd* pulsatility columns.  The per-pixel maps results.pulsatility.ppx
+%   are image data and are NOT exported here.
 %
 %   INPUT
 %     fNames   cell array of *.mat file paths.  Each must contain SOURCE,
@@ -31,14 +42,10 @@
 %     MATLAB R2019b+ (for writetable with 'Sheet' option) and data schema
 %     used throughout the Dynamic Light Scattering Imaging toolbox.
 %
-%   ----------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 05-Aug-2025
-%
-%   Note: This header was generated with ChatGPT and may contain minor
-%   inconsistencies—please verify before distribution.
-%   ----------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
 
 function exportToExcel(fNames)
 
@@ -177,6 +184,66 @@ for fidx=1:1:numel(fNames)
         
         writetable(T,fName,'Sheet','dvsDiameter');
     end
+
+    % ---- pulsatility summary sheets (per-segment results.pulsatility scalars) ---
+    % Surface the tree's per-segment markers + harmonic coefficients as focused
+    % sheets, row-aligned to sMetrics / dvsMetrics.  The per-pixel maps
+    % results.pulsatility.ppx are image data and are intentionally NOT exported.
+    if isfield(results,'pulsatility')
+        if isfield(results.pulsatility,'sData') && isfield(results.pulsatility.sData,'scalars')
+            Tp = pulsScalarTable(results.pulsatility.sData.scalars,'');
+            if ~isempty(Tp)
+                writetable([idTable(results.sMetrics), Tp],fName,'Sheet','pulsatility');
+            end
+        end
+        if isfield(results,'dvsMetrics') && isfield(results.pulsatility,'dvsData') ...
+                && isfield(results.pulsatility.dvsData,'scalars')
+            Tp = [idTable(results.dvsMetrics), ...
+                  pulsScalarTable(results.pulsatility.dvsData.scalars,'ps')];
+            if isfield(results.pulsatility,'dvsDiameter') ...
+                    && isfield(results.pulsatility.dvsDiameter,'scalars')
+                Tp = [Tp, pulsScalarTable(results.pulsatility.dvsDiameter.scalars,'pd')];
+            end
+            writetable(Tp,fName,'Sheet','dvsPulsatility');
+        end
+    end
      end
+end
+end
+
+function Ti = idTable(M)
+% Identifier columns for a pulsatility sheet: idx plus type/label when present.
+% Row order is the segment order shared by results.sMetrics / dvsMetrics and the
+% results.pulsatility.<sig> tree (DATA-MODEL segment-order invariant).
+Ti = table(double(M.idx(:)),'VariableNames',{'idx'});
+if ismember('type', M.Properties.VariableNames),  Ti.type  = string(M.type(:));  end
+if ismember('label',M.Properties.VariableNames),  Ti.label = string(M.label(:)); end
+end
+
+function Tp = pulsScalarTable(S,harmPrefix)
+% Flatten one results.pulsatility.<sig>.scalars struct (per-segment) into a table:
+% each [nSeg x 1] scalar becomes a column under its own name; the harmonic
+% coefficients hAmp/hPhase [nSeg x nHarm] expand to <harmPrefix>hAmp1..N /
+% <harmPrefix>hPhase1..N (harmPrefix disambiguates the bare flow vs diameter
+% coefficients when a sheet carries both).  Non-[nSeg x 1] extras are skipped;
+% returns an empty table when nothing usable is present.
+Tp = table();
+if ~isstruct(S), return; end
+fn = fieldnames(S); cols = {}; names = {};
+for i = 1:numel(fn)
+    v = S.(fn{i});
+    if isempty(v), continue; end
+    if any(strcmp(fn{i},{'hAmp','hPhase'}))
+        for k = 1:size(v,2)
+            cols{end+1}  = double(v(:,k));                        %#ok<AGROW>
+            names{end+1} = sprintf('%s%s%d',harmPrefix,fn{i},k);  %#ok<AGROW>
+        end
+    elseif iscolumn(v)
+        cols{end+1}  = double(v(:));                              %#ok<AGROW>
+        names{end+1} = fn{i};                                     %#ok<AGROW>
+    end
+end
+if ~isempty(cols)
+    Tp = array2table([cols{:}],'VariableNames',names);
 end
 end

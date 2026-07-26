@@ -28,14 +28,10 @@
 %   DEPENDS ON
 %     getEdgeSizeSLSCI, plus other core functions in the LSCI toolbox.
 %
-%   --------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 05-Aug-2025
-%
-%   Note: This header was generated with ChatGPT and may contain minor
-%   inconsistencies—please verify before release.
-%   --------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
 
 % %Example of s structure parametrisation
 % %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION

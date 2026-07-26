@@ -1,8 +1,14 @@
-% Launcher example for combined pulsatility and vasomotion analysis.
-% Respective data acquistion requirements are applied.
+% Launcher_Sonam_LSCI - Combined pulsatility and vasomotion pipeline (project-specific).
+%
+%   Project-specific launcher for combined pulsatility and vasomotion analysis
+%   (assumes the corresponding acquisition requirements were met).  Run STEP 0
+%   once per MATLAB session, then run the step cells (%%) in order.
+%
+% Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
+% script formatting were done with Claude Code.
 
-%% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
-%LIBRARY PATH - add YOUR path manualy here:
+%% STEP 0 - RUN EVERY TIME YOU RESTART MATLAB - THEN PROCEED TO THE STEP YOU STOPPED AT (BY DEFAULT STEP 1)
+%LIBRARY PATH - add YOUR path manually here:
 libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 rootFolder = 'O:\HE_BFI-DATA\Sonam\B3_Black batch\LSCI\T1\FM1'; %root folder for the files lookup
@@ -28,7 +34,7 @@ s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of fr
 s.manualMask=0; %allows manual subselection of the area to mask
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -64,7 +70,7 @@ s.smoothCoef1=1/3; %in respect to minimum points per cycle value
 s.minPromCoef=1/20;%1/2; % in respect to the std of the signal
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 getInternalCycle(s,fNames(:));
@@ -92,7 +98,7 @@ s.eEdge=3; %setting external edges for segmented vessels
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -105,7 +111,7 @@ close all
 clearvars -except fNames libraryFolder rootFolder
 
 s.libraryFolder=libraryFolder;
-fNames=setFileNamesList(rootFolder,'*c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 fNamesRef=regexprep(fNames, '\_c_K_d.mat$', '_t_K_d.mat');
 
 assignCategories(fNames,fNamesRef); %LAUNCHES THE PROCESSING ROUTINE
@@ -141,7 +147,7 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE -
-fNames=setFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -159,7 +165,7 @@ s.matchSegmentation=true;
 s.prchNSize=50; % Parenchymal pixels neighbourhoud. Same as in segmentation
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_K_d.mat','[A-Z]+\d+');
+fNames=getFileNamesList(rootFolder,'*_K_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -177,7 +183,7 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -190,19 +196,26 @@ s.vFR=[0.05,0.25];
 s.cFR=[0.4,0.6];
 s.wFR=[0.01,1];
 s.wVPO=10;
+s.normalisation='median'; %'mean'/'median' (global) or 'mmean'/'mmedian' (moving). Change only if needed
+s.normsize=101; %window for 'mmean'/'mmedian'; inf or 0 -> global. Change only if needed
 s.tgtFS=1; %Hz
 s.pcts=0:10:100;
 
 s.otsuMaxN=5;
 s.otsuElbow= 0.05;
+s.nPeakProm=0.10;   %VB peak-count prominence = fraction of per-time band max-min range
 
-s.analysePerPixel  = true;
-s.keepSpectrum=false;
-s.keepClustering=true;
-s.reconstructData=true;
+s.ppxVsmReturn = {'bands'};  %per-pixel analysis: NON-EMPTY = ON -> RESULTS.vasomotion.ppx (levels like segVsmReturn), [] = OFF. No analysePerPixel flag.
+s.ppxSegmentAveraging=[]; %TEMPORARY scaffolding (to be removed): per-segment averaging demo, subset of {'coherent','incoherent'}; [] = off. Change only if needed
+s.vsmSignals={'sData','dvsData','dvsDiameter','gsData'};  %which data-type signals get vasomotion analysis
+%s.segVsmReturn selects which levels to store in results.vasomotion: 'bands' (scalars.VB/CB),
+%'moments' (fVectors ampMean/Std/Skew + VB.ampMeanPct), 'series' (timeVectors amp/fCent/fSprd/nPeak),
+%'clustering' (flare/silence scalars+spectra+maskFlare), 'reconstruction' (timeVectors.VB.rData),
+%'spectrum' (spectrum.amp/.phase grid). Change only if needed.
+s.segVsmReturn={'bands','moments','series','clustering','reconstruction'};
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -211,19 +224,20 @@ close all
 clearvars -except fNames libraryFolder rootFolder
 
 s.libraryFolder=libraryFolder;
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - Waveform fitting
-s.fitData="regions"; %"regions" - for all segmented data, "all" - for segmented data AND pixel by pixel fits, or "none"
-%ADJUSTED IF NECESSARY - Waveform fitting
-fitSettings={'Method','NonlinearLeastSquares','Algorithm','Trust-Region','Display','off'};%,'Robust','Bisquare','MaxFunEvals',1200,'MaxIter',1000};
-fitLimits={'Lower',[0,0,0,0,0,-pi,-pi,-pi,-pi,-pi,0],...
-    'Upper',[Inf,Inf,Inf,Inf,Inf,pi,pi,pi,pi,pi,Inf],...
-    'StartPoint',[0.9,0.8,0.7,0.6,0.5,0.1,0.2,0.3,0.4,0.5,100]};
-s.fitOptions = fitoptions(fitSettings{:},fitLimits{:});
-s.fitEquation = fittype('a1*sin(2*pi*x+b1)+a2*sin(4*pi*x+b2)+a3*sin(6*pi*x+b3)+a4*sin(8*pi*x+b4)+a5*sin(10*pi*x+b5)+c','options',s.fitOptions);
-s.coefNames={'a1','a2','a3','a4','a5','b1','b2','b3','b4','b5','c','PR2'};
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - Harmonic model
+s.nHarm=5;              % number of harmonics in y=SUM a_n*sin(2*pi*n*x+b_n)+c
+%ADJUSTED IF NECESSARY - Which per-segment analysis levels to compute/store
+s.segPulsReturn={'markers','model','reconstruction'};  % markers = model-free scalars
+                        % (PI/RI/mean/extrema/timing/symmetry); model = harmonic
+                        % hAmp/hPhase/R2 (runs the fit); reconstruction = the
+                        % timeVectors.fData model cube (runs the fit). Default = all three.
+%ADJUSTED IF NECESSARY - Per-pixel maps (GATE + selector; [] = per-pixel analysis off)
+s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel marker maps ON
+                        % (results.pulsatility.ppx); add 'model'/'reconstruction' to
+                        % also fit every masked pixel (large full-resolution cubes).
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -235,23 +249,23 @@ s.libraryFolder=libraryFolder;
 %%IF DOING IT FILE BY FILE
 % s.useReference=false;
 % s.refFName=''; %use '' instead of " "
-%fNames=setFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-%setTypes(s,fNames(:));
+%fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%setVesselTypes(s,fNames(:));
 
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_BFI_d.mat','[A-Z]+\d+','1BP_c_BFI_d\.mat');
+fNames=getFileNamesList(rootFolder,'*_BFI_d.mat','[A-Z]+\d+','1BP_c_BFI_d\.mat');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
     s.refFName=fNames{i,1};
-    setTypes(s,fNames(i,:)');
+    setVesselTypes(s,fNames(i,:)');
 end
 
 %% STEP 11 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 

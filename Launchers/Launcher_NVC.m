@@ -1,8 +1,14 @@
-% Used for analysis of externally triggered neurovascular coupling responses.
-% Use Launcher_NVC.m. Ensure to edit the file names and settings according to the project needs.
+% Launcher_NVC - Externally-triggered neurovascular coupling (NVC) response analysis.
+%
+%   Example launcher for analysing externally-triggered NVC responses.  Edit the
+%   file names and settings for your project.  Run STEP 0 once per MATLAB
+%   session, then run the step cells (%%) in order.
+%
+% Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
+% script formatting were done with Claude Code.
 
-%% STEP 0 - RUN IT EVERY TIME YOU RESTARTED THE MATALB - THEN PROCEED TO THE STEP YOU HAVE STOPPED AT (BY DEFAULT TO STEP 1)
-%LIBRARY PATH - add YOUR path manualy here:
+%% STEP 0 - RUN EVERY TIME YOU RESTART MATLAB - THEN PROCEED TO THE STEP YOU STOPPED AT (BY DEFAULT STEP 1)
+%LIBRARY PATH - add YOUR path manually here:
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
@@ -28,7 +34,7 @@ s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of fr
 s.manualMask=0; %allows manual subselection of the area to mask
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*BV.rls'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*BV.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -57,7 +63,7 @@ s.eEdge=3; %setting external edges for segmented vessels
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -74,7 +80,7 @@ s.libraryFolder=libraryFolder;
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 splitRegions(s,fNames(:));
@@ -124,7 +130,7 @@ s.rejectTimeLoss=0.5; %allowed time loss due to grabbing faluere in seconds per 
 s.rejectFirstEpoch=1; %always reject the first epoch
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getExternalCycle(s,fNames(:));
 
@@ -161,7 +167,7 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_e_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 getSegmentation(s, fNames(:));
@@ -180,7 +186,7 @@ s.matchSegmentation=true;
 s.prchNSize=30; % Parenchymal pixels neighbourhoud - same as in the segmentation step
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_K_d.mat','[A-Z]+\d+');
+fNames=getFileNamesList(rootFolder,'*_e_K_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -199,7 +205,7 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_e_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -211,23 +217,23 @@ s.libraryFolder=libraryFolder;
 %%IF DOING IT FILE BY FILE
 % s.useReference=false;
 % s.refFName=''; %use '' instead of " "
-%fNames=setFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-%setTypes(s,fNames(:));
+%fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%setVesselTypes(s,fNames(:));
 
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_BFI_d.mat','[A-Z]+\d+');
+fNames=getFileNamesList(rootFolder,'*_e_BFI_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
     s.refFName=fNames{i,1};
-    setTypes(s,fNames(i,:)');
+    setVesselTypes(s,fNames(i,:)');
 end
 
 %% STEP 8 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-fNames=setFileNamesList(rootFolder,'*_e_BFI_d.mat'); %if structured file names were used then the setFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_e_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 

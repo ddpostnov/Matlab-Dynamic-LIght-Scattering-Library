@@ -37,14 +37,10 @@
 %     Bio-Formats (bfGetReader, bfGetPlane), plus core functions in the
 %     LSCI processing library.
 %
-%   --------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 15-Jun-2026
-%
-%   Note: This header was generated with ChatGPT and may contain minor
-%   inconsistencies—please verify before release.
-%   --------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;

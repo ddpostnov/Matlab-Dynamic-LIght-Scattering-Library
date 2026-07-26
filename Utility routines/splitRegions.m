@@ -35,14 +35,10 @@
 %     Only MATLAB built-ins and data structures produced by the LSCI
 %     processing library.
 %
-%   ----------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 05-Aug-2025
-%
-%   Note: Header generated with ChatGPT; minor inconsistencies may remain—
-%   please verify before distribution.
-%   ----------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
 
 
 
@@ -70,11 +66,17 @@ for fidx=1:1:numel(fNames)
         resultsIni=results;
         sourceIni=source;
 
-        if ~isfield(results,'regionsMask')
+        if isfield(results,'regionsMask')
+            regionsMask=resultsIni.regionsMask;
+        elseif isfield(results,'cMask')
+            regionsMask=resultsIni.cMask>0;
+
+        else
             error('No regionsMask detected in the file.');
         end
 
-        regionsMask=resultsIni.regionsMask;
+
+
         for ridx=1:1:max(regionsMask(:))
             results=resultsIni;
             source=sourceIni;

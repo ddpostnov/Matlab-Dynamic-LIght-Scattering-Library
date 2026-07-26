@@ -1,3 +1,18 @@
+Matlab Dynamic Light Scattering Library
+Copyright (c) 2026 Dmitry D. Postnov, CFIN, Aarhus University.
+
+This work is licensed under the Creative Commons
+Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0).
+
+  * Human-readable summary:  https://creativecommons.org/licenses/by-nc-sa/4.0/
+  * You are free to SHARE and ADAPT the material for NON-COMMERCIAL purposes,
+    with attribution and under the same license. Commercial use requires
+    separate written permission from the author.
+
+The full legal text of the license follows.
+
+=======================================================================
+
 Attribution-NonCommercial-ShareAlike 4.0 International
 
 =======================================================================

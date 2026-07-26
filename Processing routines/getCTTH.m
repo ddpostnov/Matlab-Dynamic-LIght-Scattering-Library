@@ -66,11 +66,10 @@
 %     files=dir(fullfile(dataRoot,'*b_I_d.mat'));
 %     getCTTH(s,fullfile({files.folder}',{files.name}'));
 %
-%   ----------------------------------------------------------------------
-%   Copyright © 2025 Dmitry D Postnov, Aarhus University
-%   e-mail: dpostnov@cfin.au.dk
-%   Last revision: 17-Jun-2026
-%   ----------------------------------------------------------------------
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 07-July-2026
 
 function getCTTH(s,fNames)
 
