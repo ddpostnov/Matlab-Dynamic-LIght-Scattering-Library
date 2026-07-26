@@ -39,10 +39,10 @@ s.manualMask=0; %allows manual subselection of the area to mask
 fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getContrast',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runContrast',false);
 
 
-getContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 % STEP 2 Process .rls files to get the internal cycle data
 clearvars -except fNames libraryFolder rootFolder
@@ -81,10 +81,10 @@ s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 fNames=getFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getInternalCycle',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runInternalCycle',false);
 
 %RUN THE PROCESSING ROUTINE
-getInternalCycle(s,fNames(:));
+runInternalCycle(s,fNames(:));
 %% STEP 3 Define pixel categories (optionally may be done on temporal contrast data only)
 close all
 clearvars -except fNames libraryFolder rootFolder
@@ -112,11 +112,11 @@ s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','l
 fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getCategories',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runCategories',false);
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
-    getCategories(s,fNames(i,:)');
+    runCategories(s,fNames(i,:)');
 end
 
 %% STEP 4 Assign same categories to the internal cycle (pulsatility) data 
@@ -129,7 +129,7 @@ fNames=getFileNamesList(rootFolder,'*c_K_d.mat'); %if structured file names were
 fNamesRef=regexprep(fNames, '\_c_K_d.mat$', '_t_K_d.mat');
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getCategories',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runCategories',false);
 
 assignCategories(fNames,fNamesRef); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -184,9 +184,9 @@ s.pInterpF=4; % leave as is
 fNames=getFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getSegmentation',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runSegmentation',false);
 
-getSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 7 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all
@@ -209,14 +209,14 @@ s.rotationLimit=45; % degrees; reject registrations rotating > 45 ([] = none)
 fNames=getFileNamesList(rootFolder,'*_K_d.mat','[A-Z]+\d+','*BV_t_K_d\.mat$');
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','registerLSCItoLSCI',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runRegistration',false);
 
 %OPTIONAL - backup files
 m=~cellfun(@isempty,fNames); cellfun(@copyfile,fNames(m),strrep(fNames(m),'.mat','_bckp.mat'));
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
-    registerLSCItoLSCI(s,fNames(i,:)');
+    runRegistration(s,fNames(i,:)');
 end
 
 %% OPTIONAL - fix registration issues (MANUAL) - follows right after registration uses the same settings - therefore has to be launched sequentially or the settings have to be re-assigned
@@ -226,7 +226,7 @@ fNames=strrep(fNames,'.mat','_bckp.mat');
 fileIndexes=[1,17,18]; % should be [1,N1,N2,N3,N4] where 1 is always present as a reference, N1, N2 etc are badly registered files that require manual registration
 
 s.silent=false; %run registration silently and generate report images
-registerLSCItoLSCI(s,fNames(1,[1,17,18])');
+runRegistration(s,fNames(1,[1,17,18])');
 
 %Delete backups
 fNames=getFileNamesList(rootFolder,'*bckp.mat');
@@ -246,9 +246,9 @@ s.method="basic"; %only "basic" is avaliable
 fNames=getFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getBFI',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runBFI',false);
 
-getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
+runBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 9 Perform vasomotion analysis
 close all
@@ -281,9 +281,9 @@ s.ppxSegmentAveraging=[]; %TEMPORARY scaffolding (to be removed): per-segment av
 fNames=getFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getVasomotion',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runVasomotion',false);
 
-getVasomotion(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
+runVasomotion(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 10 Perform pulsatility analysis (strictly after conversion to BFI)
 close all
@@ -305,9 +305,9 @@ s.ppxPulsReturn={'markers','model'};  % NON-EMPTY = per-pixel marker maps ON
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','getPulsatility',false);
+%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runPulsatility',false);
 
-getPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 11 Assign vessel types and regions of interest
 close all

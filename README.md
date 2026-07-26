@@ -12,12 +12,12 @@ maps, vascular segmentation, and pulsatility / vasomotion / neurovascular-coupli
 
 The library takes raw speckle recordings (`.rls`, `.mraw`, `.cxd`, `.dv`) and turns them into:
 
-- **Contrast** and **blood flow index (BFI)** image sequences — `getK`, `getContrast`, `getContrastFromRLS`, `getBFI`;
-- **Vascular segmentation** and per-segment traces — `getCategories`, `getSegmentation`, `setVesselTypes`;
-- **Pulsatility**, **vasomotion**, **neurovascular-coupling** and **bolus / CTTH** metrics — `getPulsatility`, `getVasomotion`, `getInternalCycle`, `getExternalCycle`, `getCTTH`;
-- optional **registration** across recordings (`registerLSCItoLSCI`, `registerRetinaLSCI`) and **Excel export** (`exportToExcel`).
+- **Contrast** and **blood flow index (BFI)** image sequences — `getK`, `runContrast`, `getContrastFromRLS`, `runBFI`;
+- **Vascular segmentation** and per-segment traces — `runCategories`, `runSegmentation`, `setVesselTypes`;
+- **Pulsatility**, **vasomotion**, **neurovascular-coupling** and **bolus / CTTH** metrics — `runPulsatility`, `runVasomotion`, `runInternalCycle`, `runExternalCycle`, `runCTTH`;
+- optional **registration** across recordings (`runRegistration`, `registerRetinaLSCI`) and **Excel export** (`exportToExcel`).
 
-A self-contained **myograph** toolset (`Myograph/`) measures vessel diameter from myograph videos and runs the same vasomotion analysis per user-defined interval.
+A **myograph** toolset — the headless `Core/Myograph/` functions plus the `GUIs/guiMyograph` app — measures vessel diameter from myograph videos and runs the same vasomotion analysis per user-defined interval.
 
 ---
 
@@ -38,28 +38,32 @@ A self-contained **myograph** toolset (`Myograph/`) measures vessel diameter fro
 
 ## Repository structure
 
+The top level is organised by **layer**: `Core` (the math), `Wrappers` (the pipeline
+steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
+`Utilities`, `Simulation`).
+
 | Folder | Contents |
 |---|---|
-| `Basic functions/Laser Speckle Contrast Imaging` | Core contrast engine — `getK`, `getContrastFromRLS`, `getContrastFromMRAW`, `getEdgeSizeSLSCI` |
-| `Basic functions/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles` |
-| `Basic functions/Dynamic Light Scattering Imaging` | g2 autocorrelation & DLSI/DCS model fitting — `getNormalizedG2`, `fitDLSI`, `fitNormalizedG2`, `getTauC` |
-| `Basic functions/Post-processing` | FFT, speckle size, response features, overlap tables |
-| `Basic functions` | Shared signal primitives — `getFFT`, `getVasomotionMetrics` (modular wavelet vasomotion core; `s.segVsmReturn` selects which levels — bands / moments / series / clustering / reconstruction / spectrum — are computed, default all six; `getVasomotion`'s per-pixel path is driven by the separate `s.ppxVsmReturn`; used by both `getVasomotion` and `getMyographVasomotion`), `assembleVasomotionTree` (builds the shared band-branched `results.vasomotion.<sig>` tree — scalars / fVectors / timeVectors / spectrum × VB/CB — from the core's flat metric bag), and `getPulsatilityMetrics` (modular harmonic pulsatility core mirroring `getVasomotionMetrics`: a two-mode SETUP/ANALYSIS that fits an `s.nHarm`-harmonic sine to one averaged cardiac cycle and returns model-free markers + harmonic coefficients; `s.segPulsReturn` / `s.ppxPulsReturn` select the levels — markers / model / reconstruction; used by `getPulsatility`) |
-| `Basic functions/Registration` | Landmark / mask registration, retinal LSCI registration |
-| `Basic functions/Visualisation and ROI selection` | Interactive ROI tools |
-| `Processing routines` | High-level pipeline steps (contrast → categories → segmentation → BFI → cycles / pulsatility / vasomotion — `getVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `getPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`) |
-| `Utility routines` | Cross-recording registration, region splitting, Excel export |
+| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles` |
+| `Core/Laser Speckle Contrast Imaging` | Contrast engine — `getK`, `getContrastFromRLS`, `getContrastFromMRAW`, `getSpeckleSize`, `getEdgeSizeSLSCI` |
+| `Core/Dynamic Light Scattering Imaging` | g2 autocorrelation & DLSI/DCS model fitting — `getNormalizedG2`, `fitDLSI`, `getTauC` |
+| `Core/Registration` | Landmark / mask registration — `registerToReference`, `enhanceForRegistration`, `registerRetinaLSCI`, `manualByPointRegistration` |
+| `Core/Vasomotion` | `getVasomotionMetrics` (modular wavelet vasomotion core; `s.segVsmReturn` selects which levels — bands / moments / series / clustering / reconstruction / spectrum — are computed, default all six; `runVasomotion`'s per-pixel path is driven by the separate `s.ppxVsmReturn`; used by both `runVasomotion` and `getMyographVasomotion`) and `assembleVasomotionTree` (builds the shared band-branched `results.vasomotion.<sig>` tree — scalars / fVectors / timeVectors / spectrum × VB/CB — from the core's flat metric bag) |
+| `Core/Pulsatility` | `getPulsatilityMetrics` (modular harmonic pulsatility core mirroring `getVasomotionMetrics`: a two-mode SETUP/ANALYSIS that fits an `s.nHarm`-harmonic sine to one averaged cardiac cycle and returns model-free markers + harmonic coefficients; `s.segPulsReturn` / `s.ppxPulsReturn` select the levels — markers / model / reconstruction; used by `runPulsatility`) |
+| `Core/Shared` | Shared signal primitives — `getFFT` |
+| `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`) |
+| `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → categories → segmentation → BFI → cycles / pulsatility / vasomotion — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, `assignCategories`, and the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) |
 | `Launchers` | Ready-to-edit example pipelines — **start here** |
-| `Post-processing examples` | Minimal, well-commented scripts for exploring processed results |
-| `Myograph` | Myograph diameter + vasomotion suite (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`) |
-| `Drafts` | Work-in-progress / superseded files — **not** part of the pipeline |
+| `GUIs` | Interactive apps — `guiExplore` (browse processed results) and `guiMyograph` (myograph workbench; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
+| `Utilities` | Terminal consumers of finished results — `exportToExcel` |
+| `Simulation` | Synthetic dynamic-speckle generation (`getDynamicSpeckles`, `Launcher_speckleSimulation`) — self-contained |
 | `3rd party` | External libraries (Bio-Formats, superlets, …) — unmodified |
 
 ---
 
 ## Vasomotion output (`results.vasomotion`)
 
-`getVasomotion` (LSCI / BFI) and `getMyographVasomotion` (diameter) share one wavelet
+`runVasomotion` (LSCI / BFI) and `getMyographVasomotion` (diameter) share one wavelet
 core (`getVasomotionMetrics`) and one output tree (`assembleVasomotionTree`). The LSCI
 results file stores a **band-branched `results.vasomotion` tree**. The two frequency
 bands — **VB** (vasomotion, `s.vFR`) and **CB** (comparison, `s.cFR`) — are struct
@@ -125,11 +129,11 @@ sub-tree as `intervals(iv).vasomotion` (single signal; no `ppx` / `ppxs`).
 ## Getting started
 
 1. Clone the repository and keep **only one copy** on your machine — MATLAB caches paths and multiple versions cause conflicts.
-2. Copy a launcher from `Launchers/` (or a script from `Post-processing examples/`) to your own working location; **leave the originals unchanged**.
+2. Copy a launcher from `Launchers/` to your own working location; **leave the originals unchanged**.
 3. In your copy, set `libraryFolder` to this repository, then run the `%% STEP` cells in order (run `STEP 0` once per MATLAB session).
 4. Read the header (comments at the top) and inline comments of each function you use — do not run scripts blindly.
 
-As a user you normally interact only with the **Launchers** and **Post-processing examples** folders; the processing steps you run are dictated by your protocol.
+As a user you normally interact with the **Launchers** (to build a pipeline) and the **GUIs** — `guiExplore` to browse processed results, `guiMyograph` for the myograph workflow; the processing steps you run are dictated by your protocol.
 
 ### File-naming convention
 
@@ -145,9 +149,9 @@ Most users only touch `_BFI_r.mat` (results) and `_BFI_d.mat` (3-D data) files. 
 ## Dependency graph
 
 `A → B` means file *A* calls function *B*. The connected component is the main pipeline
-(**Launchers → Processing routines → Basic functions**); isolated nodes are standalone
-tools not hooked into that pipeline (the DLS-Imaging fitting functions, the file readers,
-and the example scripts). `Drafts/` and `3rd party/` are excluded.
+(**Launchers → Wrappers → Core**); isolated nodes are standalone
+tools not hooked into that pipeline (the DLS-Imaging fitting functions and the file
+readers). `Drafts/` and `3rd party/` are excluded.
 
 ![File dependency graph](dependency_tree.png)
 
@@ -178,30 +182,21 @@ Copy a launcher to your own location and edit it for your project.
 | `Launcher_basic` | Minimal contrast → BFI, for a first look at your data. |
 | `Launcher_pulsatility` | Cardiac pulsatility (cranial window, ≥ 194 fps advised). |
 | `Launcher_vasoreactivity` | Vasoreactivity / vasomotion (≥ 25 fps for vasomotion). |
-| `Launcher_pulsatility_vasomotion`, `Launcher_pulsatility_vasomotion_Line` | Combined pulsatility + vasomotion (line-scan variant). |
+| `Launcher_pulsatility_vasomotion` | Combined pulsatility + vasomotion. |
 | `Launcher_NVC` | Externally-triggered neurovascular-coupling responses. |
 | `Launcher_CTTH` | Bolus-injection (CTTH) analysis from wide-field fluorescence. |
-| `Launcher_Sonam_LSCI` | Project-specific combined pulsatility + vasomotion. |
-| `Myograph/Launcher_Myograph` | Myograph vessel-diameter + vasomotion (self-contained). |
+| `Launcher_DLSI_basic` | DLSI pipeline: raw `.mraw` recordings → per-pixel g2 / decorrelation-time fit. |
+| `Launcher_guided` | Guided full-resolution per-segment trace extraction (demo on the bundled test data). |
 
-## Post-processing examples
+The **myograph** workbench has no launcher script — open `GUIs/guiMyograph` in MATLAB,
+or double-click `GUIs/launchMyographWorkbench.vbs`.
 
-Small, heavily-commented scripts that consume processed `_BFI_d.mat` / `_BFI_r.mat` files.
-Each script's header explains what it does, when to use it, and embeds a ready-to-reuse
-generative-AI prompt so you can regenerate or adapt it for your own data.
+## Exploring processed results
 
-| Example | Purpose |
-|---|---|
-| `Example_Claude_plotROIs` | Draw ROIs on a recording, plot their signals and report per-ROI values. |
-| `Example_Claude_pickRegions` | Click labelled segments in a results file and print their metrics (no data file needed). |
-| `Example_Claude_groupSummary` | Compare BFI / diameter / pulsatility / vasomotion across groups of recordings. |
-| `Example_Claude_arteryVeinStats` | Compare arteries vs veins in one recording (needs `setVesselTypes`). |
-| `Example_Claude_bfiMovie` | Play back (and optionally export) a recording as a movie — a good first look. |
-
-Getting a "feel" for your data with basic MATLAB skills is recommended. Follow any pipeline
-to a `_BFI_d.mat` file (3-D data `X × Y × Time` plus a time vector) and go from there —
-ROI selection, filtering, plotting as image or video. Each `Example_Claude_*` script keeps a
-generative-AI prompt in its header that you can reuse and adapt.
+Follow any pipeline to a `_BFI_d.mat` file (3-D data `X × Y × Time` plus a time vector)
+and explore it with basic MATLAB skills — ROI selection, filtering, plotting as image or
+video — or open `GUIs/guiExplore` to browse the finished `_r.mat` results (per-segment
+BFI / diameter / pulsatility / vasomotion, single files or group comparisons).
 
 ---
 

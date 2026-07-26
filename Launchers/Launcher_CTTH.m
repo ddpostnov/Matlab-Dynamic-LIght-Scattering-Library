@@ -25,7 +25,7 @@ s.fAngio=[];%[1600,2000]; % expected frame indexes for angiogram, leave empty if
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*BB0.cxd'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getBolus(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runBolus(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 2 Define pixel categories 
 close all
@@ -51,7 +51,7 @@ s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','l
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getCategories(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runCategories(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 3 (OPTIONAL. Only use if 1 or more regions are defined in step 2) Split the regions. 
 close all
@@ -101,7 +101,7 @@ s.pInterpF=4; % leave as is
 %SAME NAMES
 fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 7 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all
@@ -120,7 +120,7 @@ files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "
 fNamesVSM  = fullfile({files.folder}', {files.name}');
 fNamesPLS=regexprep(fNamesVSM, '\_t_K_d.mat$', '_c_K_d.mat');
 fNames=cat(1,fNamesPLS,fNamesVSM);
-registerLSCItoLSCI(s,fNames); %LAUNCHES THE UTILITY ROUTINE
+runRegistration(s,fNames); %LAUNCHES THE UTILITY ROUTINE
 
 %%
 close all
@@ -138,7 +138,7 @@ s.libraryFolder=libraryFolder;
 fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 
-getCTTH(s,fNames(:))
+runCTTH(s,fNames(:))
 
 %% STEP 8 Convert contrast to blood flow index
 close all
@@ -154,7 +154,7 @@ s.method="basic"; %only "basic" is avaliable
 files      = dir(fullfile(rootFolder,'**','*_K_d.mat'));
 fNames     = fullfile({files.folder}', {files.name}');
 
-getBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
+runBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 9 Perform vasomotion analysis
 close all
@@ -187,7 +187,7 @@ s.segVsmReturn={'bands','moments','series','clustering','reconstruction'};
 files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat'));
 fNames     = fullfile({files.folder}', {files.name}');
 
-getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
+runVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 10 Perform pulsatility analysis (strictly after conversion to BFI)
 close all
@@ -210,7 +210,7 @@ s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel marker maps ON
 files      = dir(fullfile(rootFolder,'**','*c_BFI_d.mat')); %<---ALWAYS REFER TO "c_BFI_d.mat" files, but you may use regexp to define specific "c_BFI_d.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
-getPulsatility(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
+runPulsatility(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 11 Assign vessel types and regions of interest
 close all

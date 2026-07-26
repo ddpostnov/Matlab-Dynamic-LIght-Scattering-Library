@@ -3,7 +3,7 @@
 %   Batch launcher for Dynamic Light Scattering Imaging.  STEP 1 turns one or
 %   more Photron .mraw high-speed recordings into the normalized intensity
 %   autocorrelation g2; STEP 2 fits every pixel of each g2 stack to a DLSI model
-%   with getFitDLSI; STEP 3 shows the fitted parameter maps.  Run STEP 0 once per
+%   with fitDLSI; STEP 3 shows the fitted parameter maps.  Run STEP 0 once per
 %   MATLAB session, then run the step cells (%%) in order.
 %
 %   Everything is written using the library's three-file data model, one triplet
@@ -137,11 +137,11 @@ for i=1:1:size(fNames,1)
     %fit the model - a lightweight struct stored as results.m<type> (e.g. mMDSN).
     %The heavy g2 is NOT copied into the results; it stays in *_g_d.mat.
     mName=['m',s.type];
-    results.(mName)=getFitDLSI(g2,lags,results.iniTau,'type',s.type, ...
+    results.(mName)=fitDLSI(g2,lags,results.iniTau,'type',s.type, ...
         'pointsMin',s.pointsMin,'isAdaptive',s.isAdaptive,'cLoss',s.cLoss,'mask',results.mask);
     % To store more models side by side, uncomment (each is a lightweight struct):
-    % results.mDSN=getFitDLSI(g2,lags,results.iniTau,'type','DSN','pointsMin',s.pointsMin,'mask',results.mask);
-    % results.mDN =getFitDLSI(g2,lags,results.iniTau,'type','DN', 'pointsMin',s.pointsMin,'mask',results.mask);
+    % results.mDSN=fitDLSI(g2,lags,results.iniTau,'type','DSN','pointsMin',s.pointsMin,'mask',results.mask);
+    % results.mDN =fitDLSI(g2,lags,results.iniTau,'type','DN', 'pointsMin',s.pointsMin,'mask',results.mask);
     settings.fitDLSI=s;
 
     %save results (g_r) and settings (g_s); the g2 stays in g_d and is not rewritten

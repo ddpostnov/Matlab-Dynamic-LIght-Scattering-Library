@@ -37,7 +37,7 @@ s.manualMask=0; %allows manual subselection of the area to mask
 %Set the file names to process
 fNames{1}='C:\Dropbox\Work\Data\20230116_PSY01_a1_crop.rls';
 
-getContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
+runContrast(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 2 Convert contrast to blood flow index
 close all
@@ -52,5 +52,5 @@ s.method="basic"; %only "basic" is avaliable
 %Set the file names to process
 fNames{1}='C:\Dropbox\Work\Data\20230116_PSY01_a1_crop_t_K_d.mat';
 
-getBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
+runBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 

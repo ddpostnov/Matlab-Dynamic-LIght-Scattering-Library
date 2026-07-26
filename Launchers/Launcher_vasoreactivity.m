@@ -36,7 +36,7 @@ s.manualMask=0; %allows manual subselection of the area to mask
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*BV.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runContrast(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 2 Define pixel categories (based on temporal contrast data)
 close all
@@ -67,7 +67,7 @@ fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured fi
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
-    getCategories(s,fNames(i,:)');
+    runCategories(s,fNames(i,:)');
 end
 
 
@@ -119,7 +119,7 @@ s.pInterpF=4; % leave as is
 fNames=getFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
-getSegmentation(s, fNames(:));
+runSegmentation(s, fNames(:));
 
 %% STEP 5 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all
@@ -139,7 +139,7 @@ fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
-    registerLSCItoLSCI(s,fNames(i,:)');
+    runRegistration(s,fNames(i,:)');
 end
 
 
@@ -156,7 +156,7 @@ s.method="basic"; %only "basic" is avaliable
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_t_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
+runBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 7 (Optional) Perform vasomotion analysis
 close all
@@ -188,7 +188,7 @@ s.segVsmReturn={'bands','moments','series','clustering','reconstruction'};
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_t_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-getVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
+runVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 8 Assign vessel types and regions of interest
 close all

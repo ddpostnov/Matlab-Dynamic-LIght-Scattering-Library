@@ -51,7 +51,7 @@ s.trustLimitsI=[3,254]; %min and max expected intensity
 s.minTrust=[0.7,0.7]; %per-pixel fraction of non-zero / non-saturated frames required
 s.manualMask=0; %allows manual subselection of the area to mask
 
-getContrast(s,{rawName}); %LAUNCHES THE PROCESSING ROUTINE
+runContrast(s,{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 2 Define pixel categories (background / parenchyma / vessels)
 close all
@@ -78,7 +78,7 @@ s.iniSizeN=7;% Odd number equal or larger than the spatial contrast kernel
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'};
 
 dName=strrep(rawName,'.rls','_t_K_d.mat');
-getCategories(s,{dName}); %LAUNCHES THE PROCESSING ROUTINE
+runCategories(s,{dName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 3 Perform segmentation (builds results.sMap / sMetrics / sData)
 close all
@@ -95,7 +95,7 @@ s.simR=0.3;          % minimal similarity ratio between branches to be the same 
 s.difR=0.4;          % minimal difference ratio to be considered different vessels
 
 dName=strrep(rawName,'.rls','_t_K_d.mat');
-getSegmentation(s,{dName}); %LAUNCHES THE PROCESSING ROUTINE
+runSegmentation(s,{dName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 4 GUIDED STEP - full-resolution per-segment contrast from the raw file
 close all
@@ -105,8 +105,8 @@ s.libraryFolder=libraryFolder;
 dName=strrep(rawName,'.rls','_t_K_d.mat');
 
 % Pass the raw file explicitly (it is also auto-detected if omitted).  Use
-% getGuidedIntensity instead for per-segment mean intensity (e.g. fluorescence).
-getGuidedContrast(s,{dName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
+% runGuidedIntensity instead for per-segment mean intensity (e.g. fluorescence).
+runGuidedContrast(s,{dName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 5 See the results - segmentation overview
 close all
@@ -252,4 +252,4 @@ if saveVideo, close(vw); fprintf('Saved perfusion movie to %s\n',vidFile); end
 % clearvars -except libraryFolder rootFolder rawName procType
 % s.libraryFolder=libraryFolder;
 % dName=strrep(rawName,'.rls','_t_K_d.mat');
-% getGuidedIntensity(s,{dName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
+% runGuidedIntensity(s,{dName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
