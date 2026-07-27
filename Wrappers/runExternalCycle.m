@@ -24,7 +24,7 @@
 %              epochsN, epochDurationSec, epochBaselineSec, epochFinaleSec,
 %              reject*Coefs, maskType, enablelRejectionModification, etc.)
 %     fNames   cell array of full paths to *_K_d.mat files (same naming
-%              convention as produced by runContrast).
+%              convention as produced by runContrastFromRLS).
 %
 %   OUTPUTS
 %     None – all results are written to disk (see above).
@@ -57,7 +57,8 @@
 % %Set the stim offset (for offset stim start mode)
 % s.stimOffset=125; %seconds
 % %Set the list of stimulation start timestamps (for manual stim start mode)
-% stimStart{1}='09:23:31.346'; %'HH:mm:ss.SSS'
+% s.stimStartAll{1}='09:23:31.346'; %'HH:mm:ss.SSS' %set for multiple files
+% as{1} {2} etc
 %
 % %define epochs (repeated stimulations) parameters
 % s.epochsN=20;
@@ -105,7 +106,7 @@ for fidx=1:1:length(fNames)
 
         s.rlsStartTime=datetime(results.timeStamp,'ConvertFrom','epochtime','Epoch',datetime(1970,1,1),'TicksPerSecond',1e3,'Format', 'HH:mm:ss.SSS');
         if strcmp(s.stimStartType,'manual')
-            s.stimStart=datetime(stimStart{fidx},'InputFormat','HH:mm:ss.SSS');
+            s.stimStart=datetime(s.stimStartAll{fidx},'InputFormat','HH:mm:ss.SSS');
         elseif strcmp(s.stimStartType,'offset')
             s.stimStart=s.rlsStartTime+seconds(s.stimOffset);
         end

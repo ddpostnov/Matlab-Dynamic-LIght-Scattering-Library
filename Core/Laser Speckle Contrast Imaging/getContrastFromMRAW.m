@@ -128,14 +128,14 @@ time=((1:1:size(dataLSCI,3))-1).*decimation./fps; %convert time to seconds
 
 trustMatrix=trustMatrix./rawFramesN;
 
-settings.runContrast.contrastType=contrastType;
-settings.runContrast.contrastKernel=contrastKernel;
-settings.runContrast.mrawFileName=mrawFileName;
-settings.runContrast.rawBatchSize=rawBatchSize;
-settings.runContrast.procType=procType;
-settings.runContrast.decimation=decimation;
-settings.runContrast.selectROI=selectROI;
-settings.runContrast.ROI=ROI;
+settings.runContrastFromMRAW.contrastType=contrastType;
+settings.runContrastFromMRAW.contrastKernel=contrastKernel;
+settings.runContrastFromMRAW.mrawFileName=mrawFileName;
+settings.runContrastFromMRAW.rawBatchSize=rawBatchSize;
+settings.runContrastFromMRAW.procType=procType;
+settings.runContrastFromMRAW.decimation=decimation;
+settings.runContrastFromMRAW.selectROI=selectROI;
+settings.runContrastFromMRAW.ROI=ROI;
 
 
 if saveContrast

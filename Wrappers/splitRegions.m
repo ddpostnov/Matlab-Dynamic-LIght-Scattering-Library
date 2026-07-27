@@ -70,9 +70,11 @@ for fidx=1:1:numel(fNames)
             regionsMask=resultsIni.regionsMask;
         elseif isfield(results,'cMask')
             regionsMask=resultsIni.cMask>0;
-
         else
-            error('No regionsMask detected in the file.');
+            % No regions defined (setRegions skipped or no ROI drawn) and nothing
+            % segmented yet: fall back to the whole window (all-true mask), so the file
+            % is copied out as a single Roi1_ dataset instead of erroring.
+            regionsMask=true(size(sourceIni.data,1),size(sourceIni.data,2));
         end
 
 
@@ -103,6 +105,17 @@ for fidx=1:1:numel(fNames)
                         tmp(:,:,i)=source.(fn{k})(y(1):y(2),x(1):x(2),i);
                     end
                     source.(fn{k})=tmp;
+                end
+            end
+
+            fn = fieldnames(settings);
+            for k=1:numel(fn)
+                if size(settings.(fn{k}),1)==size(regionsMask,1) & size(settings.(fn{k}),2)==size(regionsMask,2)
+                    tmp=zeros(y(2)-y(1)+1,x(2)-x(1)+1,size(settings.(fn{k}),3),class(settings.(fn{k})));
+                    for i=1:1:size(settings.(fn{k}),3)
+                        tmp(:,:,i)=settings.(fn{k})(y(1):y(2),x(1):x(2),i);
+                    end
+                    settings.(fn{k})=tmp;
                 end
             end
 

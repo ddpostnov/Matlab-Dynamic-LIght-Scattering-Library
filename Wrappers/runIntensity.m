@@ -19,7 +19,7 @@
 %             (settings) and <file>_I.jpg next to each input.
 %
 % Dependencies: the Bio-Formats MATLAB library (bfGetReader, bfGetPlane).
-% See also: runContrast, readCXD, readDV
+% See also: runContrastFromRLS, readCXD, readDV
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

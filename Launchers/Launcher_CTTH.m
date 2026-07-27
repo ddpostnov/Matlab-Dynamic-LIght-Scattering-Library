@@ -27,52 +27,45 @@ fNames=getFileNamesList(rootFolder,'*BB0.cxd'); %if structured file names were u
 
 runBolus(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 2 Define pixel categories 
+%% STEP 2 Define segmentation regions (interactive ROI editor; optional - whole window if skipped)
 close all
 clearvars -except fNames libraryFolder rootFolder
 
 s.libraryFolder=libraryFolder;
 
-%ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTEMNTS
-s.regionsN=1; %Numer of regions for manual selection. 0 if using entire window.
+%REGION SELECTION - setRegions is fully interactive: it opens an ROI editor per file
+%(Add ROI / Delete ROI / Reset ROIs + polygon/rectangle/square/ellipse/circle shape
+%selector; select an ROI and press Delete to remove it).  The number of regions is
+%however many you draw - there is no count to set - and nothing advances until you
+%press Done.  Draw nothing, or skip this step, to keep the whole window (no region
+%mask is written).
+
+%SET FILE NAMES HERE - passed as one ROW (transpose) so a drawn ROI carries (editable)
+%across all bolus files as a single group (the intensity _I path has no grouping id)
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+setRegions(s,fNames(:)'); %LAUNCHES THE PROCESSING ROUTINE
+
+%% STEP 3 Perform segmentation (categories + labels + per-segment traces; fully automatic)
+close all
+clearvars -except fNames libraryFolder rootFolder
+s.libraryFolder=libraryFolder;
+
+%ADJUSTED IF NECESSARY - CATEGORIZATION ADJUSTEMNTS (intensity _I path: no trust limits)
 s.lSizeN=121; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=5; % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.2; % Segmentation sensitivity - increase if missing vessels, decrease to minimize segmentation noise
 s.sSizeScale=1; % scaler for small objects assignment to background or to unregognized regions
 s.deSens=1; %can be used to reduce sensitivity to small objects
-s.lThinN=2; % Large vessels thinning 
-s.imOpen=0; % Small vessels thinning 
+s.lThinN=2; % Large vessels thinning
+s.imOpen=0; % Small vessels thinning
 s.iEdge=1; %setting internal edges for segmented vessels
 s.eEdge=1; %setting external edges for segmented vessels
 
 %DO NOT CHANGE - META DATA
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}; %CATEGORIES
 
-%SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-runCategories(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
-
-%% STEP 3 (OPTIONAL. Only use if 1 or more regions are defined in step 2) Split the regions. 
-close all
-clearvars -except fNames libraryFolder rootFolder
-
-s.libraryFolder=libraryFolder;
-%ADJUSTED IF NECESSARY - DELETE THE ORIGINAL FILES
-s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
-
-%SAME NAMES
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-%USES THE SAME FILE NAMES AS ABOVE as STEP 2
-splitRegions(s,fNames(:)); %LAUNCHES THE UTILITY ROUTINE
-
-%% STEP 4 Perform segmentation
-close all
-clearvars -except fNames libraryFolder rootFolder
-s.libraryFolder=libraryFolder;
-
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - LABELLING & TRACES
 s.sStat='median'; % Statistics used for calculation of traces per segment. 'median' or 'mean'. Median is used by default.
 s.sMinL=15; % Minimum length for segments
 s.prchNSize=90; % Parenchymal pixels neighbourhoud.
@@ -80,16 +73,44 @@ s.correctNodes=true; % Enable/disable branching correction (e.g. when a vessel i
 s.simR=0.3; % minimal similarity ratio between branches to be considered the same vessel
 s.difR=0.4; % minimal difference ratio to be considered different vessels
 
+%SET FILE NAMES HERE - FLAT (order-independent; grouping was setRegions' job in STEP 2)
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+runSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+
+%% STEP 4 (OPTIONAL. Only use if 1 or more regions were defined in STEP 2) Split the regions.
+close all
+clearvars -except fNames libraryFolder rootFolder
+
+s.libraryFolder=libraryFolder;
+%ADJUSTED IF NECESSARY - DELETE THE ORIGINAL FILES
+s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
+
+%SET FILE NAMES HERE
+fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+%USES THE SAME FILE NAMES AS ABOVE as STEP 2 (crops each file by its own regionsMask -> RoiN_ files)
+splitRegions(s,fNames(:)); %LAUNCHES THE UTILITY ROUTINE
+
+%% STEP 5 (OPTIONAL) Dynamic segmentation - per-frame vessel diameter / flow (heavy)
+close all
+clearvars -except fNames libraryFolder rootFolder
+s.libraryFolder=libraryFolder;
+
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - LABELLING (MUST MATCH THE SEGMENTATION STEP 3)
+s.sMinL=15; % Minimum length for segments
+s.prchNSize=90; % Parenchymal pixels neighbourhoud.
+s.correctNodes=true; % Enable/disable branching correction
+s.simR=0.3; % minimal similarity ratio between branches to be considered the same vessel
+s.difR=0.4; % minimal difference ratio to be considered different vessels
+
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
-s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
 s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
 s.sMaxLBI=(1/5)./s.sMinL; %Max local bending (0 to pi per pixel)
 s.sMaxCLR=1.3; %Maximum accepted CLR of the segment 1 perfectly straight, 1.5 - slow bend, 2 - coil
-s.sMaxDK=0.2; %Max accepted std/mean for the initial diameter estimation
 s.sMaxKK=0.3; %Max accepted std/mean for the initial contrast estimation
 s.iniNSize=7; % Odd number equal or larger than the spatial contrast kernel
 s.sMaxP2D=3; %Max accepted deviation of the fit from center estimate
-
 
 %ADJUSTED IF NECESSARY - QUALITY CHECK AND INTERPOALTION
 s.gSizeN=3;
@@ -97,11 +118,10 @@ s.minOverlapMask=0.6; %minimum overlap between the initial center line and segme
 s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial ROI
 s.pInterpF=4; % leave as is
 
-%SET FILE NAMES HERE - IF REGIONS SPLIT WAS PERFORMED, OTHERWISE KEEP THE
-%SAME NAMES
+%SET FILE NAMES HERE (after STEP 4 this pattern also matches the RoiN_ crops)
 fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-runSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runDynamicSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 7 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all

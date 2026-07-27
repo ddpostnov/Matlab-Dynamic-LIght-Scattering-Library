@@ -53,7 +53,7 @@
 % NOTES
 %   - Only category-5 (lumen) segments are used for Artery/Vein/All-vessel selections
 %     and, by default, for named vessel labels; parenchyma uses category 1. See the
-%     library README and runCategories for the category definitions.
+%     library README and getPixelCategories for the category definitions.
 %   - Very large results files (e.g. temporal vasomotion files with per-pixel maps)
 %     are read field-by-field (HDF5) so time-series / images / spectra can still be
 %     shown without loading the whole struct; per-segment SELECTION metadata (type /

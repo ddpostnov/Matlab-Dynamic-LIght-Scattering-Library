@@ -44,7 +44,7 @@
 %    runGuidedContrast(s,fNames(:));
 %
 % Dependencies: getPointerRLS (.rls); Bio-Formats bfGetReader/bfGetPlane (.cxd).
-% See also: runGuidedIntensity, runSegmentation, runContrast, getPointerRLS
+% See also: runGuidedIntensity, runSegmentation, runContrastFromRLS, getPointerRLS
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

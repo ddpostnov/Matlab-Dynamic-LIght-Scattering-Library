@@ -94,10 +94,11 @@
 %
 %   DEPENDS ON
 %     getVascularTree (Core: automatic derivation), orderForest, getMetric &
-%     defaultFlowParams (Core); Image Processing Toolbox (imdilate/medfilt2),
-%     Statistics Toolbox (tiedrank) and MATLAB graph objects
-%     (digraph/conncomp/toposort/isdag); core LSCI library utilities.  Consumes
-%     the output of runSegmentation, runPulsatility and setVesselTypes.
+%     defaultFlowParams (Core); enhanceForDisplay (background-subtracted GUI
+%     preview); Image Processing Toolbox (imdilate/medfilt2), Statistics Toolbox
+%     (tiedrank) and MATLAB graph objects (digraph/conncomp/toposort/isdag); core
+%     LSCI library utilities.  Consumes the output of runSegmentation,
+%     runPulsatility and setVesselTypes.
 %
 % See also: getVascularTree, setVesselTypes, runPulsatility, runSegmentation, runVasomotion
 %
@@ -364,7 +365,7 @@ if isfield(results,'imgBFI'), img=sqrt(double(results.imgBFI)); else, img=double
 lo=double(prctile(img(cMask(:)>0),[5,99])); if lo(1)==lo(2), lo=[min(img(:)) max(img(:))+eps]; end
 img=mat2gray(img,lo);
 fSize=floor((min(size(img))./20))*2+1;
-img=(img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize))).*(cMask>0);
+img=enhanceForDisplay(img,fSize).*(cMask>0);
 
 % ---- figure & layout ---------------------------------------------------
 f=figure('Name','Vascular hierarchy','Color','w','WindowState','maximized', ...

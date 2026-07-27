@@ -1,70 +1,100 @@
-%runSegmentation  Segment vessels & parenchyma from categorical LSCI masks
+%runSegmentation  Categorize + label vessels/parenchyma from LSCI mean images
 %
-%   runSegmentation(s,fNames) loads each *_K_d.mat dataset, converts the
-%   pre-computed categorical mask (results.cMask) into a detailed vessel/
-%   parenchyma label map (results.sMap), extracts scalar metrics and mean
-%   time-series for every labelled structure, and—optionally—performs an
-%   automated dynamic-segmentation (centre-line tracking) to obtain diameter
-%   and flow traces (results.dvs* fields).  Updated *_r.mat and *_s.mat
-%   files overwrite the originals, and a JPEG preview of the segmentation
-%   is saved alongside the data.
+%   runSegmentation(s,fNames) is the fully automatic static-segmentation step: for
+%   every *_K_d.mat / *_I_d.mat file it builds the five-level categorical mask, turns
+%   it into an indexed vessel/parenchyma label map, extracts per-structure scalar
+%   metrics and mean/median time-series, saves the updated *_r.mat / *_s.mat, and
+%   writes two JPEG previews (_cm.jpg categories, _vs.jpg segments).  It takes NO
+%   user input: the interactive region selection now lives in setRegions (which
+%   writes results.regionsMask), and the automatic dynamic-segmentation loop lives
+%   in runDynamicSegmentation.  runSegmentation replaces the retired runCategories
+%   (its categorization is now the getPixelCategories core) and the static half of
+%   the old runSegmentation.
+%
+%   PER-FILE PIPELINE
+%     read results.regionsMask (from setRegions; whole window if absent)
+%       -> getPixelCategories  (edge size + enhancement + trust mask + 5-level cMask)
+%       -> _cm.jpg preview
+%       -> getSegmentationLabels (centerlines -> sMap/pMap; merges inner walls)
+%       -> single cube pass -> sMetrics (geometry) + sData (traces)
+%       -> _vs.jpg preview -> save
 %
 %   INPUTS
-%     s        parameter structure
-%              ├─ attmemptDS           true = attempt dynamic segmentation
-%              ├─ sMinL, prchNSize     geometric thresholds
-%              ├─ sMinP2R2‥sMaxP2D     dynamic-segment quality limits
-%              ├─ minOverlapMask/Self  acceptance criteria
-%              └─ pInterpF, …          interpolation & kernel sizes
-%     fNames   cell array of *_K_d.mat file paths (contrast cubes).
+%     s        parameter structure.
+%              Categorization (read by getPixelCategories): trustLimitsK, iniSizeN,
+%                lSizeN, sSizeN, sens, deSens, sSizeScale, lThinN, imOpen, iEdge, eEdge.
+%              Labelling (read by getSegmentationLabels): correctNodes, simR, difR,
+%                sMinL, prchNSize.
+%              Traces: sStat ('mean' or, default, 'median').
+%              s.fNamesCopyTo (optional, default {}): assign the computed segmentation
+%                to co-registered sibling files - see below.
+%     fNames   FLAT (order-independent) cell array of *_K_d.mat / *_I_d.mat paths;
+%              iterate element by element (grouping was setRegions' job).  Each file
+%              must have matching *_s.mat / *_r.mat siblings.
 %
-%   OUTPUT SIDE-EFFECTS
-%     <run>_K_r.mat   RESULTS with fields
-%                       • sMap,  sMetrics,  sData
-%                       • dvsMap, dvsMetrics, dvsDiameter, dvsData  (if DS)
-%     <run>_K_s.mat   SETTINGS   (field settings.vesselsSegmentation added)
-%     <run>_vs.jpg    Preview image: raw contrast + vessel labels
+%   s.fNamesCopyTo - assign the segmentation to siblings (replaces assignCategories)
+%     Mirrors fNames with one extra dimension: s.fNamesCopyTo(i,:) lists the sibling
+%     files that inherit the segmentation computed for fNames{i} (0..K targets per
+%     source; use a COLUMN fNames so row i lines up with source i, e.g.
+%     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat')).  For each target
+%     the SHARED SPATIAL products (cMask, regionsMask, mask, sMap, pMap, sMetrics) are
+%     copied verbatim and the target's OWN sData is RE-EXTRACTED from its OWN cube using
+%     the copied sMap (siblings are different temporal data on the same FOV, so masks/
+%     labels are shared but traces are per-file).  Assumes source and target are
+%     co-registered / same FOV (the old assignCategories assumption).
+%
+%   OUTPUT SIDE-EFFECTS (per file, and per copy target)
+%     <name>_r.mat   results.{cMask,regionsMask,mask,sMap,pMap,sMetrics,sData}
+%     <name>_s.mat   settings.runSegmentation = s (now carrying edgeSize and sStat)
+%     <name>_cm.jpg  categories preview (300 dpi)
+%     <name>_vs.jpg  segments preview   (300 dpi)
 %
 %   EXAMPLE
-%     p = defaultSegmentationParams();
-%     files = dir(fullfile(dataRoot,'*_K_d.mat'));
-%     runSegmentation(p, fullfile({files.folder}',{files.name}'));
+%     fNames = getFileNamesList(root,'*_t_K_d.mat');           % flat column list
+%     setRegions(s,fNames);                                    % define regions first
+%     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+%     runSegmentation(s,fNames);                               % segment _t, copy onto _c
+%     runDynamicSegmentation(s,fNames);                        % optional heavy loop
 %
 %   DEPENDS ON
-%     Functions from the LSCI processing library: readRLS, getFFT, etc.
+%     getPixelCategories, getSegmentationLabels, enhanceForDisplay,
+%     showSegmentsPreview (Core/LSCI); plus MATLAB's Image Processing Toolbox.
+%
+% See also: setRegions, runDynamicSegmentation, getPixelCategories,
+%           getSegmentationLabels, splitRegions
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 27-July-2026
 
 
 %%Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
-% %ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
-% s.attmemptDS=true; %attempt to perform automated dynamic segmentation or not
-% s.sMinL=15; % Minimum length for segments
-% s.prchNSize=30; % Parenchymal pixels neighbourhoud.
-%
-% %ADJUSTED (OR VERIFIED) PER PROTOCOL - DYNAMIC SEGMENTATION
-% s.sMinP2R2=0.95; %Min accepted R2 of 3-degree polynom fit
-% s.sMaxLBI=(1/5)./s.sMinL; %Max local bending (0 to pi per pixel)
-% s.sMaxCLR=1.3; %Maximum accepted CLR of the segment 1 perfectly straight, 1.5 - slow bend, 2 - coil
-% s.sMaxDK=0.2; %Max accepted std/mean for the initial diameter estimation
-% s.sMaxKK=0.3; %Max accepted std/mean for the initial contrast estimation
-% s.iniNSize=7; % Odd number equal or larger than the spatial contrast kernel
-% s.sMaxP2D=3; %Max accepted deviation of the fit from center estimate
-%
-% %ADJUSTED IF NECESSARY - QUALITY CHECK AND INTERPOALTION
-% s.minOverlapMask=0.6; %minimum overlap between the initial center line and segmentation mask present in each frame
-% s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial ROI
-% s.pInterpF=10; % leave as is
+% %ADJUSTED (OR VERIFIED) PER PROTOCOL - CATEGORIZATION
+% s.trustLimitsK=[0.001,0.5]; % min (fastest flows) and max (slowest flows) expected contrast
+% s.lSizeN=61; % Odd, ~2x the largest vessel
+% s.sSizeN=15; % Odd, ~2x the small-vessel diameter
+% s.sens=0.3;  % segmentation sensitivity (raise if missing vessels, lower to cut noise)
+% s.deSens=1;  % integer >=1; small-vessel sensitivity
+% s.sSizeScale=1; % small-object background/unrecognised assignment scaler
+% s.lThinN=2;  % large-vessel thinning
+% s.imOpen=2;  % small-vessel thinning
+% s.iniSizeN=7;% Odd number equal or larger than the spatial contrast kernel
+% s.iEdge=2; s.eEdge=2; % internal / external wall edge widths
+% %ADJUSTED (OR VERIFIED) PER PROTOCOL - LABELLING & TRACES
+% s.correctNodes=true; s.simR=0.3; s.difR=0.4; % branch-node correction
+% s.sMinL=15;      % minimum segment length
+% s.prchNSize=30;  % parenchymal cell neighbourhood
+% s.sStat='median';% per-segment trace statistic ('median' default, or 'mean')
+% s.fNamesCopyTo={}; % optional: assign the segmentation to co-registered siblings
 
 function runSegmentation(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat')|| contains(s,'_I_d.mat'), fNames(:)) )
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
 end
+if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 
 for fidx=1:1:numel(fNames)
      if ~isempty(fNames{fidx})
@@ -76,157 +106,38 @@ for fidx=1:1:numel(fNames)
     load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
     load(strrep(s.fName,'_d.mat','_r.mat'),'results');
 
-
-
-    % Temporary fix - diameter is estimated including inner walls, rest of
-    % parameters estimated for lumen and merged walls
-    % Temporary fix - diameter is estimated including inner walls, rest of
-    % parameters estimated for lumen and merged walls
-    cMask = results.cMask;
-    dMask = cMask > 3;
-    dtLumen = bwdist(dMask ~= 1);
-    cMask(cMask == 4) = 3;
-    edgeSize = settings.runCategories.edgeSize;
-    sLines = bwskel(cMask == 5);
-
-    % Constrain skeleton to inner region boundaries
-    validRegionMask = zeros(size(sLines));
-    validRegionMask(edgeSize*2+1:end-edgeSize*2, edgeSize*2+1:end-edgeSize*2) = ...
-        sLines(edgeSize*2+1:end-edgeSize*2, edgeSize*2+1:end-edgeSize*2);
-    sLines = (validRegionMask == 1);
-
-    % Identify and isolate nodes using convolutional adjacency matrix
-    adjacencyMatrix = [1, 1, 1; 1, 0, 1; 1, 1, 1];
-    nodes = logical((conv2(single(sLines), adjacencyMatrix, 'same') > 2) .* sLines);
-    sLinesIni = sLines;
-    sLines = sLines - nodes;
-
-    % Label isolated segments
-    sLines = int32(bwlabel(sLines));
-
-    if s.correctNodes
-        numLabels = max(sLines(:));
-
-        % Compute segment lumen distances
-
-        segmentMetrics = zeros(numLabels, 2);
-        for labelIndex = 1:numLabels
-            segmentMask = (sLines == labelIndex);
-            segmentMetrics(labelIndex, 1) = sum(segmentMask(:));
-            segmentMetrics(labelIndex, 2) = mean(dtLumen(segmentMask));
+    % --- mean image + modality ---
+    isK=contains(s.fName,'_K_d.mat');
+    if isK
+        if isfield(results,'imgK')
+            imgIni=results.imgK;
+        else
+            imgIni=mean(source.data,3,'omitmissing');
         end
-
-        % Define topological criteria
-        similarityTolerance = s.simR;
-        differenceRatio = s.difR;
-
-        % --- Implement Connected Components Node Clustering ---
-        labeledNodes = bwlabel(nodes,8);
-        numNodeClusters = max(labeledNodes(:));
-
-        for clusterIndex = 1:numNodeClusters
-            % Isolate the current contiguous node cluster
-            currentClusterMask = (labeledNodes == clusterIndex);
-
-            % Dilate the cluster by 1 pixel to detect all adjacent segment labels
-            dilatedCluster = imdilate(currentClusterMask, strel('square', 3));
-
-            % Extract non-zero labels from sLines that intersect the dilated perimeter
-            connectingPixels = sLines(dilatedCluster & (sLines > 0));
-            connectedLabels = nonzeros(unique(connectingPixels));
-
-            if numel(connectedLabels) >= 3
-                % Retrieve mean radii estimates for connecting segments
-                segmentRadii = zeros(numel(connectedLabels), 2);
-                for branchIndex = 1:numel(connectedLabels)
-                    labelIdx = connectedLabels(branchIndex);
-                    segmentRadii(branchIndex, 1) = double(labelIdx);
-                    segmentRadii(branchIndex, 2) = segmentMetrics(labelIdx, 2);
-                end
-
-                % Sort segments by diameter descendantly
-                [~, sortIdx] = sort(segmentRadii(:, 2), 'descend');
-                sortedSegments = segmentRadii(sortIdx, :);
-                r1 = sortedSegments(1, 2);
-                r2 = sortedSegments(2, 2);
-                r3 = sortedSegments(3, 2);
-
-                % Evaluate continuity and bifurcation conditions
-                isSimilar = r1 < (similarityTolerance * r2 + r2);
-                isBifurcation = r2 >= (differenceRatio * r3 + r3);
-
-                if (isSimilar && isBifurcation) || (r1 < (similarityTolerance/2 * r2 + r2)) || (r1>10 && abs(r2 - r1) < 1) || (r2 >= (differenceRatio*2 * r3 + r3))
-                    % Define truncation limit as average radius of the parent vessel
-                    truncationDistance = ceil((r1 + r2)/2);
-
-                    % Apply geodesic truncation to daughter branches
-                    for smallBranchIndex = 3:size(sortedSegments, 1)
-                        smallLabel = sortedSegments(smallBranchIndex, 1);
-                        branchMask = (sLines == smallLabel);
-
-                        % Seed the geodesic transform using the entire junction cluster
-                        combinedMask = branchMask | currentClusterMask;
-
-                        % Calculate constrained path distance originating from the cluster edge
-                        geoDist = bwdistgeodesic(combinedMask, currentClusterMask, 'quasi-euclidean');
-
-                        % Eliminate intraluminal pixels of the branching vessel
-                        pixelsToRemove = (geoDist > 0) & (geoDist <= truncationDistance);
-                        sLinesIni(pixelsToRemove) = 0;
-                    end
-                    % Remove the modified node cluster from the mask
-                    nodes(currentClusterMask) = 0;
-                end
-            end
-        end
-        sLines = sLinesIni - nodes;
-        sLines=bwareaopen(sLines,s.sMinL);
-
-
-        % Final topological cleanup and reassignment
-        sLines = int32(bwlabel(sLines > 0));
+    else
+        imgIni=results.imgI;
     end
 
-    labels=nonzeros(unique(sLines));
-    distStack=inf([size(cMask) numel(labels)],'single');
-    toc
-    parfor k = 1:numel(labels)
-        distStack(:,:,k) = bwdistgeodesic(cMask>2, sLines == labels(k), 'quasi-euclidean')-mean(dtLumen(sLines == labels(k)));
+    % --- region mask from setRegions; a MISSING regionsMask (setRegions skipped, or no
+    %     ROI drawn) means the whole window: an all-ones mask the size of the image ---
+    if isfield(results,'regionsMask')
+        regionsMask=results.regionsMask;
+    else
+        regionsMask=ones(size(imgIni));
     end
-    toc
-    [~,tmp] = min(distStack,[],3);
-    vsMap     = zeros(size(cMask),'like',sLines);
-    vsMap(cMask>2) = labels(tmp(cMask>2)); %labeled segments
-    vsMap(vsMap>0)=(vsMap(vsMap>0)-1).*2+1;
-    sLines(sLines>0)=(sLines(sLines>0)-1).*2+1;
 
-    sMap=vsMap;
-    sMap(cMask==3)=sMap(cMask==3)+1;
-    idxs=int32(bwlabel(cMask==2))+max(sMap(:));
-    sMap(cMask==2)=idxs(cMask==2);
+    % --- categorize (automatic core: edge size + enhancement + trust mask + cMask) ---
+    if isfield(results,'mask'), existingMask=results.mask; else, existingMask=[]; end
+    [cMask,s.edgeSize,maskOut,imgVis]=getPixelCategories(imgIni,regionsMask,existingMask,isK,s);
+    results.regionsMask=regionsMask;
+    results.mask=(maskOut==(regionsMask>0));
+    results.cMask=cMask;                          % store the 5-level (un-merged) mask
+    writeCategoriesPreview(s.fName,imgVis,cMask);
 
-
-    [M,N]       = size(results.cMask);                  % image dimensions
-    step        = double(s.prchNSize);                  % nominal cell width
-    R           = step/2;                               % half-offset
-    rows        = 1 : R*sqrt(3) : M;                    % √3·R vertical pitch
-    cols        = 1 : step         : N;
-    [C,Rr]      = meshgrid(cols,rows);                  % full grid of centres
-    C(2:2:end,:)= C(2:2:end,:) + R;                     % shift odd rows by R
-    C           = round(C);  Rr = round(Rr);            % integer coordinates
-    inFrame     =  Rr>=1 & Rr<=M & C>=1 & C<=N;         % guard ①
-    idxAll      = sub2ind([M N], Rr(inFrame), C(inFrame));
-    idxSeeds    = idxAll(results.cMask(idxAll) >= 0);    % guard ②: inside mask
-    seed        = false(M,N);  seed(idxSeeds) = true;   % binary seed image
-    [~,lbl]     = bwdist(seed,'euclidean');             % nearest-seed label
-    valid       = results.cMask>=1;     % area to overwrite
-    lbl(~valid) = 0;
-    nz                  = lbl>0;
-    [~,~,lbl(nz)]       = unique(lbl(nz));              % consecutive IDs
-    lbl                 = int32(lbl) + max(sMap(:));   % avoid clashes
-    results.pMap=lbl;
-    sMap(valid & cMask==1)         = lbl(valid & cMask==1);                   % updated label map
-
+    % --- indexed label maps (mask algebra; merges inner walls into outer) ---
+    edgeSize=s.edgeSize;
+    [sMap,pMap,sLines,cMask,~,dMask,~]=getSegmentationLabels(cMask,edgeSize,s); % cMask now merged
+    results.pMap=pMap;
 
     %Build segments table
     varTypes = ["double","double","double","double","double","double","double","double"];
@@ -240,7 +151,7 @@ for fidx=1:1:numel(fNames)
         if area>0
             if strcmp(s.sStat,'mean')
             sData(:,i)=mean(source.data(sMap(:)==i,:),1,'omitnan');
-            else %DEFAULT 
+            else %DEFAULT
             sData(:,i)=median(source.data(sMap(:)==i,:),1,'omitnan');
             end
             c=unique(cMask(sMap==i));
@@ -304,317 +215,12 @@ for fidx=1:1:numel(fNames)
     toc
     source.data=reshape(source.data,dataSize);
 
-    if s.attmemptDS
-        nodesD=bwdist(~dMask).*nodes;
-        [tmp, idxs] = bwdist(nodes);
-        rNode = nodesD(nodes==1);
-        r=zeros(numel(nodes),1);
-        r(nodes==1)=rNode;
-        rP = r(idxs);
-        nodesD = (tmp <= rP);
-        sLines(nodesD)=0;
-        sLines=sLines.*int32(bwareaopen(sLines>0,s.sMinL,8));
-
-
-
-        tmp=ones(size(cMask));
-        tmp(cMask==0)=nan;
-        img=mean(source.data,3,'omitnan');
-        img=img.*tmp;
-        img=imcomplement(img);
-        d2C=bwdist(~dMask).*(dMask);
-        d2MY=islocalmax(img,1).*(cMask==5);
-        [~,d2MY]=bwdist(d2MY);
-        d2MX=islocalmax(img,2).*(cMask==5);
-        [~,d2MX]=bwdist(d2MX);
-        dvsDiameter=zeros(size(source.data,3),max(sLines(:)));
-        varTypes = ["int32","single","single","single","single","single"];
-        varNames = ["idx","length","CLR","R2","overlapMask","overlapSelf"];
-        dvsMetrics=table('Size',[max(sLines(:)),6],'VariableTypes',varTypes,'VariableNames',varNames);
-        dvsData=zeros(size(source.data,3),max(sLines(:)));
-        dvsMap=zeros(size(cMask),'int32');
-
-
-        counter=1;
-        for lineIdx=unique(sLines(sLines(:)>0))'
-            disp(['Checking segment ',num2str(lineIdx),' out of possible ',num2str(max(sLines(:)))])
-            [y,x]=find(sLines==lineIdx);
-            if (max(x)-min(x))>=(max(y)-min(y))
-                sLines(d2MY(sub2ind(size(sLines),y,x)))=lineIdx;
-                [y,x]=find(sLines==lineIdx);
-                [p,S,mu] = polyfit(x,y,3);
-                xx=min(x):1/s.pInterpF:max(x);
-                yy=polyval(p,xx,S,mu);
-            else
-                sLines(d2MX(sub2ind(size(sLines),y,x)))=lineIdx;
-                [y,x]=find(sLines==lineIdx);
-                [p,S,mu] = polyfit(y,x,3);
-                yy=min(y):1/s.pInterpF:max(y);
-                xx=polyval(p,yy,S,mu);
-            end
-            kappa=abs(6.*p(1).*yy+2.*p(2))./((1+(3.*p(1).*(yy.^2)+2.*p(2).*yy+p(3)).^2).^(3./2));
-            sLines(sLines==lineIdx)=0;
-            dd=min(hypot(x-xx,y-yy),[],1);
-            idxs=dd<=s.sMaxP2D & kappa<=s.sMaxLBI & xx>=1 & yy>=1 & xx<=size(sLines,2) & yy<=size(sLines,1);
-            xx=xx(idxs);
-            yy=yy(idxs);
-
-            %Leaving only the longest part of the segment
-            tmp=zeros(size(sLines),'logical');
-            tmp(sub2ind(size(sLines),round(yy),round(xx)))=1;
-            tmp=bwareafilt(tmp,1,"largest",8);
-            [y,x]=find(tmp);
-            idxs=sum(round(yy)==y & round(xx)==x,1)>0;
-            xx=xx(idxs);
-            yy=yy(idxs);
-            if numel(xx)>1
-                sL=sum(hypot(diff(xx),diff(yy)));
-                sD=ceil(2*[mean(d2C(sub2ind(size(sLines),round(yy),round(xx)))),std(d2C(sub2ind(size(sLines),round(yy),round(xx))))]);
-                sCLR=sL/ hypot(xx(end)-xx(1), yy(end)-yy(1));
-                sR2=S.rsquared;
-                sLines(sub2ind(size(sLines),round(yy),round(xx)))=lineIdx;
-                if (max(xx)-min(xx))>=(max(yy)-min(yy))
-                    limX=([floor(min(xx)),ceil(max(xx))]);
-                    limY=([floor(min(yy))- sD(1)-2*sD(2),ceil(max(yy))+ sD(1)+2*sD(2)]);
-                else
-                    limY=([floor(min(yy)),ceil(max(yy))]);
-                    limX=round([floor(min(xx))- sD(1)-2*sD(2),ceil(max(xx))+ sD(1)+2*sD(2)]);
-                end
-
-                if sL>=s.sMinL && sR2>=s.sMinP2R2 && sCLR<=s.sMaxCLR && sD(2)/sD(1)<=s.sMaxKK && limX(1)>edgeSize && limY(1)>edgeSize && limX(2)<size(cMask,2)-edgeSize && limY(2)<size(cMask,1)-edgeSize
-                    disp('Fitting a segment')
-
-                    sD=sD.*s.pInterpF;
-                    xx = round( (xx - limX(1)) * s.pInterpF ) + 1;
-                    yy = round( (yy - limY(1)) * s.pInterpF ) + 1;
-
-                    xx=xx(:);
-                    yy=yy(:);
-                    stepDist = hypot(diff(xx), diff(yy));
-
-                    % Identify gaps larger than adjacent diagonals but smaller than the threshold
-                    gapIndices = find(stepDist > 1.5 & stepDist < s.gSizeN.*s.pInterpF);
-
-                    for k = flip(gapIndices(:)')
-                        pointCount = ceil(stepDist(k));
-                        % Generate linear coordinate insertions
-                        fillX = round(linspace(xx(k), xx(k+1), pointCount + 1)');
-                        fillY = round(linspace(yy(k), yy(k+1), pointCount + 1)');
-                        % Splice arrays to insert interpolated pixels, excluding existing endpoints
-                        xx = [xx(1:k); fillX(2:end-1); xx(k+1:end)];
-                        yy = [yy(1:k); fillY(2:end-1); yy(k+1:end)];
-                    end
-
-
-
-
-                    v     = pca([xx(:) yy(:)]);
-                    theta = atan2d(v(2,1), v(1,1));
-
-                    maskROI=single(~((vsMap(limY(1):limY(2),limX(1):limX(2))~=lineIdx & vsMap(limY(1):limY(2),limX(1):limX(2))~=0) | cMask(limY(1):limY(2),limX(1):limX(2))==2));
-                    dataROI=single(source.data(limY(1):limY(2),limX(1):limX(2),:));
-                    compVal=max(dataROI(:));
-                    maskROI(maskROI==0)=NaN;
-                    if contains(s.fName,'_K_d.mat')
-                        dataROI=compVal-dataROI;
-                    elseif contains(s.fName,'_I_d.mat')
-                        dataROI=dataROI-min(dataROI(dataROI(:)>0));
-                    end
-                    dataROI=dataROI.*maskROI;
-                    dataROI=imresize3(dataROI,[size(dataROI,1)*s.pInterpF,size(dataROI,2)*s.pInterpF,size(dataROI,3)]);
-
-
-                    if (max(xx)-min(xx))>=(max(yy)-min(yy))
-                        try
-                            dataProfile=nan(numel(xx),sum(sD)*2+1,size(dataROI,3));
-                        catch
-                            warning('Segment is too large - skipping due to memory limitaion')
-                            continue;
-                        end
-
-                        if (min(yy)-sum(sD))>0 && (max(yy)+sum(sD))<size(dataROI,1)
-                            for i=1:1:numel(xx)
-                                dataProfile(i,:,:)=dataROI(yy(i)-sum(sD):yy(i)+sum(sD),xx(i),:);
-                            end
-                        else
-                            disp('Segmentation failed - out of bounds')
-                            continue;
-                        end
-                    else
-                        try
-                            dataProfile=nan(numel(yy),sum(sD)*2+1,size(dataROI,3));
-                        catch
-                            warning('Segment is too large - skipping due to memory limitaion')
-                            continue;
-                        end
-                        if (min(xx)-sum(sD))>0 && (max(xx)+sum(sD))<size(dataROI,2)
-                            for i=1:1:numel(yy)
-                                dataProfile(i,:,:)=dataROI(yy(i),xx(i)-sum(sD):xx(i)+sum(sD),:);
-                            end
-
-                        else
-                            disp('Segmentation failed - out of bounds')
-                            continue;
-                        end
-                    end
-
-                    dataProfile=squeeze(mean(dataProfile,1,'omitnan'));
-
-                    idxIni=zeros(1,size(dataProfile,2));
-                    idxL=zeros(1,size(dataProfile,2));
-                    idxR=zeros(1,size(dataProfile,2));
-                    for t=1:1:size(dataProfile,2)
-                        ts=squeeze(dataProfile(:,t));
-                        idxsFrgrd=zeros(1,length(ts));
-                        [~,idxIni(t)]=max(ts);
-                        idxCur=idxIni(t);
-                        idxsFrgrd(idxCur)=1;
-
-                        idxL(t)=idxCur;
-                        idxR(t)=idxCur;
-
-                        stdFrgrd=std(ts(idxsFrgrd==1));
-                        stdBkgrd=std(ts(idxsFrgrd==0));
-
-                        stdSumIni=sqrt(sum(idxsFrgrd==1).*stdFrgrd.^2+sum(idxsFrgrd==0).*stdBkgrd.^2);
-                        stdSumCur=stdSumIni;
-                        stdSum2=stdSumCur;
-                        stdSumCur2=stdSum2;
-                        while stdSumCur2<=stdSum2 && idxL(t)>1 && idxR(t)<length(idxsFrgrd)
-                            stdSum2=stdSumCur2;
-                            stdSum=stdSumCur;
-                            idxCur=idxL(t);
-                            while stdSumCur<=stdSum && idxCur>1
-                                stdSum=stdSumCur;
-                                idxCur=idxCur-1;
-                                idxsFrgrd(idxCur)=1;
-                                stdFrgrd=std(ts(idxsFrgrd==1));
-                                stdBkgrd=std(ts(idxsFrgrd==0));
-                                stdSumCur=sqrt(sum(idxsFrgrd==1).*stdFrgrd.^2+sum(idxsFrgrd==0).*stdBkgrd.^2);
-                            end
-                            idxL(t)=idxCur;
-
-                            stdSum=stdSumCur;
-                            idxCur=idxR(t);
-                            while stdSumCur<=stdSum && idxCur<length(idxsFrgrd)
-                                stdSum=stdSumCur;
-                                idxCur=idxCur+1;
-                                idxsFrgrd(idxCur)=1;
-                                stdFrgrd=std(ts(idxsFrgrd==1));
-                                stdBkgrd=std(ts(idxsFrgrd==0));
-                                stdSumCur=sqrt(sum(idxsFrgrd==1).*stdFrgrd.^2+sum(idxsFrgrd==0).*stdBkgrd.^2);
-                            end
-                            idxR(t)=idxCur;
-                            stdSumCur2=stdSumCur;
-                        end
-                    end
-
-
-
-                    tmp=zeros(size(dataROI));
-                    if (max(xx)-min(xx))>=(max(yy)-min(yy))
-                        for i=1:1:numel(xx)
-                            for ii=1:1:size(dataROI,3)
-                                tmp(idxL(ii)+yy(i)-sum(sD):idxR(ii)+yy(i)-sum(sD),xx(i),ii)=1;
-                            end
-                        end
-                    else
-                        for i=1:1:numel(xx)
-                            for ii=1:1:size(dataROI,3)
-                                tmp(yy(i),idxL(ii)+xx(i)-sum(sD):idxR(ii)+xx(i)-sum(sD),ii)=1;
-                            end
-                        end
-                    end
-                    tmp=imresize3(tmp,[numel(limY(1):limY(2)),numel(limX(1):limX(2)),size(dataROI,3) ],'nearest');
-
-                    maskROI=vsMap(limY(1):limY(2),limX(1):limX(2))==lineIdx & cMask(limY(1):limY(2),limX(1):limX(2))>3;
-                    test1=(1-sum(abs(maskROI-mean(tmp,3)),'all')./sum(maskROI+mean(tmp,3),'all')./2);
-                    test2=(1-sum(abs(mean(tmp,3)-(mean(tmp,3)>0)),'all')./sum((mean(tmp,3)>0),'all'));
-                    [~,test3]=bwlabel(mean(tmp,3)>0.9,4);
-                    test3=(test3==1);
-
-                    dataROI=source.data(limY(1):limY(2),limX(1):limX(2),:);
-                    compVal=max(dataROI(:));
-
-
-                    if test1>=s.minOverlapMask && test2>=s.minOverlapSelf && test3
-                        tmp=mean(tmp,3)>0;
-                        [y,x]=find(tmp>0);
-                        x=x+limX(1)-1;
-                        y=y+limY(1)-1;
-
-                        dvsMap(sub2ind(size(cMask), y, x))=lineIdx;
-                        dvsMetrics(counter,:)={lineIdx,sL,sCLR,sR2,test1,test2};
-                        dvsDiameter(:,counter)=(idxR-idxL)* abs(sind(theta))./s.pInterpF;
-                        for i=1:1:size(dataProfile,2)
-                            if contains(s.fName,'_K_d.mat')
-                                dvsData(i,counter)=compVal-mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan');
-                            elseif contains(s.fName,'_I_d.mat')
-                                dvsData(i,counter)=mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan')-min(dataROI(dataROI(:)>0));
-                            end
-                        end
-                        counter=counter+1;
-                    else
-                        disp('Segmentation failed - bad quality')
-                    end
-                end
-            end
-        end
-        dvsData(:,counter:end)=[];
-        dvsDiameter(:,counter:end)=[];
-        dvsMetrics(counter:end,:)=[];
-    end
-
     results.sMap=sMap;
     results.sMetrics=sMetrics;
     results.sData=sData;
-    if s.attmemptDS
-        results.dvsMap=dvsMap;
-        results.dvsMetrics=dvsMetrics;
-        results.dvsDiameter=dvsDiameter;
-        results.dvsData=dvsData;
-    end
 
-    img=mean(source.data,3);
-    img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
-    if contains(s.fName,'_K_d.mat')
-        img=imcomplement(img);
-    elseif contains(s.fName,'_I_d.mat')
-        img=img-min(img(cMask(:)>0 & img(:)>0));
-    end
-
-    fSize=floor((min(size(img))./20))*2+1;
-    img=(img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize))).*(cMask>0);
-
-    n=double(max(sMap(:)));
-    phi=(sqrt(5)-1)/2;
-    cmap=hsv2rgb([mod((0:n-1)'*phi,1) 0.8*ones(n,1) 0.9-0.2*mod((0:n-1)',2)]);
-
-    f=figure(1);
-    f.WindowState='maximized';
-    t=tiledlayout(1,2,"TileSpacing",'compact','Padding','compact');
-    t1=nexttile(t);
-    imagesc(img,'Parent', t1)
-    axis image
-    if s.attmemptDS
-        hold on
-        visboundaries(dvsMap>0);
-        hold off
-    end
-    t2=nexttile(t);
-    sMap=single(sMap);
-    sMap(sMap==0)=NaN;
-    h=imagesc(sMap,'Parent', t2);
-    set(h,'AlphaData',~isnan(sMap));
-    axis image
-    colormap(t1,parula);
-    colormap(t2,cmap)
-    t2.Colormap=cmap;
-    set(t1,'color',[1 1 1])
-    set(t2,'color',[1 1 1])
-    set(gcf,'Color','w')
-    drawnow
-    print(f,strrep(s.fName,'.mat','_vs.jpg'), '-djpeg', '-r300');
+    % --- segments preview ---
+    showSegmentsPreview(s.fName,source.data,cMask,sMap,isK);
 
     %Save the data
     settings.runSegmentation=s;
@@ -622,6 +228,130 @@ for fidx=1:1:numel(fNames)
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
     disp('Saving complete');
+
+    % --- assign the segmentation to co-registered siblings (s.fNamesCopyTo) ---
+    shared=struct('cMask',results.cMask,'regionsMask',regionsMask,'mask',results.mask, ...
+                  'sMap',sMap,'pMap',pMap,'sMetrics',sMetrics);
+    tgts=copyTargets(s,fidx);
+    for t=1:1:numel(tgts)
+        if ~isempty(tgts{t})
+            copySegmentationOnto(s,tgts{t},shared);
+        end
+    end
+     end
 end
 end
+
+% =====================================================================
+function tgts=copyTargets(s,fidx)
+%copyTargets  Row fidx of s.fNamesCopyTo (the copy targets for source fidx), or {}.
+tgts={};
+if isfield(s,'fNamesCopyTo') && ~isempty(s.fNamesCopyTo) && fidx<=size(s.fNamesCopyTo,1)
+    tgts=s.fNamesCopyTo(fidx,:);
+end
+end
+
+% =====================================================================
+function copySegmentationOnto(s,targetName,shared)
+%copySegmentationOnto  Copy the shared spatial products onto a co-registered sibling
+%   and RE-EXTRACT the target's own sData from its own cube (replaces assignCategories).
+tic
+disp(['Copying segmentation onto ',targetName])
+sT=s; sT.fName=targetName;
+clearvars results source settings
+load(targetName,'source')
+load(strrep(targetName,'_d.mat','_s.mat'),'settings');
+load(strrep(targetName,'_d.mat','_r.mat'),'results');
+
+isK=contains(targetName,'_K_d.mat');
+if isK
+    if isfield(results,'imgK'), imgIni=results.imgK; else, imgIni=mean(source.data,3,'omitmissing'); end
+else
+    imgIni=results.imgI;
+end
+
+% shared spatial products (geometry is identical on a co-registered FOV)
+results.cMask=shared.cMask;
+results.regionsMask=shared.regionsMask;
+results.mask=shared.mask;
+results.sMap=shared.sMap;
+results.pMap=shared.pMap;
+results.sMetrics=shared.sMetrics;
+
+% the target's OWN traces from the target's OWN cube, using the copied sMap
+results.sData=extractTraces(source.data,shared.sMap,sT.sStat);
+
+% previews from the target's own image with the copied overlays
+imgVis=categoryPreviewBackground(imgIni,isK);
+writeCategoriesPreview(targetName,imgVis,shared.cMask);
+showSegmentsPreview(targetName,source.data,shared.cMask,shared.sMap,isK);
+
+settings.runSegmentation=sT;                  % carry edgeSize / sStat onto the sibling
+disp(['Saving the copied results. Elapsed time ',num2str(round(toc)),'s']);
+save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
+save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
+disp('Saving complete');
+end
+
+% =====================================================================
+function sData=extractTraces(dataCube,sMap,sStat)
+%extractTraces  Per-label mean/median trace over a cube - matches runSegmentation's
+%   own sData pass exactly (mean/median over sMap(:)==i; NaN column for empty labels).
+dataSize=size(dataCube);
+n=double(max(sMap(:)));
+sData=zeros(dataSize(3),n);
+dataCube=reshape(dataCube,[],dataSize(3));
+for i=1:1:n
+    if sum(sMap(:)==i)>0
+        if strcmp(sStat,'mean')
+            sData(:,i)=mean(dataCube(sMap(:)==i,:),1,'omitnan');
+        else %DEFAULT
+            sData(:,i)=median(dataCube(sMap(:)==i,:),1,'omitnan');
+        end
+    else
+        sData(:,i)=NaN;
+    end
+end
+end
+
+% =====================================================================
+function imgVis=categoryPreviewBackground(imgIni,isK)
+%categoryPreviewBackground  Enhanced background for the _cm.jpg preview.
+%   Mirrors getPixelCategories' internal imgVis prep so a copied file's _cm.jpg
+%   matches a directly-segmented one (keep in sync with getPixelCategories).
+if isK
+    img=imgIni;
+    img(img(:)>prctile(img(:),99))=prctile(img(:),99);
+    img(img(:)<prctile(img(:),1))=prctile(img(:),1);
+    img=imcomplement(img);
+else
+    img=imgIni;
+end
+fSize=floor((min(size(img))./20))*2+1;
+img(isnan(img))=0;
+imgVis=enhanceForDisplay(img,fSize,min(15,fSize));
+end
+
+% =====================================================================
+function writeCategoriesPreview(fName,imgVis,cMask)
+%writeCategoriesPreview  Save <name>_cm.jpg: enhanced image + category boundaries.
+f=figure('Visible','off','Color','w');
+try
+    tiledlayout(f,1,2,'TileSpacing','compact','Padding','compact');
+    nexttile
+    imagesc(rot90(imgVis, size(imgVis,2) > size(imgVis,1)))
+    hold on
+    visboundaries(rot90(cMask>4, size(cMask,2) > size(cMask,1)),'Color','m')
+    visboundaries(rot90(cMask>2, size(cMask,2) > size(cMask,1)),'Color','w')
+    hold off
+    clim(prctile(imgVis(:),[10,99]))
+    axis image
+    nexttile
+    imagesc(rot90(cMask, size(cMask,2) > size(cMask,1)))
+    axis image
+    print(f,strrep(fName,'.mat','_cm.jpg'), '-djpeg', '-r300');
+catch ME
+    delete(f); rethrow(ME);
+end
+delete(f);
 end

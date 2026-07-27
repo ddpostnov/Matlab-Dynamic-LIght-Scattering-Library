@@ -62,7 +62,7 @@ for fidx=1:1:numel(fNames)
     fn = fieldnames(source);
     for k=1:numel(fn)
         if contains(fn{k}, 'data', 'IgnoreCase', true )
-            source.(fn{k})=calculateBFI(source.(fn{k}),s.method);
+            source.(fn{k})=getBFI(source.(fn{k}),s.method);
             if strcmp(fn{k},'data')
                 results.imgBFI=mean(source.data,3,'omitnan');
                 results.extendedMetrics.imgStdBFI=std(source.data,0,3,'omitnan');
@@ -75,7 +75,7 @@ for fidx=1:1:numel(fNames)
     fn = fieldnames(results);
     for k=1:numel(fn)
         if contains(fn{k}, 'data', 'IgnoreCase', true )
-            results.(fn{k})=calculateBFI(results.(fn{k}),s.method);
+            results.(fn{k})=getBFI(results.(fn{k}),s.method);
             if strcmp(fn{k},'sData')
                 results.sMetrics.('BFI')=squeeze(mean(results.sData,1,'omitnan'))';
                 results.sMetrics.('std(BFI)')=squeeze(std(results.sData,0,1,'omitnan'))';
@@ -101,12 +101,5 @@ for fidx=1:1:numel(fNames)
      end
 end
 
-    function data=calculateBFI(data,method)
-        switch method
-            case "basic"
-                data=(1./data.^2);
-            otherwise
-                error("Method not recognised")
-        end
-    end
+    
 end

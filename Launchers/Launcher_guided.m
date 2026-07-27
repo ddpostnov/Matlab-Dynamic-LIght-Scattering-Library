@@ -8,7 +8,7 @@
 %   at the FULL frame rate (results.gsData / results.gsTime).
 %
 %   Run STEP 0 once per MATLAB session, then run the step cells (%%) in order.
-%   STEP 1-3 reproduce the usual contrast -> categories -> segmentation chain,
+%   STEP 1-3 reproduce the usual contrast -> regions -> segmentation chain,
 %   STEP 4 is the guided step, and STEP 5-7 show the results (overview, a vessel
 %   trace at full vs decimated resolution, and a dynamic perfusion movie
 %   reconstructed from gsData + sMap).  Everything runs on the test data with no
@@ -51,18 +51,30 @@ s.trustLimitsI=[3,254]; %min and max expected intensity
 s.minTrust=[0.7,0.7]; %per-pixel fraction of non-zero / non-saturated frames required
 s.manualMask=0; %allows manual subselection of the area to mask
 
-runContrast(s,{rawName}); %LAUNCHES THE PROCESSING ROUTINE
+runContrastFromRLS(s,{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 2 Define pixel categories (background / parenchyma / vessels)
+%% STEP 2 (OPTIONAL) Define segmentation regions - this demo uses the WHOLE window
 close all
 clearvars -except libraryFolder rootFolder rawName procType
 s.libraryFolder=libraryFolder;
 
-%ADJUSTED (OR VERIFIED) PER PROTOCOL
-s.trustLimitsK=[0.001,0.99];
-s.regionsN=0; %0 = use the entire window (no manual region drawing)
+% Segmentation runs on the whole field of view by default, so the demo does nothing
+% here.  To restrict it to one or more sub-regions, run setRegions: it opens an
+% interactive editor (Add / Delete / Reset ROI + polygon/rectangle/square/ellipse/
+% circle shape selector) and writes results.regionsMask.  The number of regions is
+% however many you draw - draw nothing, or skip this step entirely (as here), to keep
+% the whole window.  Uncomment to try it:
+%
+% dName=strrep(rawName,'.rls','_t_K_d.mat');
+% setRegions(s,{dName}); %LAUNCHES THE INTERACTIVE ROI EDITOR
 
-%ADJUSTED IF NECESSARY - SEGMENTATION ADJUSTMENTS
+%% STEP 3 Perform segmentation (categories + labels; builds results.sMap / sMetrics / sData)
+close all
+clearvars -except libraryFolder rootFolder rawName procType
+s.libraryFolder=libraryFolder;
+
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - CATEGORIZATION
+s.trustLimitsK=[0.001,0.99];
 s.lSizeN=61; % Odd, approximately 2 times larger than the largest vessel
 s.sSizeN=7;  % Odd, approximately 2 times larger than small vessels diameter
 s.sens=0.3;  % Segmentation sensitivity - increase if missing vessels
@@ -77,17 +89,8 @@ s.iniSizeN=7;% Odd number equal or larger than the spatial contrast kernel
 %DO NOT CHANGE - META DATA
 s.categories={'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'};
 
-dName=strrep(rawName,'.rls','_t_K_d.mat');
-runCategories(s,{dName}); %LAUNCHES THE PROCESSING ROUTINE
-
-%% STEP 3 Perform segmentation (builds results.sMap / sMetrics / sData)
-close all
-clearvars -except libraryFolder rootFolder rawName procType
-s.libraryFolder=libraryFolder;
-
-%ADJUSTED (OR VERIFIED) PER PROTOCOL - BASIC PARAMETERS
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - LABELLING & TRACES
 s.sStat='median';    % 'median' (default) or 'mean' statistic for per-segment traces
-s.attmemptDS=false;  % automated dynamic segmentation (not needed for the guided step)
 s.sMinL=15;          % Minimum length for segments
 s.prchNSize=50;      % Parenchymal pixels neighbourhood
 s.correctNodes=true; % Branching correction

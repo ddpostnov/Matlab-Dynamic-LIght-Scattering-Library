@@ -32,10 +32,10 @@
 %     setVesselTypes(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
-%     Image Processing Toolbox (bwskel, visboundaries, etc.) and core LSCI
-%     utility functions.
+%     enhanceForDisplay (background-subtracted preview), Image Processing Toolbox
+%     (bwskel, visboundaries, etc.) and core LSCI utility functions.
 %
-% See also: runCategories, assignCategories, runPulsatility, runSegmentation
+% See also: setRegions, runSegmentation, runPulsatility, runDynamicSegmentation
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -197,7 +197,7 @@ for fidx=1:1:numel(fNames)
             img=sqrt(results.imgBFI);
             img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
             fSize=floor((min(size(img))./20))*2+1;
-            img=(img-imopen(medfilt2(img,[fSize,fSize],"symmetric"),strel('disk',fSize))).*(cMask>0);
+            img=enhanceForDisplay(img,fSize).*(cMask>0);
             rois=repmat("",1,numel(guess));
 
 
