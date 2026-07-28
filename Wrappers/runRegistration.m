@@ -23,6 +23,8 @@
 %                • rotationLimit       degrees; reject an intensity/correlation
 %                                      transform rotating > this ([]=no limit)
 %     fNames   cell array of *_K_d.mat paths.  First file is the template.
+%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
+%     s.stageFcn(stage,detail), s.cancelFcn()->tf (before work + between files).
 %
 %   OUTPUT (side-effects)
 %       For every file k
@@ -71,6 +73,13 @@ function runRegistration(s,fNames)
 if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_K_d.mat".');
 end
+
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.  Registration is
+% caller-looped per group and can block on manual landmarks, so cancel is checked before
+% any work and between files in the final save loop.
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+if cancelFcn(), return; end
 
 % ---- silent (non-interactive) mode ----------------------------------------
 % When s.silent==true the best registration is chosen automatically instead of
@@ -131,7 +140,8 @@ proxy=cell(size(fNames));
 for oidx=1:numel(procOrder)
     fidx=procOrder(oidx);
     if ~isempty(fNames{fidx})
-        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        pmsg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(pmsg); stageFcn('runRegistration',pmsg);
         clearvars results source
         load(fNames{fidx},'source');
         load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
@@ -280,6 +290,7 @@ commonMaskSoft = (max(commonMaskSoft,[],3) == min(commonMaskSoft,[],3)) & mean(c
 commonMaskSoftest = (max(commonMaskSoftest,[],3) == min(commonMaskSoftest,[],3)) & mean(commonMaskSoftest,3)>0;
 
 for fidx=1:1:size(fNames,1)
+    if cancelFcn(), break; end                   % cooperative cancel between files
 
     if ~isempty(fNames{fidx})
         load(fNames{fidx},'source');
@@ -455,14 +466,35 @@ for fidx=1:1:size(fNames,1)
         s.tForm=tforms{fidx};
         s.view=views{fidx};
         s.imgRefIni=imgRefIni;
-        settings.runRegistration=s;
+        settings.runRegistration=stripHooks(s);
         %Save the data
-        disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        msg=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msg); stageFcn('runRegistration',msg);
         save(fNames{fidx},'source','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        progressFcn(fidx/size(fNames,1),msg);    % coarse per-file progress
     end
 end
-disp('Saving complete');
+disp('Saving complete'); stageFcn('runRegistration','Saving complete');
 
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
+end
 end

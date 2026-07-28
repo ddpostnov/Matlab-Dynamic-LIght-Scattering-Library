@@ -25,6 +25,8 @@
 %              reject*Coefs, maskType, enablelRejectionModification, etc.)
 %     fNames   cell array of full paths to *_K_d.mat files (same naming
 %              convention as produced by runContrastFromRLS).
+%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
+%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – all results are written to disk (see above).
@@ -92,10 +94,17 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_K_d.mat".');
 end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.  This step can
+% block on an epoch-rejection GUI, so cancel is only checked between files.
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:length(fNames)
+    if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic
-        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msg); stageFcn('runExternalCycle',msg);
         s.fName=fNames{fidx};
         clearvars results source settings
         load(s.fName,'source')
@@ -304,13 +313,34 @@ for fidx=1:1:length(fNames)
         print(h,strrep(s.fName,'.mat','_ec2.jpg'), '-djpeg', '-r300');
 
         % Save the settings and results
-        disp('Saving the results');
-        settings.externalCycle=s;
+        disp('Saving the results'); stageFcn('runExternalCycle','Saving the results');
+        settings.externalCycle=stripHooks(s);
         results.time=source.time;
         save(strrep(s.fName,'_K_d.mat','_e_K_d.mat'),'source','-v7.3');
         save(strrep(s.fName,'_K_d.mat','_e_K_r.mat'),'results','-v7.3');
         save(strrep(s.fName,'_K_d.mat','_e_K_s.mat'),'settings','-v7.3');
+        progressFcn(fidx/numel(fNames),msg);    % coarse per-file progress
     end
+end
+
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
 end
 end
 

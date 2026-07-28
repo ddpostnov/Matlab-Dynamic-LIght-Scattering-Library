@@ -31,6 +31,8 @@
 %     fNames   FLAT (order-independent) cell array of *_K_d.mat / *_I_d.mat paths;
 %              iterate element by element (grouping was setRegions' job).  Each file
 %              must have matching *_s.mat / *_r.mat siblings.
+%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
+%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
 %
 %   s.fNamesCopyTo - assign the segmentation to siblings (replaces assignCategories)
 %     Mirrors fNames with one extra dimension: s.fNamesCopyTo(i,:) lists the sibling
@@ -96,10 +98,16 @@ if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.ma
 end
 if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:numel(fNames)
+     if cancelFcn(), break; end                 % cooperative cancel between files
      if ~isempty(fNames{fidx})
     tic
-    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+    disp(msg); stageFcn('runSegmentation',msg);
     s.fName=fNames{fidx};
     clearvars results source settings
     load(s.fName,'source')
@@ -223,8 +231,9 @@ for fidx=1:1:numel(fNames)
     showSegmentsPreview(s.fName,source.data,cMask,sMap,isK);
 
     %Save the data
-    settings.runSegmentation=s;
-    disp(['Saving the results. Elapsed time ',num2str(round(toc)),'s']);
+    settings.runSegmentation=stripHooks(s);
+    msgSave=['Saving the results. Elapsed time ',num2str(round(toc)),'s'];
+    disp(msgSave); stageFcn('runSegmentation',msgSave);
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
     disp('Saving complete');
@@ -238,6 +247,7 @@ for fidx=1:1:numel(fNames)
             copySegmentationOnto(s,tgts{t},shared);
         end
     end
+    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
      end
 end
 end
@@ -286,7 +296,7 @@ imgVis=categoryPreviewBackground(imgIni,isK);
 writeCategoriesPreview(targetName,imgVis,shared.cMask);
 showSegmentsPreview(targetName,source.data,shared.cMask,shared.sMap,isK);
 
-settings.runSegmentation=sT;                  % carry edgeSize / sStat onto the sibling
+settings.runSegmentation=stripHooks(sT);      % carry edgeSize / sStat onto the sibling
 disp(['Saving the copied results. Elapsed time ',num2str(round(toc)),'s']);
 save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
 save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
@@ -354,4 +364,23 @@ catch ME
     delete(f); rethrow(ME);
 end
 delete(f);
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
+end
 end

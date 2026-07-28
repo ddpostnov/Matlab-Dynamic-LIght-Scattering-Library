@@ -288,7 +288,7 @@ s.vsmSignals={'sData','dvsData','dvsDiameter','gsData'};  %which data-type signa
 %'clustering' (flare/silence scalars+spectra+maskFlare), 'reconstruction' (timeVectors.VB.rData),
 %'spectrum' (spectrum.amp/.phase grid). Change only if needed.
 s.segVsmReturn={'bands','moments','series','clustering','spectrum'};
-s.ppxVsmReturn ={'bands'};% [];% {'bands'};         %per-pixel analysis OFF ([] = off); set non-empty (e.g. {'bands'}) to turn it ON -> RESULTS.vasomotion.ppx. No analysePerPixel flag.
+s.ppxVsmReturn =[];%{'bands'};% [];% {'bands'};         %per-pixel analysis OFF ([] = off); set non-empty (e.g. {'bands'}) to turn it ON -> RESULTS.vasomotion.ppx. No analysePerPixel flag.
 s.ppxSegmentAveraging=[]; %TEMPORARY scaffolding (to be removed): per-segment averaging demo, subset of {'coherent','incoherent'}; [] = off. Change only if needed
 
 %SET FILE NAMES HERE

@@ -19,6 +19,8 @@
 %                                   stored in SETTINGS for traceability)
 %     fNames   cell array of full paths to *_d.mat files produced by the
 %              LSCI pipelines.
+%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
+%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – function acts via side-effects:
@@ -53,10 +55,16 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".mat".');
 end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:numel(fNames)
+    if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic
-        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msg); stageFcn('splitRegions',msg);
         s.fName=fNames{fidx};
         clearvars results source settings
         load(s.fName,'source')
@@ -119,9 +127,10 @@ for fidx=1:1:numel(fNames)
                 end
             end
 
-            disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames)),'. Region ',num2str(ridx),' out of ',num2str(max(regionsMask(:)))])
+            msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames)),'. Region ',num2str(ridx),' out of ',num2str(max(regionsMask(:)))];
+            disp(msgSave); stageFcn('splitRegions',msgSave);
 
-            settings.splitRegions=s;
+            settings.splitRegions=stripHooks(s);
             [path,name,extension]=fileparts(fNames{fidx});
             fName = fullfile(path,['Roi' num2str(ridx) '_' name extension]);
             save(fName,'source','-v7.3');
@@ -133,6 +142,27 @@ for fidx=1:1:numel(fNames)
             delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
             delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
         end
+        progressFcn(fidx/numel(fNames),msg);    % coarse per-file progress
     end
+end
+
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
 end
 end

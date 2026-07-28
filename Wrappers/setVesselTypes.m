@@ -21,6 +21,9 @@
 %                • refFName       path to reference file (if used)
 %                • prchNSize      grid spacing for parenchyma fill-in
 %     fNames   cell array of *_BFI_d.mat paths.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
+%     s.cancelFcn()->tf (between files).  s.progressFcn is not used - the step is
+%     interactive.
 %
 %   SIDE-EFFECTS
 %       *_BFI_r.mat   RESULTS  – fields mapType, .type, .label, etc.
@@ -73,10 +76,18 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_BFI_d.mat".');
 end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.  This step is
+% interactive (paint GUI), so only stageFcn (file boundaries) and cancelFcn (between
+% files) are wired - progress is not threaded through the GUI.
+[~,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:numel(fNames)
+    if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic
-        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msg); stageFcn('setVesselTypes',msg);
         s.fName=fNames{fidx};
         clearvars results source settings
         load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
@@ -387,8 +398,9 @@ for fidx=1:1:numel(fNames)
             end
         end
 
-        settings.setVesselTypes=s;
-        disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        settings.setVesselTypes=stripHooks(s);
+        msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msgSave); stageFcn('setVesselTypes',msgSave);
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
     end
@@ -982,4 +994,23 @@ end
         [S.rng, S.lo, S.hi] = thumbsAtValue(sv, m5, medv);
     end
 
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
+end
 end

@@ -87,6 +87,10 @@
 %                                   store; default (absent) is the COMPLETE set (all
 %                                   six levels, incl. the amplitude/phase spectrum grid)
 %     fNames   cell array of *_BFI_d.mat paths.
+%                • Optional workbench hooks in s (no-op when absent):
+%                  s.progressFcn(frac,label), s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%                  Cancel is checked between files (never inside the parfor); the per-pixel
+%                  progress reuses the existing DataQueue, forwarded through progressFcn.
 %
 %   OUTPUTS  (RESULTS.vasomotion; band-branched tree.  <sig> = sData, dvsData,
 %            dvsDiameter or gsData - one row/slice per segment; nSeg segments,
@@ -277,10 +281,17 @@ if s.vFR(1)<s.wFR(1) || s.vFR(2)>s.wFR(2) || s.cFR(1)<s.wFR(1) || s.cFR(2)>s.wFR
     error('s.vFR and s.cFR must lie within s.wFR.');
 end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.  Cancel is only
+% checked between files (a cancelFcn/progressFcn inside the parfor would broadcast oddly).
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:numel(fNames)
+    if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic
-        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msg); stageFcn('runVasomotion',msg);
         s.fName=fNames{fidx};
         clearvars results source settings
         if ~isempty(s.ppxVsmReturn) || ~isempty(s.ppxSegmentAveraging)
@@ -573,7 +584,7 @@ for fidx=1:1:numel(fNames)
                 wBandsAmp=wantPix.bandsAmp; wBandsSkew=wantPix.bandsSkew; wBandsShape=wantPix.bandsShape;
                 wBandsPct=wantPix.bandsPct; wSpectrum=wantPix.spectrum;
 
-                dqPix=progressQueue(nnz(results.sMap(:)>0),'per-pixel vasomotion');
+                dqPix=progressQueue(nnz(results.sMap(:)>0),'per-pixel vasomotion',progressFcn);
                 tic
                 parfor p=1:npx
                     if sMapLin(p)==0, continue; end          %background: leave NaN
@@ -627,10 +638,12 @@ for fidx=1:1:numel(fNames)
             end
         end
 
-        settings.runVasomotion=s;
-        disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        settings.runVasomotion=stripHooks(s);
+        msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msgSave); stageFcn('runVasomotion',msgSave);
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
     end
 
 end
@@ -675,19 +688,44 @@ shp.spec =@(A)reshape(A,Y,X,nF,nD);
 end
 
 % =====================================================================
-function dq=progressQueue(total,label)
+function dq=progressQueue(total,label,progressFcn)
 %progressQueue  Parfor-safe ~1%-granularity completion printer.  Returns a
 %   parallel.pool.DataQueue; send(dq,1) once per completed item and it prints a
 %   percentage line at ~1% steps (and at the final item).  Permanent utility - both
-%   the true per-pixel path and the TEMPORARY averaging block use it.
+%   the true per-pixel path and the TEMPORARY averaging block use it.  The optional
+%   progressFcn(frac,label) forwards the SAME ~1% ticks to the workbench hook (the
+%   afterEach callback runs client-side, so this is parfor-safe); absent -> no-op,
+%   the command-window output is unchanged.
+if nargin<3 || isempty(progressFcn), progressFcn=@(varargin)[]; end
 dq = parallel.pool.DataQueue; step = max(1,floor(total/100)); cnt=0; nextMark=step;
 afterEach(dq,@tick);
     function tick(~)
         cnt=cnt+1;
         if cnt>=nextMark || cnt==total
             fprintf('  %s: %3d%% (%d/%d)\n',label,floor(100*cnt/total),cnt,total); nextMark=nextMark+step;
+            progressFcn(cnt/total,label);
         end
     end
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.  Placed
+%   ABOVE the temporary averaging block so it survives that block's future removal.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
+end
 end
 
 % #####################################################################

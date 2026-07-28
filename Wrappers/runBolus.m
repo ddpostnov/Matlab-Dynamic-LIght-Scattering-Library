@@ -19,6 +19,8 @@
 %                          after the bolus span.
 %     fNames   cell array of char vectors / strings with full paths to
 %              *.cxd files produced by the acquisition software.
+%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
+%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
 %
 %   OUTPUT SIDE-EFFECTS (per file)
 %     <name>_b_I_d.mat   SOURCE  – bolus cube (source.data) + time (source.time, s)
@@ -53,11 +55,18 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.cxd'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".cxd".');
 end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.  This step can
+% block on interactive span selection, so cancel is only checked between files.
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:numel(fNames)
+     if cancelFcn(), break; end                 % cooperative cancel between files
      if ~isempty(fNames{fidx})
     tic
     close all
-    disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+    disp(msg); stageFcn('runBolus',msg);
     s.fName=char(fNames{fidx});
     clearvars results source settings
 
@@ -180,7 +189,7 @@ for fidx=1:1:numel(fNames)
     results.time=time;
     results.timeStamp=timeStamp;
     results.imgI=imgI;
-    settings.runBolus=s;
+    settings.runBolus=stripHooks(s);
 
     h=figure;
     h.WindowState='Maximize';
@@ -205,13 +214,35 @@ for fidx=1:1:numel(fNames)
     print(h,strrep(s.fName,'.cxd','_b_I.jpg'),'-djpeg','-r300');
 
     %save the settings and results
-    disp(['Saving the results. Elapsed time ',num2str(round(toc)),'s']);
+    msgSave=['Saving the results. Elapsed time ',num2str(round(toc)),'s'];
+    disp(msgSave); stageFcn('runBolus',msgSave);
     source.data=data;
     source.time=time;
     save(strrep(s.fName,'.cxd','_b_I_d.mat'),'source','-v7.3');
     save(strrep(s.fName,'.cxd','_b_I_r.mat'),'results','-v7.3');
     save(strrep(s.fName,'.cxd','_b_I_s.mat'),'settings','-v7.3');
-    disp('Saving complete');
+    disp('Saving complete'); stageFcn('runBolus','Saving complete');
+    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
      end
+end
+
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
 end
 end

@@ -22,6 +22,8 @@
 %              method = {'sLSCIMM','tLSCIMM','ltLSCIMM','sLSCIMMM'}, etc.).
 %     fNames   cell array of full paths to *.rls files produced by the
 %              in-house acquisition software.
+%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
+%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – function acts via side-effects (files listed above).
@@ -75,12 +77,19 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.rls'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".rls".');
 end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings before saving.
+[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:length(fNames)
+    if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic
         clearvars results source settings
         close all
         s.fName=char(fNames{fidx});
+        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        stageFcn('runInternalCycle',msg);       % file boundary (this wrapper has no per-file disp)
 
         %read the raw file meta data
         fid = fopen(s.fName, 'r');
@@ -380,15 +389,36 @@ for fidx=1:1:length(fNames)
         drawnow
         print(h,strrep(s.fName,'.rls','_ic2.jpg'), '-djpeg', '-r300');
 
-        disp('Saving the results');
-        settings.runInternalCycle=s;
+        disp('Saving the results'); stageFcn('runInternalCycle','Saving the results');
+        settings.runInternalCycle=stripHooks(s);
         results.imgK=squeeze(mean(source.data,3,'omitmissing'));
         results.time=source.time;
         save(strrep(s.fName,'.rls','_c_K_d.mat'),'source','-v7.3');
         save(strrep(s.fName,'.rls','_c_K_r.mat'),'results','-v7.3');
         save(strrep(s.fName,'.rls','_c_K_s.mat'),'settings','-v7.3');
-        disp('Saving complete');
+        disp('Saving complete'); stageFcn('runInternalCycle','Saving complete');
+        progressFcn(fidx/numel(fNames),msg);    % coarse per-file progress
         toc
     end
+end
+
+end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
 end
 end

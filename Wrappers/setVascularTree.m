@@ -78,6 +78,9 @@
 %                                 name has _c_BFI replaced by _<L>_BFI, when
 %                                 they exist.  Default {'t','s'}; {} disables.
 %     fNames   cell array of *_BFI_d.mat paths.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
+%     s.cancelFcn()->tf (between files).  s.progressFcn is not used - the step is
+%     interactive (unless s.autoOnly).
 %
 %   SIDE-EFFECTS (per file)
 %     *_BFI_r.mat   RESULTS – new sMetrics columns parentIdx, daughterIdx
@@ -164,10 +167,18 @@ if ~isfield(s,'useReference'),     s.useReference=false;    end
 if ~isfield(s,'refFName'),         s.refFName='';           end
 if ~isfield(s,'propagatePartners'),s.propagatePartners={'t','s'}; end
 
+% Optional workbench hooks resolved to no-ops when absent (see header); s is never
+% mutated and the hooks are stripped from the settings (and partner settings) before
+% saving.  This step is interactive (tree editor) unless s.autoOnly, so only stageFcn
+% (file boundaries) and cancelFcn (between files) are wired.
+[~,stageFcn,cancelFcn]=resolveHooks(s);
+
 for fidx=1:1:numel(fNames)
+    if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic
-        disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msg); stageFcn('setVascularTree',msg);
         s.fName=fNames{fidx};
         clearvars results settings
         load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
@@ -204,8 +215,9 @@ for fidx=1:1:numel(fNames)
             end
         end
 
-        settings.setVascularTree=s;
-        disp(['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))])
+        settings.setVascularTree=stripHooks(s);
+        msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
+        disp(msgSave); stageFcn('setVascularTree',msgSave);
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
 
@@ -241,7 +253,7 @@ for i=1:numel(parts)
     tmp.results=presults; save(partnerR,'-struct','tmp','-v7.3'); clear tmp
     if exist(partnerS,'file')==2
         ps=load(partnerS,'settings'); psettings=ps.settings;
-        psettings.setVascularTree=s; psettings.setVascularTree.propagatedFrom=s.fName;
+        psettings.setVascularTree=stripHooks(s); psettings.setVascularTree.propagatedFrom=s.fName;
         tmp.settings=psettings; save(partnerS,'-struct','tmp','-v7.3'); clear tmp
     end
 end
@@ -900,3 +912,22 @@ function s=numstr(v)
 if isempty(v), s='(none)'; else, s=strtrim(sprintf('%d ',v(:))); end
 end
 function o=tern(c,a,b), if c, o=a; else, o=b; end, end
+
+% =====================================================================
+function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
+%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
+%   stage take any args and do nothing; cancel returns false).  See the header.
+progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
+if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
+if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
+if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
+end
+
+% =====================================================================
+function s=stripHooks(s)
+%stripHooks  Drop the transport callbacks before s is written to a settings file
+%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
+for h={'progressFcn','stageFcn','cancelFcn'}
+    if isfield(s,h{1}), s=rmfield(s,h{1}); end
+end
+end
