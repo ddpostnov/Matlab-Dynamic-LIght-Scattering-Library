@@ -11,9 +11,12 @@
 %     1. looks up the step spec and the recording model,
 %     2. resolves the settings struct s (wbSettingsModel, via ctx.resolve),
 %     3. resolves the concrete input _d.mat (or raw) file(s) the wrapper consumes
-%        for this recording at this stage - perFile = one file, perGroup = the
-%        group's files as a column, reference first (matching the launchers),
-%     4. injects the progress/stage/cancel hooks bound to this cell,
+%        for this recording - perGroup = the group's files as a column, reference
+%        first; perFile = as many of the recording's co-registered BRANCH products
+%        ('_t_K', '_c_K', '_e_K', ...) as the step's branchScope asks for, so a
+%        workbench row reproduces what the launcher's file list covers,
+%     4. injects the progress/stage/cancel hooks bound to this cell, and - for a
+%        'copy'-scope step - the derived s.fNamesCopyTo sibling list,
 %     5. marks the cell running, calls the wrapper (interactive steps go through
 %        ctx.modalGuard so the parent window is parked), then marks it done or
 %        error and surfaces its report artifacts + invalidates downstream.
@@ -50,6 +53,14 @@
 %      CONTINUES with the next cell (never aborts the whole run).
 %    * Steps whose prerequisite input file cannot be located are logged and
 %      skipped (left for a later run), not errored.
+%    * ONE ROW = ONE RECORDING, several files.  A step with branchScope 'all'
+%      (splitRegions, BFI, dynamicSegmentation, export) receives every branch of the
+%      recording in a single call and its own per-file loop covers them; a step with
+%      'copy' (setRegions, segmentation) runs on the contrast branch only and the
+%      wrapper propagates the result to the rest through s.fNamesCopyTo.  Without
+%      this the executor picked ONE file per recording and the first dir() match won
+%      - which quietly ran the interactive region editor on '_c' and never touched
+%      '_t' (dir sorts '_c_K_d.mat' before '_t_K_d.mat').
 %
 % See also: guiWorkbench, wbStepRegistry, wbSettingsModel, wbModalGuard,
 %           wbArtifacts, wbInvalidate, guiMyograph
@@ -86,7 +97,7 @@ for i = 1:numel(entries)
     s     = ctx.resolve(step, mHead);
     cstage = ctx.contrastStage(mHead);
 
-    [fNames, rawNames, refName, okInput] = buildFNames(step, models, cstage);
+    [fNames, rawNames, refName, copyTo, okInput] = buildFNames(step, models, cstage);
     if ~okInput
         ctx.setState(e.identity, step.id, 'error', 'input file not found');
         ctx.log(sprintf('skip %s :: %s - input file not found', who, step.label));
@@ -100,6 +111,11 @@ for i = 1:numel(entries)
     s.cancelFcn   = @() ctx.isCancelled();
     if strcmp(step.id,'vesselTypes') && ~isempty(refName)
         s.refFName = refName;                            % per-group paint reference (launcher idiom)
+    end
+    if ~isempty(copyTo)
+        s.fNamesCopyTo = copyTo;                         % 'copy' scope: the other branches inherit
+        ctx.log(sprintf('  copy to %d sibling(s): %s', numel(copyTo), ...
+            strjoin(cellfun(@shortName,copyTo,'UniformOutput',false),', ')));
     end
 
     % ---- run it (a perGroup step marks EVERY group member's cell) -------------
@@ -139,43 +155,67 @@ ctx.log('=== RUN complete ===');
 end
 
 % =====================================================================
-function [fNames, rawNames, refName, ok] = buildFNames(step, models, cstage)
-%buildFNames  Concrete wrapper inputs for a step: perFile = {file}; perGroup =
-%   {files} column, reference first.  rawNames parallels fNames for needsRaw
-%   steps; refName is the reference file (perGroup vesselTypes paint target).
-fNames = {}; rawNames = {}; refName = ''; ok = false;
-n = numel(models);
-paths = cell(n,1); raws = cell(n,1);
-for k = 1:n
-    p = resolveStepInput(models(k), step, cstage);
-    if isempty(p), return; end                           % a member has no input -> not ready
-    paths{k} = p;
-    if step.needsRaw, raws{k} = rawPathFor(models(k)); end
-end
+function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cstage)
+%buildFNames  Concrete wrapper inputs for a step.
+%   perGroup: one file per group member, Nx1 column, reference first (the branch
+%   fan-out below is a perFile concern - a group column already carries one file
+%   per recording).
+%   perFile:  ONE recording, whose several co-registered branch products ('_t_K',
+%   '_c_K', '_e_K', ...) are resolved according to step.branchScope -
+%     'one'  -> the stage-preferred file alone (1x1),
+%     'all'  -> every branch as an Nx1 column, the wrapper's own loop covers them,
+%     'copy' -> the stage-preferred file (1x1) plus the rest returned in copyTo, to
+%               be handed to the wrapper as s.fNamesCopyTo.
+%   rawNames parallels fNames for needsRaw steps; refName is the reference file
+%   (perGroup vesselTypes paint target).
+fNames = {}; rawNames = {}; refName = ''; copyTo = {}; ok = false;
+
 if strcmp(step.arity,'perGroup')
-    fNames = paths;                                      % Nx1 column, reference first
-    rawNames = raws;
-    refName = paths{1};
-else
-    fNames = paths(1);                                   % 1x1 - workbench owns the per-file loop
-    rawNames = raws(1);
+    n = numel(models);
+    paths = cell(n,1); raws = cell(n,1);
+    for k = 1:n
+        p = resolveStepInputs(models(k), step, cstage);
+        if isempty(p), return; end                       % a member has no input -> not ready
+        paths{k} = p{1};
+        if step.needsRaw, raws{k} = rawPathFor(models(k)); end
+    end
+    fNames = paths; rawNames = raws; refName = paths{1};
+    ok = true; return
+end
+
+p = resolveStepInputs(models(1), step, cstage);           % stage-preferred first
+if isempty(p), return; end
+switch scopeOf(step)
+    case 'all'
+        fNames = p(:);                                   % every branch, one cell for the lot
+    case 'copy'
+        fNames = p(1);                                   % run here...
+        copyTo = p(2:end);                               % ...the other branches inherit
+    otherwise
+        fNames = p(1);
+end
+if step.needsRaw
+    rawNames = repmat({rawPathFor(models(1))}, size(fNames));
 end
 ok = true;
 end
 
 % =====================================================================
-function p = resolveStepInput(model, step, cstage)
-%resolveStepInput  The concrete _d.mat (or raw) file this step consumes for this
-%   recording, located by base name + the step's input glob, disambiguated by the
-%   branch stage when several products coexist.  Mirrors getFileNamesList scoped
-%   to one recording, so it is robust to the BFI rename and the t|s|c branches.
-p = '';
+function p = resolveStepInputs(model, step, cstage)
+%resolveStepInputs  EVERY concrete _d.mat (or raw) file this step could consume for
+%   this recording, ORDERED with the stage-preferred branch first.  Located by base
+%   name + the step's input glob and filtered to this recording's identity; mirrors
+%   getFileNamesList scoped to one recording, so it is robust to the BFI rename and
+%   the t|s|c|e branches.  Callers take p{1} for a single-branch step and the whole
+%   list (or its tail) for the 'all' / 'copy' scopes - see buildFNames.  {} = the
+%   step has no input on disk yet.
+p = {};
 
 % entry step consuming the raw recording (contrast / internalCycle)
 if isempty(step.requires) && ~contains(step.inGlob,'.mat')
     [~,~,ext] = fileparts(step.inGlob);
     cand = fullfile(model.folder,[model.stem ext]);
-    if isfile(cand), p = cand; end
+    if isfile(cand), p = {cand}; end
     return
 end
 
@@ -185,32 +225,38 @@ d = dir(fullfile(model.folder,[base '*' tail]));
 if isempty(d), return; end
 
 want = desiredStage(step, cstage);                       % 't'|'s'|'c' or '' (any)
-cands = {}; exact = {};
+exact = {}; rest = {};
 for i = 1:numel(d)
     fp = fullfile(d(i).folder, d(i).name);
     cm = wbFileModel(fp);
     if ~strcmp(cm.identity, model.identity), continue; end
-    cands{end+1} = fp; %#ok<AGROW>
-    if ~isempty(want) && strcmp(cm.stage, want), exact{end+1} = fp; end %#ok<AGROW>
+    if ~isempty(want) && strcmp(cm.stage, want)
+        exact{end+1} = fp; %#ok<AGROW>
+    else
+        rest{end+1} = fp; %#ok<AGROW>
+    end
 end
-if ~isempty(exact)
-    p = exact{1};
-elseif ~isempty(cands)
-    p = cands{1};                                        % branch-agnostic step: first match
-end
+p = [exact, rest];                                       % preferred branch first, then the others
 end
 
 % =====================================================================
 function st = desiredStage(step, cstage)
-%desiredStage  Which stage flag the step's input should carry, to disambiguate a
-%   base-name glob that matches more than one branch.  '' = no preference.
+%desiredStage  Which stage flag the step's input should carry - the branch it runs
+%   on when a base-name glob matches several.  For a 'copy'-scope step this also
+%   picks the branch the work is DONE on (the others inherit), and for 'all' it only
+%   fixes the order.  '' = no preference.
 switch step.branch
     case 'cardiac', st = 'c';
     case 'contrast', st = cstage;
     otherwise
-        % segmentation/guided are computed on the contrast side even though their
-        % column is branch-agnostic; prefer the contrast stage for them.
-        if any(strcmp(step.id,{'segmentation','guided'})), st = cstage; else, st = ''; end
+        % A branch-agnostic column can still be anchored to the contrast side: the
+        % 'copy' steps (setRegions, segmentation) draw/compute there and hand the
+        % result to the cycle branches, and guided needs the contrast product.
+        if strcmp(scopeOf(step),'copy') || strcmp(step.id,'guided')
+            st = cstage;
+        else
+            st = '';
+        end
 end
 end
 
@@ -273,6 +319,22 @@ end
 function s = stepById(reg, id)
 s = reg(strcmp({reg.id}, id));
 if ~isempty(s), s = s(1); end
+end
+
+% =====================================================================
+function sc = scopeOf(step)
+%scopeOf  A step's branchScope, defaulting to 'one' when the field is absent - a
+%   hand-built step struct (tests, a trimmed registry) keeps the old single-file
+%   behaviour rather than erroring.
+sc = 'one';
+if isfield(step,'branchScope') && ~isempty(step.branchScope), sc = step.branchScope; end
+end
+
+% =====================================================================
+function n = shortName(p)
+%shortName  Bare file name of a path, for the copy-target log line.
+[~,nm,ex] = fileparts(char(p));
+n = [nm ex];
 end
 
 % =====================================================================

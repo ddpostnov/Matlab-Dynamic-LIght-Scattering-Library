@@ -40,6 +40,8 @@
 %       modalities   which modalities expose it       ({'LSCI'})
 %       branch       'contrast' | 'cardiac' | '' (which file branch this step's
 %                    column belongs to; wbFileModel also derives 'epoch'/'bolus')
+%       branchScope  'one' | 'all' | 'copy'  - HOW MANY of a recording's branch
+%                    products the step consumes (see below)
 %
 % Notes (for the author):
 %   * The v1 registry is LSCI only.  The .cxd (bolus/intensity/CTTH) and .avi
@@ -64,6 +66,29 @@
 %   * 'guided' maps to runGuidedContrast (intensity variant deferred).  'export'
 %     writes no settings field - it is 'done' once its .xlsx exists on disk.
 %     setRegions is modelled perFile (only registration/vesselTypes are perGroup).
+%   * BRANCHSCOPE - one raw recording yields SEVERAL co-registered products ('_t_K',
+%     '_c_K', '_e_K', ...), and the launchers are explicit about how many of them a
+%     step touches: '*_t_K_d.mat' means one branch, '*_K_d.mat' means all of them.
+%     A workbench ROW is the recording, not the file, so each step declares the
+%     fan-out its launcher cell implies (wbExecutor>buildFNames does the resolving):
+%       'one'  - a single file, disambiguated by branch/desiredStage.  The default,
+%                and correct for a step that is meaningful on ONE branch only
+%                (vasomotion on _t, pulsatility/vascularTree on _c, the entry steps
+%                that read the raw recording).
+%       'all'  - every branch product of the recording, as an Nx1 fNames column, the
+%                way the launcher passes '*_K_d.mat' (splitRegions, BFI,
+%                dynamicSegmentation, export).  The wrapper's own per-file loop then
+%                covers the branches, one workbench cell for the lot.
+%       'copy' - the step RUNS on the contrast-side file and the result is inherited
+%                by the other branches through the wrapper's s.fNamesCopyTo
+%                (setRegions, segmentation).  This is what makes the interactive /
+%                expensive work happen once per recording instead of once per branch,
+%                and it mirrors launcher STEPs 3+5.  wbExecutor derives the target
+%                list from the recording's own siblings, so the field never has to be
+%                typed by hand.
+%     Steps left at 'one' whose launcher cell IS branch-wide: registration and
+%     vesselTypes (both perGroup - fan-out there would multiply the group columns and
+%     needs its own design pass).
 %
 % See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate
 %
@@ -166,7 +191,7 @@ s.id='setRegions'; s.label='Regions'; s.wrapper=@setRegions;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setRegions'; s.requires={'contrast'}; s.produces={'regionsMask'};
 s.interactive=true;                                   % always opens the ROI editor
-s.branch='';
+s.branch=''; s.branchScope='copy';                    % draw on _t, inherit onto _c/_e
 s.settingGroups={};                                   % fully interactive, no numeric params
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct());
@@ -178,7 +203,7 @@ s.id='splitRegions'; s.label='Split regions'; s.wrapper=@splitRegions;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='prefix';
 s.outTransform=struct('from','','to','Roi');          % RoiN_ prefix, N per region
 s.gatingField='splitRegions'; s.requires={'setRegions'}; s.produces={'regionCrops'};
-s.branch='';
+s.branch=''; s.branchScope='all';                     % crop every branch of the recording
 s.settingGroups={ 'Options',{'deleteOriginal'} };
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('deleteOriginal',false));
@@ -190,11 +215,13 @@ s = base();
 s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runSegmentation'; s.requires={'contrast'}; s.produces={'segmentation'};
-s.artifacts={'_cm.jpg','_vs.jpg'}; s.branch='';   % computed on contrast side, copied to cardiac
+s.artifacts={'_cm.jpg','_vs.jpg'};
+s.branch=''; s.branchScope='copy';                % computed on contrast side, copied to cardiac
 s.settingGroups={ 'Contrast',{'trustLimitsK'};
                   'Categorization',{'lSizeN','sSizeN','sens','sSizeScale','deSens','lThinN','imOpen','iEdge','eEdge'};
-                  'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'};
-                  'Copy to siblings',{'fNamesCopyTo'} };
+                  'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'} };
+                  % no 'Copy to siblings' panel: branchScope 'copy' means wbExecutor
+                  % derives s.fNamesCopyTo from the recording's own branch products
 s.sharedKeys={'trustLimitsK','prchNSize','sMinL','correctNodes','simR','difR','sStat','libraryFolder'};
 s.enums=struct('sStat',{{'median','mean'}});
 s.presets=struct('default',struct('trustLimitsK',[0.001 0.99],'lSizeN',141,'sSizeN',9, ...
@@ -205,8 +232,7 @@ s.tips=struct('lSizeN','odd, ~2x the largest vessel', ...
     'sSizeN','odd, ~2x the small-vessel diameter', ...
     'sens','segmentation sensitivity (raise to catch faint vessels)', ...
     'sMinL','minimum segment length', ...
-    'prchNSize','parenchymal pixel neighbourhood', ...
-    'fNamesCopyTo','sibling files to copy the mask onto (e.g. _c partner)');
+    'prchNSize','parenchymal pixel neighbourhood');
 reg(end+1)=s;
 
 % ---- 7. dynamicSegmentation -------------------------------------------------
@@ -214,7 +240,7 @@ s = base();
 s.id='dynamicSegmentation'; s.label='Dynamic segmentation'; s.wrapper=@runDynamicSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runDynamicSegmentation'; s.requires={'segmentation'}; s.produces={'dynamicSeg'};
-s.artifacts={'_vs.jpg'}; s.branch='';
+s.artifacts={'_vs.jpg'}; s.branch=''; s.branchScope='all';
 s.settingGroups={ 'Labelling (match segmentation)',{'sMinL','prchNSize','correctNodes','simR','difR'};
                   'Dynamic segmentation',{'sMinP2R2','sMaxLBI','sMaxCLR','sMaxKK','iniNSize','sMaxP2D'};
                   'Quality & interpolation',{'gSizeN','minOverlapMask','minOverlapSelf','pInterpF'} };
@@ -264,7 +290,8 @@ s.id='BFI'; s.label='BFI'; s.wrapper=@runBFI;
 s.inGlob='*_K_d.mat'; s.outSuffix={'_BFI_d','_BFI_r','_BFI_s'}; s.outKind='new';
 s.outTransform=struct('from','_K_d.mat','to','_BFI_d.mat');   % branch-preserving strrep
 s.gatingField='calculateBFI';                         % REAL field (differs from fn name)
-s.requires={'contrast'}; s.produces={'bfi'}; s.branch='';
+s.requires={'contrast'}; s.produces={'bfi'};
+s.branch=''; s.branchScope='all';                     % _t AND _c both need a BFI product
 s.settingGroups={ 'Conversion',{'deleteOriginal','method'} };
 s.sharedKeys={'libraryFolder'};
 s.enums=struct('method',{{'basic'}});
@@ -351,7 +378,8 @@ s.wrapper=@(settings,fNames) exportToExcel(fNames);   % drop-s adapter: exportTo
                                                       % the executor calls wrapper(s,fNames)
 s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='none';
 s.gatingField='';                                     % writes no settings field
-s.requires={'BFI'}; s.produces={}; s.branch='';
+s.requires={'BFI'}; s.produces={};
+s.branch=''; s.branchScope='all';                     % one workbook per branch product
 s.settingGroups={};
 s.sharedKeys={};
 s.presets=struct('default',struct());
@@ -375,5 +403,5 @@ s = struct( ...
     'interactive',false, 'needsRaw',false, 'artifacts',{{}}, ...
     'settingGroups',{{}}, 'sharedKeys',{{}}, ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
-    'modalities',{{'LSCI'}}, 'branch','');
+    'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one');
 end

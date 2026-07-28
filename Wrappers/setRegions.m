@@ -37,7 +37,8 @@
 %   INPUTS
 %     s        parameter structure.  Carried through into settings.setRegions untouched
 %              (setRegions itself reads no numeric fields; the region count is drawn,
-%              not configured).
+%              not configured).  s.fNamesCopyTo (optional, default {}) copies the drawn
+%              mask onto co-registered siblings - see below.
 %     fNames   2-D cell array of *_K_d.mat / *_I_d.mat paths.  Rows = groups; each file
 %              must have matching *_s.mat and *_r.mat siblings.  Empty cells are skipped
 %              (ragged rows from getFileNamesList are fine).
@@ -45,14 +46,31 @@
 %     s.cancelFcn()->tf (checked between files).  s.progressFcn is not used - the step
 %     is fully interactive.
 %
-%   SIDE-EFFECTS (per file)
+%   s.fNamesCopyTo - draw ONCE, apply to every branch of the same recording
+%     A recording usually exists as several co-registered products of ONE raw file -
+%     the contrast '_t' (or '_s'), the internal cycle '_c', the external cycle '_e'.
+%     They share the field of view, so the regions should be drawn once and inherited,
+%     exactly as runSegmentation inherits its cMask.  Two shapes are accepted:
+%       * ELEMENTWISE - a cell array THE SAME SIZE AS fNames, where element (g,c) holds
+%         the target(s) inheriting the mask drawn on fNames{g,c}, as one path (char) or
+%         several (nested cellstr).  This is the natural form for a grouped fNames, e.g.
+%         s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat').
+%       * ROW-PER-SOURCE - the runSegmentation convention: row i lists the targets for
+%         the i-th file of fNames in its own (column-major) order.
+%     Empty entries copy nowhere.  A target inherits results.regionsMask verbatim (and
+%     has a stale one REMOVED when nothing was drawn), plus settings.setRegions; nothing
+%     else on the target is touched.  Targets are NOT opened in the editor.
+%
+%   SIDE-EFFECTS (per file, and per copy target)
 %     <name>_r.mat   results.regionsMask added/overwritten when >=1 ROI is drawn, or
 %                    REMOVED when none is drawn (double, 0 = excluded, 1..N = labels)
 %     <name>_s.mat   settings.setRegions = s
 %
 %   EXAMPLE
-%     fNames = getFileNamesList(root,'*_K_d.mat','[A-Z]+\d+');  % grouped, rows=animals
-%     setRegions(s,fNames);                                    % draw regions per file
+%     % draw on the temporal contrast, inherit onto the paired internal-cycle files
+%     fNames = getFileNamesList(root,'*_t_K_d.mat','[A-Z]+\d+');   % grouped, rows=animals
+%     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+%     setRegions(s,fNames);
 %     % (skip this call entirely, or draw nothing, to segment the whole window)
 %
 %   DEPENDS ON
@@ -72,6 +90,7 @@ function setRegions(s,fNames)
 if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
 end
+if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 
 % Optional workbench hooks resolved to no-ops when absent (see header); s is never
 % mutated and the hooks are stripped from the settings before saving.  This step is
@@ -120,8 +139,59 @@ for g=1:1:nGroups
         settings.setRegions=stripHooks(s);
         save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
         save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
+
+        % --- inherit the same regions on the co-registered siblings (s.fNamesCopyTo) ---
+        tgts=copyTargets(s,fNames,g,c);
+        for t=1:1:numel(tgts)
+            if ~isempty(tgts{t})
+                copyRegionsOnto(s,tgts{t},regionsMask,stageFcn);
+            end
+        end
     end
 end
+end
+
+% =====================================================================
+function tgts=copyTargets(s,fNames,g,c)
+%copyTargets  The copy targets for source file (g,c) as a cellstr, or {}.  Two accepted
+%   shapes (see the header): ELEMENTWISE, s.fNamesCopyTo the same size as the 2-D fNames
+%   with one path or a nested cellstr per element - the natural form for the grouped
+%   launcher list; or the runSegmentation ROW form, one row of targets per source file
+%   in fNames' own (column-major) order, which is what a flat 1-file call produces.
+tgts={};
+if ~isfield(s,'fNamesCopyTo') || isempty(s.fNamesCopyTo), return; end
+ct=s.fNamesCopyTo;
+if isequal(size(ct),size(fNames))
+    e=ct{g,c};
+    if isempty(e), return; end
+    if ischar(e) || isstring(e), tgts={char(e)}; else, tgts=e(:)'; end
+elseif size(ct,1)==numel(fNames)
+    row=ct(sub2ind(size(fNames),g,c),:);
+    tgts=row(~cellfun(@isempty,row));
+end
+end
+
+% =====================================================================
+function copyRegionsOnto(s,targetName,regionsMask,stageFcn)
+%copyRegionsOnto  Give a co-registered sibling the SAME regions (verbatim mask, or the
+%   removal of a stale one when nothing was drawn) plus the settings stamp.  Nothing
+%   else on the target is touched - it is a different recording of the same FOV.
+msg=['setRegions: copying regions onto ',targetName];
+disp(msg); stageFcn('setRegions',msg);
+clearvars results settings
+load(strrep(targetName,'_d.mat','_s.mat'),'settings');
+load(strrep(targetName,'_d.mat','_r.mat'),'results');
+
+if isempty(regionsMask)
+    if isfield(results,'regionsMask'), results=rmfield(results,'regionsMask'); end
+else
+    results.regionsMask=regionsMask;
+end
+
+sT=s; sT.fName=targetName;
+settings.setRegions=stripHooks(sT);
+save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
+save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
 end
 
 % =====================================================================

@@ -98,8 +98,15 @@ s.libraryFolder=libraryFolder;
 %the group and reset at the next group.  Draw nothing, or skip this step, to keep the
 %whole window (no region mask is written).
 
-%SET FILE NAMES HERE - GROUPED (rows = animal/FOV) so ROIs can carry within a group
-fNames=getFileNamesList(rootFolder,'*_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%SET FILE NAMES HERE - the TEMPORAL CONTRAST files only, GROUPED (rows = animal/FOV)
+%so ROIs carry within a group.  The internal-cycle "_c" files are the SAME field of
+%view, so they inherit the mask instead of being drawn again (see s.fNamesCopyTo below)
+fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+%Copy the regions drawn on each _t onto its paired _c (same idiom as STEP 5's
+%segmentation copy) - one editor per recording instead of one per file.  Comment this
+%line out, and list '*_K_d.mat' above, to draw on every file separately instead.
+s.fNamesCopyTo=regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
 
 %RUN THE PROCESSING ROUTINE (setRegions iterates the groups itself - no for-loop)
 setRegions(s,fNames);
@@ -112,7 +119,8 @@ s.libraryFolder=libraryFolder;
 %ADJUSTED IF NECESSARY - DELETE THE ORIGINAL FILES
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
-%SET FILE NAMES HERE - both _t and _c now carry regionsMask (STEP 4 copied it onto _c)
+%SET FILE NAMES HERE - both _t and _c now carry regionsMask (STEP 3 copied it onto _c),
+%so every branch of a recording is cropped with the same regions
 fNames=getFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files

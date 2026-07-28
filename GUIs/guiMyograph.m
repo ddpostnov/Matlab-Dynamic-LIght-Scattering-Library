@@ -217,7 +217,7 @@ app=getApp(fig); t=app.tabs.run;
 gl=uigridlayout(t,[1 2],'ColumnWidth',{'1x','1.5x'},'Padding',[6 6 6 6],'ColumnSpacing',8);
 % -- left: diameter parameters --
 pp=uipanel(gl,'Scrollable','on','Title','Diameter parameters (applied to all files)');
-pg=uigridlayout(pp,[1 1],'RowHeight',{'fit'},'Padding',[4 4 4 4]);
+pg=uigridlayout(pp,[1 1],'RowHeight',{'fit'},'Padding',[4 4 4 4],'Scrollable','on');  % the grid owns the scroll
 buildParamEditor(fig,pg,diameterGroups());
 % -- right: run controls --
 rc=uigridlayout(gl,[5 1],'RowHeight',{'fit','fit','fit','1x','fit'},'RowSpacing',6);
@@ -239,7 +239,7 @@ app=getApp(fig); t=app.tabs.vasomotion;
 gl=uigridlayout(t,[1 2],'ColumnWidth',{'1x','1.5x'},'Padding',[6 6 6 6],'ColumnSpacing',8);
 % -- left: vasomotion + propagation parameters --
 pp=uipanel(gl,'Scrollable','on','Title','Vasomotion & propagation parameters');
-pg=uigridlayout(pp,[1 1],'RowHeight',{'fit'},'Padding',[4 4 4 4]);
+pg=uigridlayout(pp,[1 1],'RowHeight',{'fit'},'Padding',[4 4 4 4],'Scrollable','on');  % the grid owns the scroll
 buildParamEditor(fig,pg,vasoGroups());
 % -- right: run controls --
 rc=uigridlayout(gl,[5 1],'RowHeight',{'fit','fit','fit','1x','fit'},'RowSpacing',6);
@@ -331,7 +331,7 @@ c.ax=uiaxes(gl); title(c.ax,'Load one or more *_myograph.mat to begin');
 
 % scrollable, sectioned control column
 rpPanel=uipanel(gl,'BorderType','none','Scrollable','on');
-stack=uigridlayout(rpPanel,[4 1],'RowHeight',repmat({'fit'},1,4),'RowSpacing',8,'Padding',[2 2 2 2]);
+stack=uigridlayout(rpPanel,[4 1],'RowHeight',repmat({'fit'},1,4),'RowSpacing',8,'Padding',[2 2 2 2],'Scrollable','on');  % the grid owns the scroll
 
 % --- section 1: data source (files + groups) ---
 s1=exSection(stack,'1 - Data source (one file, or many + groups)',12);

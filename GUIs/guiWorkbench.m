@@ -259,7 +259,7 @@ c.fmt = uidropdown(fr,'Items',{'xlsx','xls'},'Value','xlsx', ...
 sp = uipanel(right,'Title','Sheets to write','FontWeight','bold','Scrollable','on');
 names = exportSheetNames();
 sg = uigridlayout(sp,[numel(names) 1],'RowHeight',repmat({'fit'},1,numel(names)), ...
-    'RowSpacing',2,'Padding',[6 6 6 6]);
+    'RowSpacing',2,'Padding',[6 6 6 6],'Scrollable','on');    % the grid owns the scroll, not the panel
 for i = 1:numel(names)
     c.sheetChk.(names{i}) = uicheckbox(sg,'Text',names{i},'Value',true, ...
         'Tooltip','tick to include this sheet (greyed = not produced by any selected file)');
@@ -1106,7 +1106,7 @@ if isempty(groups)
 end
 s = wbSettingsModel('resolve', app.sm, step);      % step-level resolution (no file)
 stack = uigridlayout(panel,[size(groups,1) 1],'RowHeight',repmat({'fit'},1,size(groups,1)), ...
-    'RowSpacing',8,'Padding',[6 6 6 6]);
+    'RowSpacing',8,'Padding',[6 6 6 6],'Scrollable','on');   % the grid owns the scroll, not the panel
 for gi = 1:size(groups,1)
     p = uipanel(stack,'Title',groups{gi,1},'FontWeight','bold');
     flds = groups{gi,2};
@@ -1612,7 +1612,7 @@ end
 n = numel(files);
 gl = uigridlayout(panel,[n+1 1],'RowHeight',[{'fit'}, repmat({150},1,n)], ...
     'RowSpacing',6,'Padding',[6 6 6 6],'Scrollable','on');
-uilabel(gl,'Text',sprintf('%s - %s (click to enlarge)',shortId(identity),step.label), ...
+uilabel(gl,'Text',sprintf('%s - %s (click to open full size)',shortId(identity),step.label), ...
     'FontWeight','bold','WordWrap','on');
 for i = 1:n, addArtifactThumb(gl,files{i}); end
 end
@@ -1628,16 +1628,55 @@ end
 end
 
 function openArtifactViewer(pth)
-%openArtifactViewer  Open one report image full-size in its own viewer window.
+%openArtifactViewer  Open one report image full-size, preferring the DESKTOP's
+%   own image viewer (winopen on Windows, open/xdg-open elsewhere).  That viewer
+%   is a separate process, so the report stays resizable, zoomable and scrollable
+%   while the workbench is busy inside a wrapper - a MATLAB window would only
+%   repaint when the main thread yields, and uiimage offers no zoom at all.
+%   Falls back to an in-MATLAB figure (axes toolbar = zoom/pan) if the hand-off
+%   fails, e.g. no file association.
 if isempty(pth) || ~isfile(pth), return; end
-[~,nm,ex] = fileparts(pth);
-v = uifigure('Name',['Report - ' nm ex],'Position',[140 140 760 640]);
-g = uigridlayout(v,[1 1],'Padding',[4 4 4 4]);
-try
-    uiimage(g,'ImageSource',pth,'ScaleMethod','fit');
-catch
-    uilabel(g,'Text',['Cannot display ' pth],'HorizontalAlignment','center');
+if ~openInDesktopViewer(pth)
+    showArtifactInMatlab(pth);
 end
+end
+
+function ok = openInDesktopViewer(pth)
+%openInDesktopViewer  Hand the file to the OS-associated application.  Returns
+%   as soon as the app is launched (never blocks the run loop); ok=false lets the
+%   caller fall back.  The trailing & keeps the unix shells from blocking.
+try
+    if ispc
+        winopen(pth);                                    % ShellExecute; non-blocking
+        ok = true;
+    elseif ismac
+        ok = system(['open "' pth '" &']) == 0;
+    else
+        ok = system(['xdg-open "' pth '" >/dev/null 2>&1 &']) == 0;
+    end
+catch
+    ok = false;
+end
+end
+
+function showArtifactInMatlab(pth)
+%showArtifactInMatlab  Fallback viewer: a classic figure sized to the image, so
+%   the axes toolbar's zoom/pan are available (uiimage has neither).
+[~,nm,ex] = fileparts(pth);
+try
+    img = imread(pth);
+catch
+    v = uifigure('Name',['Report - ' nm ex],'Position',[140 140 760 640]);
+    uilabel(uigridlayout(v,[1 1]),'Text',['Cannot display ' pth], ...
+        'HorizontalAlignment','center');
+    return
+end
+scr = get(0,'ScreenSize');
+w = min(size(img,2), 0.9*scr(3)); h = min(size(img,1), 0.9*scr(4));
+f = figure('Name',['Report - ' nm ex],'NumberTitle','off','Color','w', ...
+    'Position',[140 140 max(320,w) max(240,h)]);
+ax = axes('Parent',f,'Position',[0 0 1 1]);
+image(ax,img); axis(ax,'image','off');
 end
 
 function s = shortId(identity)

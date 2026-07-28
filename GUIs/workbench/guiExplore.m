@@ -148,7 +148,7 @@ title(ax,'Choose a folder or a file to begin'); app.ax = ax;
 ctrlPanel = uipanel(outer,'BackgroundColor','w','BorderType','none','Scrollable','on');
 ctrlPanel.Layout.Column = 2;
 C = uigridlayout(ctrlPanel,[1 1],'RowHeight',{'fit'},'Padding',[2 2 2 2], ...
-    'BackgroundColor','w');
+    'BackgroundColor','w','Scrollable','on');   % the grid owns the scroll, not the panel
 stack = uigridlayout(C,[8 1],'RowHeight',repmat({'fit'},1,8), ...
     'RowSpacing',8,'Padding',[0 0 0 0],'BackgroundColor','w');
 
