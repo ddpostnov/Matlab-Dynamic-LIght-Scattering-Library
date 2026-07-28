@@ -17,6 +17,8 @@ The library takes raw speckle recordings (`.rls`, `.mraw`, `.cxd`, `.dv`) and tu
 - **Pulsatility**, **vasomotion**, **neurovascular-coupling** and **bolus / CTTH** metrics — `runPulsatility`, `runVasomotion`, `runInternalCycle`, `runExternalCycle`, `runCTTH`;
 - optional **registration** across recordings (`runRegistration`, `registerRetinaLSCI`) and **Excel export** (`exportToExcel`).
 
+You drive that pipeline in one of two ways: from the **Processing Workbench** (`GUIs/guiWorkbench`) — an interactive file × step matrix that ticks, parametrises and runs the steps for you, and is the recommended starting point — or from a **launcher script** (`Launchers/`), the scripted alternative for reproducible, batch, or headless work. Both call exactly the same `run…` / `set…` steps.
+
 A **myograph** toolset — the headless `Core/Myograph/` functions plus the `GUIs/guiMyograph` app — measures vessel diameter from myograph videos and runs the same vasomotion analysis per user-defined interval.
 
 ---
@@ -54,9 +56,10 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 | `Core/Shared` | Shared signal primitives — `getFFT` |
 | `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`) |
 | `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → regions → segmentation → BFI → cycles / pulsatility / vasomotion; segmentation is `setRegions` (interactive multi-ROI editor → `results.regionsMask`) → `runSegmentation` (fully automatic categorize + label + per-segment traces; `s.fNamesCopyTo` copies the segmentation onto co-registered siblings, replacing the old `assignCategories`) → optional `runDynamicSegmentation` (per-frame vessel diameter / flow) — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, and the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) |
-| `Launchers` | Ready-to-edit example pipelines — **start here** |
-| `GUIs` | Interactive apps — `guiExplore` (browse processed results) and `guiMyograph` (myograph workbench; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
-| `Utilities` | Terminal consumers of finished results — `exportToExcel` |
+| `Launchers` | Ready-to-edit example pipelines — the scripted way to drive the same steps |
+| `GUIs` | Interactive apps — `guiWorkbench` (**the Processing Workbench: start here**; the file × step matrix that runs the LSCI pipeline, with Export and Explore tabs) and `guiMyograph` (myograph workbench for `.avi` diameter / vasomotion / propagation; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
+| `GUIs/workbench` | The workbench's own components — the headless brain (`wbStepRegistry` the step specs, `wbDiscoverFiles`, `wbFileModel`, `wbStateEngine`, `wbSettingsModel`, `wbInvalidate`, `wbExecutor`, `wbArtifacts`, `wbModalGuard`, `wbSession`) plus `guiExplore`, the results explorer hosted in the Explore tab (still openable standalone, or embeddable elsewhere with `guiExplore('Parent',container)`) |
+| `Utilities` | Terminal consumers of finished results — `exportToExcel` (`exportToExcel(fNames)` writes the full workbook; the optional `exportToExcel(fNames,opts)` selects `opts.sheets` / `opts.format`) |
 | `Simulation` | Synthetic dynamic-speckle generation (`getDynamicSpeckles`, `Launcher_speckleSimulation`) — self-contained |
 | `3rd party` | External libraries (Bio-Formats, superlets, …) — unmodified |
 
@@ -130,11 +133,12 @@ sub-tree as `intervals(iv).vasomotion` (single signal; no `ppx` / `ppxs`).
 ## Getting started
 
 1. Clone the repository and keep **only one copy** on your machine — MATLAB caches paths and multiple versions cause conflicts.
-2. Copy a launcher from `Launchers/` to your own working location; **leave the originals unchanged**.
-3. In your copy, set `libraryFolder` to this repository, then run the `%% STEP` cells in order (run `STEP 0` once per MATLAB session).
-4. Read the header (comments at the top) and inline comments of each function you use — do not run scripts blindly.
+2. Put the library on the path: `addpath(genpath('<path to this repository>'))`.
+3. Run `guiWorkbench` — the [Processing Workbench](#processing-workbench). Load your recordings, tick the steps your protocol needs, press **Run**, then use its **Export** and **Explore** tabs.
+4. Prefer a script? Copy a launcher from `Launchers/` to your own working location (**leave the originals unchanged**), set `libraryFolder` in your copy, and run the `%% STEP` cells in order (`STEP 0` once per MATLAB session). See [Launchers](#launchers).
+5. Either way, read the header (comments at the top) and inline comments of each function you use — do not run steps blindly.
 
-As a user you normally interact with the **Launchers** (to build a pipeline) and the **GUIs** — `guiExplore` to browse processed results, `guiMyograph` for the myograph workflow; the processing steps you run are dictated by your protocol.
+The processing steps you run are dictated by your protocol, not by the entry point: the workbench and the launchers call the same `run…` / `set…` wrappers and write the same `_d` / `_r` / `_s` files, so you can move between them freely. The `.avi` myograph workflow is not part of the workbench — use `guiMyograph` for it.
 
 ### File-naming convention
 
@@ -174,9 +178,59 @@ Plan your file/folder naming in advance — it saves a lot of time later.
 
 ---
 
+## Processing Workbench
+
+`guiWorkbench` is the primary entry point: one window that turns the launcher workflow
+into a spreadsheet. **Rows are recordings** (grouped by animal, reference first),
+**columns are pipeline steps**, and each **cell** is the state of one step for one
+recording — *ready* (tick it to queue), *checked*, *running*, *done*, *stale* (a setting
+or an upstream re-run invalidated it) or *unavailable* (its prerequisites are not met).
+State is read from the files on disk, so a session you closed last week comes back with
+everything already done still marked done.
+
+```matlab
+addpath(genpath('<path to this repository>'))
+guiWorkbench
+```
+
+1. **1 - Files** — load your recordings with one of three loaders: **Load structured**
+   (root folder + file pattern + animal / reference regexps, the `getFileNamesList`
+   convention), **Load folder…** (recurse a folder), or **Add files…** (pick by hand).
+   All three group by animal with the reference recording first. **Save session… /
+   Load session…** store the file set, groups, settings and cell states in a `.mat`
+   sidecar, so long analyses survive a MATLAB restart.
+2. **2 - Process** — tick the cells you want (**Check all** / **Clear checks** queue or
+   clear every runnable cell at once). Pick a step in the **Step** dropdown on the right
+   to open its **settings panel**; values shared between steps propagate automatically,
+   and editing a setting marks that step and everything downstream *stale* so you cannot
+   silently mix parameters. The preset dropdown seeds the whole parameter set, and
+   **Save preset… / Load preset…** store your own — the modern replacement for keeping an
+   edited copy of a launcher. **Preview order** lists
+   exactly what would run, in dependency order, without calling anything; **Run**
+   executes it, streaming per-cell progress and the command-window messages into the log
+   pane. **Stop** cancels cooperatively between files. A failed step marks its cell as an
+   error and the batch continues. Finished cells with a report image become clickable and
+   open it in the reports panel. Interactive steps (region drawing, vessel typing) open
+   their own editor and grey the workbench out until you finish.
+3. **3 - Export** — pick which of the loaded recordings to export, tick the sheets you
+   want (**All** / **None**), choose the format, and press **Export selected**. This is a
+   selection UI over `exportToExcel`, which remains callable directly as
+   `exportToExcel(fNames)` or `exportToExcel(fNames,opts)`.
+4. **4 - Explore** — the results explorer (`GUIs/workbench/guiExplore`) hosted in-tab.
+   Press **Load workbench files & groups** to seed it with the `_r.mat` results and
+   groups you loaded on the Files tab, then plot single recordings or group comparisons
+   and export publication figures. See [Exploring processed results](#exploring-processed-results).
+
+The workbench covers the **LSCI** pipeline. It never reimplements any processing — it
+orders, gates, parametrises and calls the same wrappers a launcher would.
+
+---
+
 ## Launchers
 
-Copy a launcher to your own location and edit it for your project.
+The launchers are the **scripted alternative** to the workbench — fully supported, and the
+right choice when you want a reproducible record of a pipeline, a headless/batch run, or a
+starting point to modify. Copy a launcher to your own location and edit it for your project.
 
 | Launcher | Purpose |
 |---|---|
@@ -189,15 +243,24 @@ Copy a launcher to your own location and edit it for your project.
 | `Launcher_DLSI_basic` | DLSI pipeline: raw `.mraw` recordings → per-pixel g2 / decorrelation-time fit. |
 | `Launcher_guided` | Guided full-resolution per-segment trace extraction (demo on the bundled test data). |
 
-The **myograph** workbench has no launcher script — open `GUIs/guiMyograph` in MATLAB,
-or double-click `GUIs/launchMyographWorkbench.vbs`.
+The **myograph** workflow has neither a launcher script nor a workbench column — open
+`GUIs/guiMyograph` in MATLAB, or double-click `GUIs/launchMyographWorkbench.vbs`.
+
+---
 
 ## Exploring processed results
 
 Follow any pipeline to a `_BFI_d.mat` file (3-D data `X × Y × Time` plus a time vector)
 and explore it with basic MATLAB skills — ROI selection, filtering, plotting as image or
-video — or open `GUIs/guiExplore` to browse the finished `_r.mat` results (per-segment
-BFI / diameter / pulsatility / vasomotion, single files or group comparisons).
+video.
+
+For the finished `_r.mat` results (per-segment BFI / diameter / pulsatility / vasomotion,
+single files or group comparisons), use the **Explore** tab of `guiWorkbench`: it is
+seeded from the recordings and groups you already loaded, matches the plot type to the
+data (time series, box plots, spectra, spectrograms, maps), and exports the figure at a
+chosen DPI. The same explorer can be opened on its own with `guiExplore`
+(`GUIs/workbench/guiExplore.m`) if you want to browse results without loading a workbench
+session, and embedded elsewhere with `guiExplore('Parent',container)`.
 
 ---
 

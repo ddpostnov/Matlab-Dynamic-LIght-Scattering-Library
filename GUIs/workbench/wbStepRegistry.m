@@ -38,19 +38,32 @@
 %       tips         struct field->tooltip           (from the %Example comments)
 %       enums        struct field->allowed values    (dropdown items)
 %       modalities   which modalities expose it       ({'LSCI'})
-%       branch       't' | 'c' | '' (temporal branch it operates on)
+%       branch       'contrast' | 'cardiac' | '' (which file branch this step's
+%                    column belongs to; wbFileModel also derives 'epoch'/'bolus')
 %
-% Notes / flagged simplifications (for the author):
+% Notes (for the author):
 %   * The v1 registry is LSCI only.  The .cxd (bolus/intensity/CTTH) and .avi
-%     (myograph) steps are deferred; the schema already supports them.
-%   * The REAL gating fields differ from the function name for three steps:
+%     (myograph) steps are deferred to the next steps; the schema supports them.
+%   * REAL gating fields (differ from the function name, 01 A1):
 %     runBFI->calculateBFI, runExternalCycle->externalCycle,
-%     runCTTH->ctthCalculation (01 A1).  Encoded below.
-%   * BFI / segmentation / vesselTypes act on BOTH temporal branches (_t and _c)
-%     in one column; branch tracking is left to the state engine + Phase-3 row
-%     folding.  'guided' maps to runGuidedContrast (the intensity variant is
-%     deferred).  setRegions carries ROIs across a group but is modelled perFile
-%     (only registration/vesselTypes are perGroup, per the design decisions).
+%     runCTTH->ctthCalculation.  Encoded below.
+%   * BRANCH: 'contrast' is the temporal OR spatial contrast side (t|s) - the user
+%     picks per s.contrastType and the analysis (segmentation/BFI/vasomotion/...)
+%     runs on either; 'cardiac' is the internal-cycle side (c); '' is branch-
+%     agnostic.  vasomotion is 'contrast' (t|s only, NOT c or e).  State stays at
+%     the recording level here; per-file column filtering by branch/stage is a
+%     Phase-3 concern (this field is the hint it uses).
+%   * STAGE flag is a SINGLE token: the external cycle is '_e_K' (NOT '_e_t_K')
+%     and the internal cycle '_c_K'.  A cycle's contrast base (t|s) is recorded in
+%     the SETTINGS, not the name, since a project is not expected to mix bases -
+%     so the suffix stays simple, showing only what the next step needs
+%     (t_K / s_K / c_K / e_K).  NOTE runExternalCycle currently WRITES the legacy
+%     '_t_e_K' (strrep _K_d->_e_K_d on a _t_K_d input); wbFileModel still parses it
+%     to the right identity, but reconciling the wrapper to emit '_e_K' is a
+%     recommended separate fix.
+%   * 'guided' maps to runGuidedContrast (intensity variant deferred).  'export'
+%     writes no settings field - it is 'done' once its .xlsx exists on disk.
+%     setRegions is modelled perFile (only registration/vesselTypes are perGroup).
 %
 % See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate
 %
@@ -67,11 +80,12 @@ reg = base();  reg(1) = [];   % empty 1x0 struct array with the right fields
 % ---- 1. contrast (temporal) --------------------------------------------------
 s = base();
 s.id='contrast'; s.label='Contrast (RLS)'; s.wrapper=@runContrastFromRLS;
+% s.contrastType chooses the flag: temporal -> _t_K, spatial -> _s_K (same branch)
 s.inGlob='*.rls'; s.outSuffix={'_t_K_d','_t_K_r','_t_K_s'}; s.outKind='new';
-s.outTransform=struct('from','.rls','to','_t_K_d.mat');
-s.gatingField='runContrastFromRLS'; s.requires={}; s.produces={'contrast_t'};
+s.outTransform=struct('from','.rls','to','_t_K_d.mat');   % spatial: '_s_K_d'
+s.gatingField='runContrastFromRLS'; s.requires={}; s.produces={'contrast'};
 s.interactive=@(ss) isfield(ss,'manualMask') && isequal(ss.manualMask,1);
-s.artifacts={'_c.jpg'}; s.branch='t';
+s.artifacts={'_c.jpg'}; s.branch='contrast';
 s.settingGroups={ 'Contrast calculation',{'contrastType','contrastKernel','decimFactor','decimMethod'};
                   'Performance',{'procType'};
                   'Initial masking',{'trustLimitsK','trustLimitsI','minTrust','manualMask'} };
@@ -97,8 +111,8 @@ s = base();
 s.id='internalCycle'; s.label='Internal cycle'; s.wrapper=@runInternalCycle;
 s.inGlob='*.rls'; s.outSuffix={'_c_K_d','_c_K_r','_c_K_s'}; s.outKind='new';
 s.outTransform=struct('from','.rls','to','_c_K_d.mat');
-s.gatingField='runInternalCycle'; s.requires={}; s.produces={'contrast_c'};
-s.artifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='c';
+s.gatingField='runInternalCycle'; s.requires={}; s.produces={'cardiac'};
+s.artifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='cardiac';
 s.settingGroups={ 'Contrast calculation',{'trustLimitsK','trustLimitsI','contrastKernelS'};
                   'Frequency band',{'maxFrqIni','minFrqIni','rangeFrq'};
                   'Exclusion criteria',{'excludeFirstNCycles','coeffsSTD','coeffsRel','coeffsAbs'};
@@ -120,12 +134,15 @@ reg(end+1)=s;
 % ---- 3. externalCycle (NVC) -------------------------------------------------
 s = base();
 s.id='externalCycle'; s.label='External cycle (NVC)'; s.wrapper=@runExternalCycle;
-s.inGlob='*_t_K_d.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
-s.outTransform=struct('from','_K_d.mat','to','_e_K_d.mat');
+% external/epoch cycle of the contrast side (t or s): the stage flag BECOMES e,
+% i.e. the single suffix _e_K (the contrast base is kept in the settings, not the
+% name - see wbFileModel rationale)
+s.inGlob='*_K_d.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
+s.outTransform=struct('from','_t_K_d.mat','to','_e_K_d.mat');   % replaces the t|s flag with e
 s.gatingField='externalCycle';                       % REAL field (differs from fn name)
 s.requires={'contrast'}; s.produces={'epochAvg'};
 s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
-s.artifacts={'_ec.jpg','_ec2.jpg'}; s.branch='t';
+s.artifacts={'_ec.jpg','_ec2.jpg'}; s.branch='contrast';
 s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDurationSec', ...
                      'epochBaselineSec','epochStimStartSec','epochFinaleSec'};
                   'Masking',{'maskType','enablelRejectionModification'};
@@ -173,7 +190,7 @@ s = base();
 s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runSegmentation'; s.requires={'contrast'}; s.produces={'segmentation'};
-s.artifacts={'_cm.jpg','_vs.jpg'}; s.branch='t';
+s.artifacts={'_cm.jpg','_vs.jpg'}; s.branch='';   % computed on contrast side, copied to cardiac
 s.settingGroups={ 'Contrast',{'trustLimitsK'};
                   'Categorization',{'lSizeN','sSizeN','sens','sSizeScale','deSens','lThinN','imOpen','iEdge','eEdge'};
                   'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'};
@@ -213,9 +230,9 @@ reg(end+1)=s;
 % ---- 8. guided --------------------------------------------------------------
 s = base();
 s.id='guided'; s.label='Guided (full-res)'; s.wrapper=@runGuidedContrast;
-s.inGlob='*_t_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runGuidedContrast'; s.requires={'segmentation'}; s.produces={'guidedTraces'};
-s.needsRaw=true; s.branch='t';
+s.needsRaw=true; s.branch='contrast';
 s.settingGroups={};                                   % uses sMap + raw; no tunable params
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct());
@@ -251,7 +268,7 @@ s.requires={'contrast'}; s.produces={'bfi'}; s.branch='';
 s.settingGroups={ 'Conversion',{'deleteOriginal','method'} };
 s.sharedKeys={'libraryFolder'};
 s.enums=struct('method',{{'basic'}});
-s.presets=struct('default',struct('deleteOriginal',false,'method',"basic"));
+s.presets=struct('default',struct('deleteOriginal',false,'method','basic'));
 s.tips=struct('deleteOriginal','delete the original _K_ triplet after conversion', ...
     'method','only "basic" (=1/K^2) is available');
 reg(end+1)=s;
@@ -259,9 +276,9 @@ reg(end+1)=s;
 % ---- 11. vasomotion ---------------------------------------------------------
 s = base();
 s.id='vasomotion'; s.label='Vasomotion'; s.wrapper=@runVasomotion;
-s.inGlob='*_t_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';   % contrast-side BFI (_t_BFI or _s_BFI)
 s.gatingField='runVasomotion'; s.requires={'BFI'}; s.produces={'vasomotion'};
-s.branch='t';
+s.branch='contrast';
 s.settingGroups={ 'Bands',{'vFR','cFR','wFR','wVPO'};
                   'Normalisation',{'normalisation','normsize','tgtFS'};
                   'Peaks & percentiles',{'pcts','otsuMaxN','otsuElbow','nPeakProm'};
@@ -285,7 +302,7 @@ s = base();
 s.id='pulsatility'; s.label='Pulsatility'; s.wrapper=@runPulsatility;
 s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runPulsatility'; s.requires={'BFI','internalCycle'}; s.produces={'pulsatility'};
-s.branch='c';
+s.branch='cardiac';
 s.settingGroups={ 'Harmonic model',{'nHarm'};
                   'Analysis levels',{'segPulsReturn','ppxPulsReturn'} };
 s.sharedKeys={'libraryFolder'};
@@ -316,7 +333,7 @@ s.id='vascularTree'; s.label='Vascular tree'; s.wrapper=@setVascularTree;
 s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVascularTree'; s.requires={'vesselTypes','pulsatility'}; s.produces={'hierarchy'};
 s.interactive=@(ss) ~(isfield(ss,'autoOnly') && isscalar(ss.autoOnly) && isequal(ss.autoOnly,true));
-s.branch='c';
+s.branch='cardiac';
 s.settingGroups={ 'Hierarchy derivation',{'autoOnly','phiWeights','useHarmonicPhase','propagatePartners'} };
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('autoOnly',false,'phiWeights',[1 1 1],'useHarmonicPhase',false, ...
@@ -328,7 +345,10 @@ reg(end+1)=s;
 
 % ---- 15. export -------------------------------------------------------------
 s = base();
-s.id='export'; s.label='Export (Excel)'; s.wrapper=@exportToExcel;
+s.id='export'; s.label='Export (Excel)';
+s.wrapper=@(settings,fNames) exportToExcel(fNames);   % drop-s adapter: exportToExcel
+                                                      % is a Utility (no hook seam),
+                                                      % the executor calls wrapper(s,fNames)
 s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='none';
 s.gatingField='';                                     % writes no settings field
 s.requires={'BFI'}; s.produces={}; s.branch='';

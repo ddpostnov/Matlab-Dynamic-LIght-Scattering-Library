@@ -69,7 +69,13 @@ for k = 1:numel(reg)
         continue
     end
 
-    doneOnDisk = ~isempty(step.gatingField) && ismember(step.gatingField, doneFields);
+    if isempty(step.gatingField)
+        % a step that writes no settings field (e.g. export) is done once its
+        % output artifact exists on disk
+        doneOnDisk = strcmp(step.outKind,'none') && outputExists(model);
+    else
+        doneOnDisk = ismember(step.gatingField, doneFields);
+    end
     requiresDone = prereqsDone(step.requires, gateOf, doneFields);
     hasInput = inputAvailable(step, model, requiresDone, doneOnDisk);
 
@@ -168,6 +174,17 @@ if tf && step.needsRaw
     tf = isfile(fullfile(model.folder,[model.stem '.rls'])) || ...
          isfile(fullfile(model.folder,[model.stem '.cxd']));
 end
+end
+
+% =====================================================================
+function tf = outputExists(model)
+%outputExists  Whether the recording already has an exported workbook on disk.
+%   exportToExcel writes '<input>_d.mat' -> '<input>.xlsx', so any
+%   '<identity>*.xlsx' next to the recording means export has run.
+tf = false;
+if isempty(model.folder) || ~isfolder(model.folder), return; end
+d = dir(fullfile(model.folder,[model.roiPrefix model.stem '*.xlsx']));
+tf = ~isempty(d);
 end
 
 % =====================================================================

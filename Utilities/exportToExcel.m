@@ -30,13 +30,29 @@
 %   INPUT
 %     fNames   cell array of *.mat file paths.  Each must contain SOURCE,
 %              RESULTS, SETTINGS structures created by the LSCI pipeline.
+%     opts     (optional) struct selecting WHAT and in WHICH format to write.
+%              Omitting it - or passing an empty / no-field struct - reproduces the
+%              full legacy behaviour above exactly (the five launcher callers do).
+%              Fields:
+%                .sheets  cellstr / string of sheet names to write, a subset of
+%                         {sMetrics, sData, sMetricsROI, sDataROI, dvsMetrics,
+%                          dvsData, dvsDiameter, pulsatility, dvsPulsatility}.
+%                         Absent / empty = all sheets.  A selected sheet whose data
+%                         is absent from a given file is simply skipped, exactly as
+%                         in the full path.
+%                .format  output extension, '.xlsx' (default) or '.xls'.
+%              The first sheet actually written to a file uses 'replacefile', so a
+%              re-export with a narrower selection never leaves stale sheets behind.
 %
 %   OUTPUT
 %     None – one Excel workbook per input file is written to disk.
 %
 %   EXAMPLE
 %     files = dir(fullfile(dataRoot,'*BFI_d.mat'));
-%     exportToExcel(fullfile({files.folder}',{files.name}'));
+%     fNames = fullfile({files.folder}',{files.name}');
+%     exportToExcel(fNames);                              % full legacy workbook
+%     exportToExcel(fNames, struct('sheets',{{'sMetrics','pulsatility'}}));
+%                                                         % just those two sheets
 %
 %   DEPENDS ON
 %     MATLAB R2019b+ (for writetable with 'Sheet' option) and data schema
@@ -45,13 +61,17 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 28-July-2026
 
-function exportToExcel(fNames)
+function exportToExcel(fNames, opts)
 
 if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".mat".');
 end
+
+if nargin<2, opts = struct(); end
+[sheetSel, outExt] = parseExportOpts(opts);         % {} = all sheets; '.xlsx' default
+wantSheet = @(nm) isempty(sheetSel) || any(strcmp(nm, sheetSel));
 
 for fidx=1:1:numel(fNames)
      if ~isempty(fNames{fidx})
@@ -60,7 +80,8 @@ for fidx=1:1:numel(fNames)
     fName=fNames{fidx};
     load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
 
-    fName=strrep(fName,'_d.mat','.xlsx');
+    fName=strrep(fName,'_d.mat',outExt);
+    wroteAny=false;                                     % first written sheet -> replacefile
 
     catNames = ["background"  "parenchyma"  "unsegmented" ...
         "outerWall"   "innerWall"   "lumen"];          % 1×6
@@ -74,7 +95,7 @@ for fidx=1:1:numel(fNames)
     T(end,:) = []; % crappy bug workaround
     T(end+1,:) = results.sMetrics(end,:);% crappy bug workaround
     
-    writetable(T,fName,'Sheet','sMetrics','WriteMode','replacefile');
+    wroteAny=emitSheet(fName,T,'sMetrics',wantSheet,wroteAny);
 
 
     idxAll    = results.sMetrics.idx(:)';
@@ -84,7 +105,7 @@ for fidx=1:1:numel(fNames)
     roiNames  = matlab.lang.makeValidName(compose("ROI %04d",roiIdx) );
     T = [ table(results.time(:),'VariableNames', {'Time'}), array2table(roiData,'VariableNames',roiNames) ];
     
-    writetable(T,fName,'Sheet','sData');
+    wroteAny=emitSheet(fName,T,'sData',wantSheet,wroteAny);
 
     if ismember('label', results.sMetrics.Properties.VariableNames)
         
@@ -137,7 +158,7 @@ for fidx=1:1:numel(fNames)
 
         
         T = movevars(T,{'label','type'},'Before',1);      % final layout
-        writetable(T,fName,'Sheet','sMetricsROI');
+        wroteAny=emitSheet(fName,T,'sMetricsROI',wantSheet,wroteAny);
 
 
 
@@ -156,7 +177,7 @@ for fidx=1:1:numel(fNames)
         T = [ table(timeVec,'VariableNames',{'Time'}), ...
             array2table(sigAgg,'VariableNames',sigNames) ];
         
-        writetable(T,fName,'Sheet','sDataROI');
+        wroteAny=emitSheet(fName,T,'sDataROI',wantSheet,wroteAny);
     end
     
 
@@ -165,7 +186,7 @@ for fidx=1:1:numel(fNames)
         T=results.dvsMetrics;
         T(end,:) = []; % crappy bug workaround
         T(end+1,:) = results.dvsMetrics(end,:);% crappy bug workaround
-        writetable(T,fName,'Sheet','dvsMetrics');
+        wroteAny=emitSheet(fName,T,'dvsMetrics',wantSheet,wroteAny);
 
         idxAll   = results.dvsMetrics.idx(:)';       % row vector
         goodMask = ~isnan(idxAll) & idxAll~=0 & ~isnan(results.dvsMetrics.BFI(:)');
@@ -176,13 +197,13 @@ for fidx=1:1:numel(fNames)
             array2table(results.dvsData(:,goodMask), ...
             'VariableNames',roiNames) ];
         
-        writetable(T,fName,'Sheet','dvsData');
+        wroteAny=emitSheet(fName,T,'dvsData',wantSheet,wroteAny);
 
         T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
             array2table(results.dvsDiameter(:,goodMask), ...
             'VariableNames',roiNames) ];
         
-        writetable(T,fName,'Sheet','dvsDiameter');
+        wroteAny=emitSheet(fName,T,'dvsDiameter',wantSheet,wroteAny);
     end
 
     % ---- pulsatility summary sheets (per-segment results.pulsatility scalars) ---
@@ -193,7 +214,7 @@ for fidx=1:1:numel(fNames)
         if isfield(results.pulsatility,'sData') && isfield(results.pulsatility.sData,'scalars')
             Tp = pulsScalarTable(results.pulsatility.sData.scalars,'');
             if ~isempty(Tp)
-                writetable([idTable(results.sMetrics), Tp],fName,'Sheet','pulsatility');
+                wroteAny=emitSheet(fName,[idTable(results.sMetrics), Tp],'pulsatility',wantSheet,wroteAny);
             end
         end
         if isfield(results,'dvsMetrics') && isfield(results.pulsatility,'dvsData') ...
@@ -204,7 +225,7 @@ for fidx=1:1:numel(fNames)
                     && isfield(results.pulsatility.dvsDiameter,'scalars')
                 Tp = [Tp, pulsScalarTable(results.pulsatility.dvsDiameter.scalars,'pd')];
             end
-            writetable(Tp,fName,'Sheet','dvsPulsatility');
+            emitSheet(fName,Tp,'dvsPulsatility',wantSheet,wroteAny);   % last sheet: return unneeded
         end
     end
      end
@@ -246,4 +267,43 @@ end
 if ~isempty(cols)
     Tp = array2table([cols{:}],'VariableNames',names);
 end
+end
+
+function [sheetSel, outExt] = parseExportOpts(opts)
+%parseExportOpts  Normalise the optional selection struct into a sheet filter and
+%   an output extension.  Absent / empty opts reproduce today's full behaviour.
+%     opts.sheets : names to write (cellstr / string / char).  [] or absent = ALL.
+%     opts.format : output workbook extension.  '.xlsx' (default) or '.xls' - both
+%                   multi-sheet spreadsheet formats writetable's 'Sheet' supports.
+sheetSel = {};
+outExt   = '.xlsx';
+if isempty(opts) || ~isstruct(opts), return; end
+if isfield(opts,'sheets') && ~isempty(opts.sheets)
+    sheetSel = cellstr(string(opts.sheets));
+    sheetSel = sheetSel(:)';
+end
+if isfield(opts,'format') && ~isempty(opts.format)
+    e = lower(char(string(opts.format)));
+    if e(1) ~= '.', e = ['.' e]; end
+    if ~any(strcmp(e,{'.xlsx','.xls'}))
+        error('exportToExcel:format', ...
+            'opts.format must be ''.xlsx'' or ''.xls'' (multi-sheet spreadsheet); got ''%s''.', e);
+    end
+    outExt = e;
+end
+end
+
+function wroteAny = emitSheet(fName, T, sheet, wantSheet, wroteAny)
+%emitSheet  Write one SELECTED sheet.  The first sheet actually written to a file
+%   uses 'replacefile' (a fresh workbook); later sheets append.  A selection that
+%   drops sMetrics therefore still starts from a clean file, and the default
+%   (all-sheets) path is byte-identical to the historical "sMetrics with
+%   'replacefile' first, the rest appended" behaviour.
+if ~wantSheet(sheet), return; end
+if ~wroteAny
+    writetable(T, fName, 'Sheet', sheet, 'WriteMode','replacefile');
+else
+    writetable(T, fName, 'Sheet', sheet);
+end
+wroteAny = true;
 end

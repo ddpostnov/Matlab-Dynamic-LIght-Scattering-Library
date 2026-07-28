@@ -23,7 +23,10 @@
 %   chosen resolution for a paper or a talk.
 %
 % HOW TO USE IT
-%   1. Run  guiExplore  (with the library on the path).
+%   1. Normally you do NOT call this directly: open  guiWorkbench  and switch to its
+%      Explore tab, which hosts this app and seeds it with the workbench's loaded
+%      recordings and groups. To browse results without the workbench, run
+%      guiExplore  standalone (with the library on the path) and continue from 2.
 %   2. Click "Choose Folder / File".
 %        - Pick a FILE  -> everything is plotted for that single recording.
 %        - Pick a FOLDER -> the folder is searched recursively; then use the three
@@ -49,6 +52,17 @@
 %      titles / labels / legend, then "Plot". Labels that span several segments are
 %      area-weighted into one trace/value automatically.
 %   4. Set DPI + format and click "Export image".
+%
+% EMBEDDING
+%   guiExplore('Parent',container) builds the whole app INTO an existing uitab or
+%   uipanel instead of its own window (used by the Processing Workbench's Explore
+%   tab, seeded with the workbench's file set / groups via the programmatic API);
+%   with no 'Parent' it opens standalone exactly as described above.
+%
+%   This file therefore lives in GUIs/workbench/ next to the other workbench
+%   components: it is the implementation of guiWorkbench's Explore tab rather than
+%   a separate entry point. It stays fully usable standalone (genpath puts the whole
+%   tree on the path), but guiWorkbench is the documented way in.
 %
 % NOTES
 %   - Only category-5 (lumen) segments are used for Artery/Vein/All-vessel selections
@@ -83,9 +97,15 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 26-July-2026
+% Last revision: 28-July-2026
 
 function h = guiExplore(varargin)
+
+% ---- optional host container: with 'Parent',<uitab/uipanel> the whole app is
+%      built INTO that container (e.g. the Processing Workbench's Explore tab)
+%      instead of a standalone window; dialogs and figure-scoped lookups target
+%      the host figure.  With no 'Parent' the behaviour is unchanged.
+parent = parseParent(varargin);
 
 % ---- shared application state (seen by all nested functions) --------------
 app = struct();
@@ -102,13 +122,19 @@ app.manual      = struct('title',false,'xlab',false,'ylab',false); % user-edited
 
 CAT = struct('PARENCHYMA',1,'UNSEG',2,'WALL',3,'INNER',4,'LUMEN',5);
 
-% ---- build the window ------------------------------------------------------
-fig = uifigure('Name','guiExplore - LSCI results explorer', ...
-    'Color','w','Position',[80 60 1440 860]);
-try, fig.WindowState = 'maximized'; catch, end
+% ---- build the window (standalone) or host inside the given container ------
+if isempty(parent)
+    fig = uifigure('Name','guiExplore - LSCI results explorer', ...
+        'Color','w','Position',[80 60 1440 860]);
+    try, fig.WindowState = 'maximized'; catch, end
+    root = fig;                              % standalone: build on the figure
+else
+    root = parent;                           % hosted: build on the given container
+    fig  = ancestor(parent,'figure');        % dialogs / findobj target the host figure
+end
 app.fig = fig;
 
-outer = uigridlayout(fig,[1 2],'ColumnWidth',{'2.4x','1x'}, ...
+outer = uigridlayout(root,[1 2],'ColumnWidth',{'2.4x','1x'}, ...
     'Padding',[6 6 6 6],'ColumnSpacing',8,'BackgroundColor','w');
 
 % left: the single large plotting axes
@@ -1425,3 +1451,13 @@ else, s=regexprep(sel,'\s*\((lumen|DVS)\)','');
 end
 end
 function s = pad0(x), if isempty(x), s=''; else, s=char(string(x)); end, end
+
+function p = parseParent(args)
+% Pull an optional 'Parent',<container> pair out of varargin ([] if absent).
+p = [];
+for i = 1:2:numel(args)-1
+    if (ischar(args{i}) || isstring(args{i})) && strcmpi(args{i},'Parent')
+        p = args{i+1};
+    end
+end
+end
