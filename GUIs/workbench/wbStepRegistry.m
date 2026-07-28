@@ -1,0 +1,359 @@
+%wbStepRegistry - Declarative spec of the v1 (LSCI) Processing-Workbench steps.
+%
+%   Returns the ordered array of pipeline-step specifications that drives every
+%   part of the workbench: the matrix columns, the on-disk gating, the settings
+%   panels, execution, and the report links.  Adding a modality or a step later
+%   is a data edit here, not a code rewrite.  The specs are transcribed FROM THE
+%   CODE (the Wrappers/ functions and the Launchers/ %Example-of-s blocks) as of
+%   branch main - see claude-docs/processing-workbench/01-pipeline-map.md.
+%
+%   Steps are listed in dependency order:
+%     contrast · internalCycle · externalCycle · setRegions · splitRegions ·
+%     segmentation · dynamicSegmentation · guided · registration · BFI ·
+%     vasomotion · pulsatility · vesselTypes · vascularTree · export
+%
+% Syntax:
+%    reg = wbStepRegistry()
+%    reg = wbStepRegistry(modality)      % filter to steps exposing that modality
+%
+% Outputs:
+%    reg - 1xN struct array; each element has fields:
+%       id           stable key                      ('contrast')
+%       label        column header                   ('Contrast (RLS)')
+%       wrapper      seam function handle            (@runContrastFromRLS)
+%       arity        'perFile' | 'perGroup'          (perGroup = 2-D fNames row)
+%       inGlob       dir glob it consumes            ('*.rls')
+%       outSuffix    new triplet suffixes            ({'_t_K_d','_t_K_r','_t_K_s'})
+%       outKind      'new'|'inplace'|'prefix'|'none' (how outputs relate to input)
+%       outTransform strrep rule on the _d name      (struct from/to, or [])
+%       gatingField  settings.<field> written        ('runContrastFromRLS')
+%       requires     upstream step ids               ({} | {'contrast'} ...)
+%       produces     logical product tokens          ({'contrast_t'})
+%       interactive  false | @(s)tf                  (blocks for user input?)
+%       needsRaw     true for runGuided*             (also passes the raw file)
+%       artifacts    report-image globs              ({'_c.jpg'})
+%       settingGroups Nx2 cell {label,{fields}}      (param-editor groups)
+%       sharedKeys   fields propagated between steps ({'trustLimitsK',...})
+%       presets      struct of named default bundles (.default = launcher values)
+%       tips         struct field->tooltip           (from the %Example comments)
+%       enums        struct field->allowed values    (dropdown items)
+%       modalities   which modalities expose it       ({'LSCI'})
+%       branch       't' | 'c' | '' (temporal branch it operates on)
+%
+% Notes / flagged simplifications (for the author):
+%   * The v1 registry is LSCI only.  The .cxd (bolus/intensity/CTTH) and .avi
+%     (myograph) steps are deferred; the schema already supports them.
+%   * The REAL gating fields differ from the function name for three steps:
+%     runBFI->calculateBFI, runExternalCycle->externalCycle,
+%     runCTTH->ctthCalculation (01 A1).  Encoded below.
+%   * BFI / segmentation / vesselTypes act on BOTH temporal branches (_t and _c)
+%     in one column; branch tracking is left to the state engine + Phase-3 row
+%     folding.  'guided' maps to runGuidedContrast (the intensity variant is
+%     deferred).  setRegions carries ROIs across a group but is modelled perFile
+%     (only registration/vesselTypes are perGroup, per the design decisions).
+%
+% See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate
+%
+% Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
+% Copyright 2026 Dmitry D Postnov, Aarhus University.
+% Header generation and script formatting were done with Claude Code.
+% Last revision: 28-July-2026
+
+%------------- BEGIN CODE --------------
+function reg = wbStepRegistry(modality)
+
+reg = base();  reg(1) = [];   % empty 1x0 struct array with the right fields
+
+% ---- 1. contrast (temporal) --------------------------------------------------
+s = base();
+s.id='contrast'; s.label='Contrast (RLS)'; s.wrapper=@runContrastFromRLS;
+s.inGlob='*.rls'; s.outSuffix={'_t_K_d','_t_K_r','_t_K_s'}; s.outKind='new';
+s.outTransform=struct('from','.rls','to','_t_K_d.mat');
+s.gatingField='runContrastFromRLS'; s.requires={}; s.produces={'contrast_t'};
+s.interactive=@(ss) isfield(ss,'manualMask') && isequal(ss.manualMask,1);
+s.artifacts={'_c.jpg'}; s.branch='t';
+s.settingGroups={ 'Contrast calculation',{'contrastType','contrastKernel','decimFactor','decimMethod'};
+                  'Performance',{'procType'};
+                  'Initial masking',{'trustLimitsK','trustLimitsI','minTrust','manualMask'} };
+s.sharedKeys={'trustLimitsK','trustLimitsI','libraryFolder'};
+s.enums=struct('contrastType',{{'temporal','spatial'}},'decimMethod',{{'sharp','leaking'}}, ...
+               'procType',{{'gpu','cpu'}});
+s.presets=struct('default',struct('contrastType','temporal','contrastKernel',25, ...
+    'decimFactor',25,'decimMethod','sharp','procType','gpu','trustLimitsK',[0.001 0.99], ...
+    'trustLimitsI',[1 254],'minTrust',[0.99 0.99],'manualMask',0));
+s.tips=struct('contrastType','''temporal'' or ''spatial''', ...
+    'contrastKernel','25 for temporal, 5-7 for spatial', ...
+    'decimFactor','output framerate = original / decimFactor', ...
+    'decimMethod','''sharp'' (temporal only) or ''leaking''', ...
+    'procType','''gpu'' for spatial if a high-end GPU is available, else ''cpu''', ...
+    'trustLimitsK','[min max] expected contrast (fastest,slowest flow)', ...
+    'trustLimitsI','[min max] expected intensity', ...
+    'minTrust','per-pixel trust in relation to dark/saturated frame fraction', ...
+    'manualMask','1 = interactive ROI selection of the analysed area');
+reg(end+1)=s;
+
+% ---- 2. internalCycle (cardiac) ---------------------------------------------
+s = base();
+s.id='internalCycle'; s.label='Internal cycle'; s.wrapper=@runInternalCycle;
+s.inGlob='*.rls'; s.outSuffix={'_c_K_d','_c_K_r','_c_K_s'}; s.outKind='new';
+s.outTransform=struct('from','.rls','to','_c_K_d.mat');
+s.gatingField='runInternalCycle'; s.requires={}; s.produces={'contrast_c'};
+s.artifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='c';
+s.settingGroups={ 'Contrast calculation',{'trustLimitsK','trustLimitsI','contrastKernelS'};
+                  'Frequency band',{'maxFrqIni','minFrqIni','rangeFrq'};
+                  'Exclusion criteria',{'excludeFirstNCycles','coeffsSTD','coeffsRel','coeffsAbs'};
+                  'Cycle calculation',{'method','decimationSpace','framesToAverage', ...
+                     'contrastKernelT','contrastKernelPreproc','interpFactor','smoothCoef1','minPromCoef'} };
+s.sharedKeys={'trustLimitsK','trustLimitsI','libraryFolder'};
+s.enums=struct('method',{{'sLSCIMM','tLSCIMM','ltLSCIMM','sLSCIMMM'}});
+s.presets=struct('default',struct('trustLimitsK',[0.01 0.3],'trustLimitsI',[5 250], ...
+    'contrastKernelS',5,'maxFrqIni',20,'minFrqIni',1,'rangeFrq',1,'excludeFirstNCycles',0, ...
+    'coeffsSTD',[3 2 2 2 2 3 3 2 2],'coeffsRel',[0.5 0.1],'coeffsAbs',2,'method','sLSCIMM', ...
+    'decimationSpace',4,'framesToAverage',1,'contrastKernelT',25,'contrastKernelPreproc',5, ...
+    'interpFactor',10,'smoothCoef1',1/3,'minPromCoef',1/4));
+s.tips=struct('method','sLSCIMM recommended; ltLSCIMM for high-quality data', ...
+    'maxFrqIni','initial max frequency of interest, Hz', ...
+    'minFrqIni','initial min frequency of interest, Hz', ...
+    'coeffsSTD','pulse-rejection coefficients relative to feature std');
+reg(end+1)=s;
+
+% ---- 3. externalCycle (NVC) -------------------------------------------------
+s = base();
+s.id='externalCycle'; s.label='External cycle (NVC)'; s.wrapper=@runExternalCycle;
+s.inGlob='*_t_K_d.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
+s.outTransform=struct('from','_K_d.mat','to','_e_K_d.mat');
+s.gatingField='externalCycle';                       % REAL field (differs from fn name)
+s.requires={'contrast'}; s.produces={'epochAvg'};
+s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
+s.artifacts={'_ec.jpg','_ec2.jpg'}; s.branch='t';
+s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDurationSec', ...
+                     'epochBaselineSec','epochStimStartSec','epochFinaleSec'};
+                  'Masking',{'maskType','enablelRejectionModification'};
+                  'Rejection',{'rejectBlCoef','rejectEpochCoef','rejectFinCoef','rejectPeakCoef', ...
+                     'rejectBlSimCoef','rejectSimCoef','rejectTimeLoss','rejectFirstEpoch'} };
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('stimStartType',{{'offset','manual'}},'maskType',{{'basic','cMask','selection'}});
+s.presets=struct('default',struct('stimStartType','offset','stimOffset',0,'epochsN',20, ...
+    'epochDurationSec',30,'epochBaselineSec',[0 10],'epochStimStartSec',10,'epochFinaleSec',[-5 0], ...
+    'maskType','cMask','enablelRejectionModification',1,'rejectBlCoef',1,'rejectEpochCoef',1, ...
+    'rejectFinCoef',1,'rejectPeakCoef',1,'rejectBlSimCoef',1,'rejectSimCoef',1, ...
+    'rejectTimeLoss',0.5,'rejectFirstEpoch',1));
+s.tips=struct('maskType','''cMask'' reads the segmentation mask; ''basic'' the contrast mask', ...
+    'enablelRejectionModification','1 = interactive epoch-rejection editing', ...
+    'stimStartType','''offset'' (fixed delay) or ''manual'' (timestamp list)');
+reg(end+1)=s;
+
+% ---- 4. setRegions ----------------------------------------------------------
+s = base();
+s.id='setRegions'; s.label='Regions'; s.wrapper=@setRegions;
+s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='setRegions'; s.requires={'contrast'}; s.produces={'regionsMask'};
+s.interactive=true;                                   % always opens the ROI editor
+s.branch='';
+s.settingGroups={};                                   % fully interactive, no numeric params
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct());
+reg(end+1)=s;
+
+% ---- 5. splitRegions --------------------------------------------------------
+s = base();
+s.id='splitRegions'; s.label='Split regions'; s.wrapper=@splitRegions;
+s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='prefix';
+s.outTransform=struct('from','','to','Roi');          % RoiN_ prefix, N per region
+s.gatingField='splitRegions'; s.requires={'setRegions'}; s.produces={'regionCrops'};
+s.branch='';
+s.settingGroups={ 'Options',{'deleteOriginal'} };
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct('deleteOriginal',false));
+s.tips=struct('deleteOriginal','true only if you will not re-define regions');
+reg(end+1)=s;
+
+% ---- 6. segmentation --------------------------------------------------------
+s = base();
+s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
+s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runSegmentation'; s.requires={'contrast'}; s.produces={'segmentation'};
+s.artifacts={'_cm.jpg','_vs.jpg'}; s.branch='t';
+s.settingGroups={ 'Contrast',{'trustLimitsK'};
+                  'Categorization',{'lSizeN','sSizeN','sens','sSizeScale','deSens','lThinN','imOpen','iEdge','eEdge'};
+                  'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'};
+                  'Copy to siblings',{'fNamesCopyTo'} };
+s.sharedKeys={'trustLimitsK','prchNSize','sMinL','correctNodes','simR','difR','sStat','libraryFolder'};
+s.enums=struct('sStat',{{'median','mean'}});
+s.presets=struct('default',struct('trustLimitsK',[0.001 0.99],'lSizeN',141,'sSizeN',9, ...
+    'sens',0.1,'sSizeScale',1,'deSens',1,'lThinN',2,'imOpen',0,'iEdge',2,'eEdge',2, ...
+    'categories',{{'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}}, ...
+    'sStat','median','sMinL',15,'prchNSize',50,'correctNodes',true,'simR',0.3,'difR',0.4));
+s.tips=struct('lSizeN','odd, ~2x the largest vessel', ...
+    'sSizeN','odd, ~2x the small-vessel diameter', ...
+    'sens','segmentation sensitivity (raise to catch faint vessels)', ...
+    'sMinL','minimum segment length', ...
+    'prchNSize','parenchymal pixel neighbourhood', ...
+    'fNamesCopyTo','sibling files to copy the mask onto (e.g. _c partner)');
+reg(end+1)=s;
+
+% ---- 7. dynamicSegmentation -------------------------------------------------
+s = base();
+s.id='dynamicSegmentation'; s.label='Dynamic segmentation'; s.wrapper=@runDynamicSegmentation;
+s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runDynamicSegmentation'; s.requires={'segmentation'}; s.produces={'dynamicSeg'};
+s.artifacts={'_vs.jpg'}; s.branch='';
+s.settingGroups={ 'Labelling (match segmentation)',{'sMinL','prchNSize','correctNodes','simR','difR'};
+                  'Dynamic segmentation',{'sMinP2R2','sMaxLBI','sMaxCLR','sMaxKK','iniNSize','sMaxP2D'};
+                  'Quality & interpolation',{'gSizeN','minOverlapMask','minOverlapSelf','pInterpF'} };
+s.sharedKeys={'sMinL','prchNSize','correctNodes','simR','difR','libraryFolder'};
+s.presets=struct('default',struct('sMinL',15,'prchNSize',50,'correctNodes',true,'simR',0.3, ...
+    'difR',0.4,'sMinP2R2',0.95,'sMaxLBI',(1/7)/15,'sMaxCLR',1.3,'sMaxKK',0.3,'iniNSize',7, ...
+    'sMaxP2D',3,'gSizeN',3,'minOverlapMask',0.6,'minOverlapSelf',0.2,'pInterpF',4));
+s.tips=struct('sMinP2R2','min accepted R^2 of the 3-degree polynomial fit', ...
+    'sMaxCLR','max chord-length ratio (1 straight, 2 coiled)', ...
+    'minOverlapMask','min overlap of centre line with the per-frame mask');
+reg(end+1)=s;
+
+% ---- 8. guided --------------------------------------------------------------
+s = base();
+s.id='guided'; s.label='Guided (full-res)'; s.wrapper=@runGuidedContrast;
+s.inGlob='*_t_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runGuidedContrast'; s.requires={'segmentation'}; s.produces={'guidedTraces'};
+s.needsRaw=true; s.branch='t';
+s.settingGroups={};                                   % uses sMap + raw; no tunable params
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct());
+reg(end+1)=s;
+
+% ---- 9. registration (per group) --------------------------------------------
+s = base();
+s.id='registration'; s.label='Registration'; s.wrapper=@runRegistration;
+s.arity='perGroup';                                   % 2-D fNames row; col 1 = template
+s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runRegistration';                      % code writes runRegistration (header drift A4)
+s.requires={'contrast'}; s.produces={'registered'};
+s.interactive=@(ss) ~(isfield(ss,'silent') && isscalar(ss.silent) && isequal(ss.silent,true));
+s.artifacts={'_registration.png'}; s.branch='';
+s.settingGroups={ 'Registration',{'tFormType','matchSegmentation','prchNSize','silent','forceMethod','rotationLimit'} };
+s.sharedKeys={'prchNSize','libraryFolder'};
+s.enums=struct('tFormType',{{'affine','rigid','similarity','translation'}}, ...
+               'forceMethod',{{'correlation','intensity'}});
+s.presets=struct('default',struct('tFormType','affine','matchSegmentation',true,'prchNSize',50, ...
+    'silent',true,'forceMethod','correlation','rotationLimit',45));
+s.tips=struct('silent','true = pick the best transform automatically (no manual landmarks)', ...
+    'forceMethod','''intensity'' or ''correlation'' to force in silent mode', ...
+    'rotationLimit','degrees; reject registrations rotating beyond this ([] = none)');
+reg(end+1)=s;
+
+% ---- 10. BFI ----------------------------------------------------------------
+s = base();
+s.id='BFI'; s.label='BFI'; s.wrapper=@runBFI;
+s.inGlob='*_K_d.mat'; s.outSuffix={'_BFI_d','_BFI_r','_BFI_s'}; s.outKind='new';
+s.outTransform=struct('from','_K_d.mat','to','_BFI_d.mat');   % branch-preserving strrep
+s.gatingField='calculateBFI';                         % REAL field (differs from fn name)
+s.requires={'contrast'}; s.produces={'bfi'}; s.branch='';
+s.settingGroups={ 'Conversion',{'deleteOriginal','method'} };
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('method',{{'basic'}});
+s.presets=struct('default',struct('deleteOriginal',false,'method',"basic"));
+s.tips=struct('deleteOriginal','delete the original _K_ triplet after conversion', ...
+    'method','only "basic" (=1/K^2) is available');
+reg(end+1)=s;
+
+% ---- 11. vasomotion ---------------------------------------------------------
+s = base();
+s.id='vasomotion'; s.label='Vasomotion'; s.wrapper=@runVasomotion;
+s.inGlob='*_t_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runVasomotion'; s.requires={'BFI'}; s.produces={'vasomotion'};
+s.branch='t';
+s.settingGroups={ 'Bands',{'vFR','cFR','wFR','wVPO'};
+                  'Normalisation',{'normalisation','normsize','tgtFS'};
+                  'Peaks & percentiles',{'pcts','otsuMaxN','otsuElbow','nPeakProm'};
+                  'Signals & levels',{'vsmSignals','segVsmReturn','ppxVsmReturn'} };
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('normalisation',{{'mean','median','mmean','mmedian'}});
+s.presets=struct('default',struct('vFR',[0.05 0.25],'cFR',[0.4 0.6],'wFR',[0.01 1],'wVPO',10, ...
+    'normalisation','median','normsize',101,'tgtFS',1,'pcts',0:10:100,'otsuMaxN',5, ...
+    'otsuElbow',0.05,'nPeakProm',0.10, ...
+    'vsmSignals',{{'sData','dvsData','dvsDiameter','gsData'}}, ...
+    'segVsmReturn',{{'bands','moments','series','clustering','spectrum'}},'ppxVsmReturn',[]));
+s.tips=struct('vFR','vasomotion frequency band [lo hi], Hz', ...
+    'cFR','control (cardiac) frequency band [lo hi], Hz', ...
+    'nPeakProm','VB peak-count prominence as a fraction of the band range', ...
+    'segVsmReturn','which per-segment levels to store (set of tokens)', ...
+    'ppxVsmReturn','per-pixel analysis ([] = off; e.g. {''bands''} to enable)');
+reg(end+1)=s;
+
+% ---- 12. pulsatility --------------------------------------------------------
+s = base();
+s.id='pulsatility'; s.label='Pulsatility'; s.wrapper=@runPulsatility;
+s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runPulsatility'; s.requires={'BFI','internalCycle'}; s.produces={'pulsatility'};
+s.branch='c';
+s.settingGroups={ 'Harmonic model',{'nHarm'};
+                  'Analysis levels',{'segPulsReturn','ppxPulsReturn'} };
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct('nHarm',5, ...
+    'segPulsReturn',{{'markers','model','reconstruction'}},'ppxPulsReturn',{{'markers'}}));
+s.tips=struct('nHarm','number of harmonics in the sinusoidal cardiac model', ...
+    'segPulsReturn','per-segment levels: markers / model / reconstruction', ...
+    'ppxPulsReturn','per-pixel maps ([] = off; non-empty enables marker maps)');
+reg(end+1)=s;
+
+% ---- 13. vesselTypes (per group) --------------------------------------------
+s = base();
+s.id='vesselTypes'; s.label='Vessel types'; s.wrapper=@setVesselTypes;
+s.arity='perGroup';                                   % 2-D fNames row; col 1 = reference
+s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='setVesselTypes'; s.requires={'BFI','segmentation'}; s.produces={'vesselTypes'};
+s.interactive=true;                                   % paint GUI (per-file skipped under useReference)
+s.branch='';
+s.settingGroups={ 'Reference',{'useReference'} };
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct('useReference',false));
+s.tips=struct('useReference','true = paint the first (reference) file only, inherit to the rest');
+reg(end+1)=s;
+
+% ---- 14. vascularTree -------------------------------------------------------
+s = base();
+s.id='vascularTree'; s.label='Vascular tree'; s.wrapper=@setVascularTree;
+s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='setVascularTree'; s.requires={'vesselTypes','pulsatility'}; s.produces={'hierarchy'};
+s.interactive=@(ss) ~(isfield(ss,'autoOnly') && isscalar(ss.autoOnly) && isequal(ss.autoOnly,true));
+s.branch='c';
+s.settingGroups={ 'Hierarchy derivation',{'autoOnly','phiWeights','useHarmonicPhase','propagatePartners'} };
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct('autoOnly',false,'phiWeights',[1 1 1],'useHarmonicPhase',false, ...
+    'propagatePartners',{{'t','s'}}));
+s.tips=struct('autoOnly','true = derive & save without opening the tree editor', ...
+    'phiWeights','relative weight of [foot peak -PI] in the flow potential', ...
+    'propagatePartners','after a _c file is derived, copy the hierarchy to these partners');
+reg(end+1)=s;
+
+% ---- 15. export -------------------------------------------------------------
+s = base();
+s.id='export'; s.label='Export (Excel)'; s.wrapper=@exportToExcel;
+s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='none';
+s.gatingField='';                                     % writes no settings field
+s.requires={'BFI'}; s.produces={}; s.branch='';
+s.settingGroups={};
+s.sharedKeys={};
+s.presets=struct('default',struct());
+reg(end+1)=s;
+
+% ---- optional modality filter ----------------------------------------------
+if nargin>=1 && ~isempty(modality)
+    keep = arrayfun(@(st) any(strcmp(modality,st.modalities)), reg);
+    reg = reg(keep);
+end
+end
+
+% =====================================================================
+function s = base()
+%base  A fully-formed step struct with every field defaulted, so appending
+%   elements to the registry array never triggers a field-mismatch error.
+s = struct( ...
+    'id','', 'label','', 'wrapper',[], 'arity','perFile', ...
+    'inGlob','', 'outSuffix',{{}}, 'outKind','inplace', 'outTransform',[], ...
+    'gatingField','', 'requires',{{}}, 'produces',{{}}, ...
+    'interactive',false, 'needsRaw',false, 'artifacts',{{}}, ...
+    'settingGroups',{{}}, 'sharedKeys',{{}}, ...
+    'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
+    'modalities',{{'LSCI'}}, 'branch','');
+end
