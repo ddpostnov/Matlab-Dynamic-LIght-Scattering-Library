@@ -76,7 +76,7 @@ for k = 1:numel(reg)
     else
         doneOnDisk = ismember(step.gatingField, doneFields);
     end
-    requiresDone = prereqsDone(step.requires, gateOf, doneFields);
+    requiresDone = wbPrereqs('met', step, doneStepIds(reg, gateOf, doneFields));
     hasInput = inputAvailable(step, model, requiresDone, doneOnDisk);
 
     if doneOnDisk
@@ -144,13 +144,16 @@ end
 end
 
 % =====================================================================
-function tf = prereqsDone(requires, gateOf, doneFields)
-tf = true;
-for i = 1:numel(requires)
-    r = requires{i};
-    if ~isKey(gateOf, r), tf = false; return; end
-    gf = gateOf(r);
-    if isempty(gf) || ~ismember(gf, doneFields), tf = false; return; end
+function ids = doneStepIds(reg, gateOf, doneFields)
+%doneStepIds  Which STEPS the recording's settings say have run.  Prerequisites
+%   are then judged by wbPrereqs, the single definition of "satisfied" (a step
+%   needing ANY entry product must not demand the contrast one - see wbPrereqs).
+ids = {};
+for k = 1:numel(reg)
+    id = reg(k).id;
+    if ~isKey(gateOf, id), continue; end
+    gf = gateOf(id);
+    if ~isempty(gf) && ismember(gf, doneFields), ids{end+1} = id; end %#ok<AGROW>
 end
 end
 

@@ -11,7 +11,7 @@
 %     1. looks up the step spec and the recording model,
 %     2. resolves the settings struct s (wbSettingsModel, via ctx.resolve),
 %     3. resolves the concrete input _d.mat (or raw) file(s) the wrapper consumes
-%        for this recording - perGroup = the group's files as a column, reference
+%        for this recording - perAnimal = the animal's files as a column, reference
 %        first; perFile = as many of the recording's co-registered BRANCH products
 %        ('_t_K', '_c_K', '_e_K', ...) as the step's branchScope asks for, so a
 %        workbench row reproduces what the launcher's file list covers,
@@ -30,12 +30,12 @@
 %
 % Inputs:
 %    entries - struct array from guiWorkbench>buildRunOrder, already sorted
-%              group -> reference-first -> row -> registry-step-order.  Each has
-%              at least: stepId, identity, groupIdx, arity, label, group.
+%              animal -> reference-first -> row -> registry-step-order.  Each has
+%              at least: stepId, identity, animalIdx, arity, label, animal.
 %    ctx     - struct of callbacks / handles the host supplies:
 %       .reg              the wbStepRegistry array
 %       .modelOf(id)      -> the wbFileModel for a recording identity
-%       .groupModels(gi)  -> ordered model array for a group (reference first)
+%       .animalModels(ai) -> ordered model array for an animal (reference first)
 %       .resolve(step,mdl)-> resolved settings s (wbSettingsModel)
 %       .contrastStage(m) -> 't' | 's'  (which contrast flag this project uses)
 %       .setState(id,step,state,msg)   set a cell running/done/error (''=revert)
@@ -83,9 +83,9 @@ for i = 1:numel(entries)
     if isempty(step), ctx.log(['skip: unknown step ' e.stepId]); continue; end
 
     % ---- resolve the recording model(s) + the concrete input file(s) ----------
-    if strcmp(e.arity,'perGroup')
-        models = ctx.groupModels(e.groupIdx);
-        who    = ['GROUP ' e.group];
+    if strcmp(e.arity,'perAnimal')
+        models = ctx.animalModels(e.animalIdx);
+        who    = ['ANIMAL ' e.animal];
     else
         models = ctx.modelOf(e.identity);
         who    = e.label;
@@ -93,7 +93,7 @@ for i = 1:numel(entries)
     if isempty(models)
         ctx.log(['skip: no recording for ' who ' :: ' step.label]); continue;
     end
-    mHead = models(1);                                   % perFile: the file; perGroup: the reference
+    mHead = models(1);                                   % perFile: the file; perAnimal: the reference
     s     = ctx.resolve(step, mHead);
     cstage = ctx.contrastStage(mHead);
 
@@ -110,7 +110,7 @@ for i = 1:numel(entries)
     s.stageFcn    = @(st,d) ctx.log(sprintf('  [%s] %s', char(st), hookLabel(d)));
     s.cancelFcn   = @() ctx.isCancelled();
     if strcmp(step.id,'vesselTypes') && ~isempty(refName)
-        s.refFName = refName;                            % per-group paint reference (launcher idiom)
+        s.refFName = refName;                            % per-animal paint reference (launcher idiom)
     end
     if ~isempty(copyTo)
         s.fNamesCopyTo = copyTo;                         % 'copy' scope: the other branches inherit
@@ -118,7 +118,7 @@ for i = 1:numel(entries)
             strjoin(cellfun(@shortName,copyTo,'UniformOutput',false),', ')));
     end
 
-    % ---- run it (a perGroup step marks EVERY group member's cell) -------------
+    % ---- run it (a perAnimal step marks EVERY of the animal's cells) ----------
     markCells(ctx, sid, models, 'running', '');
     ctx.log(sprintf('run %s :: %s', who, step.label));
     call = @() invokeWrapper(step, s, fNames, rawNames);
@@ -157,8 +157,8 @@ end
 % =====================================================================
 function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cstage)
 %buildFNames  Concrete wrapper inputs for a step.
-%   perGroup: one file per group member, Nx1 column, reference first (the branch
-%   fan-out below is a perFile concern - a group column already carries one file
+%   perAnimal: one file per animal member, Nx1 column, reference first (the branch
+%   fan-out below is a perFile concern - an animal row already carries one file
 %   per recording).
 %   perFile:  ONE recording, whose several co-registered branch products ('_t_K',
 %   '_c_K', '_e_K', ...) are resolved according to step.branchScope -
@@ -167,10 +167,10 @@ function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cst
 %     'copy' -> the stage-preferred file (1x1) plus the rest returned in copyTo, to
 %               be handed to the wrapper as s.fNamesCopyTo.
 %   rawNames parallels fNames for needsRaw steps; refName is the reference file
-%   (perGroup vesselTypes paint target).
+%   (perAnimal vesselTypes paint target).
 fNames = {}; rawNames = {}; refName = ''; copyTo = {}; ok = false;
 
-if strcmp(step.arity,'perGroup')
+if strcmp(step.arity,'perAnimal')
     n = numel(models);
     paths = cell(n,1); raws = cell(n,1);
     for k = 1:n
@@ -273,8 +273,8 @@ end
 % =====================================================================
 function markCells(ctx, sid, models, state, msg)
 %markCells  Set the run-state of one step across every recording it touched
-%   (one file for perFile; the whole group for perGroup), so the matrix reflects
-%   the group together.
+%   (one file for perFile; the whole animal for perAnimal), so the matrix reflects
+%   the animal together.
 for k = 1:numel(models)
     ctx.setState(models(k).identity, sid, state, msg);
 end

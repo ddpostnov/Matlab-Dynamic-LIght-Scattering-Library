@@ -10,7 +10,7 @@
 %   Steps are listed in dependency order:
 %     contrast · internalCycle · externalCycle · setRegions · splitRegions ·
 %     segmentation · dynamicSegmentation · guided · registration · BFI ·
-%     vasomotion · pulsatility · vesselTypes · vascularTree · export
+%     vasomotion · pulsatility · vesselTypes · vascularTree
 %
 % Syntax:
 %    reg = wbStepRegistry()
@@ -19,20 +19,24 @@
 % Outputs:
 %    reg - 1xN struct array; each element has fields:
 %       id           stable key                      ('contrast')
-%       label        column header                   ('Contrast (RLS)')
+%       label        column header                   ('Contrast')
 %       wrapper      seam function handle            (@runContrastFromRLS)
-%       arity        'perFile' | 'perGroup'          (perGroup = 2-D fNames row)
+%       arity        'perFile' | 'perAnimal'          (perAnimal = 2-D fNames row)
 %       inGlob       dir glob it consumes            ('*.rls')
 %       outSuffix    new triplet suffixes            ({'_t_K_d','_t_K_r','_t_K_s'})
 %       outKind      'new'|'inplace'|'prefix'|'none' (how outputs relate to input)
 %       outTransform strrep rule on the _d name      (struct from/to, or [])
 %       gatingField  settings.<field> written        ('runContrastFromRLS')
-%       requires     upstream step ids               ({} | {'contrast'} ...)
+%       requires     upstream step ids, ALL needed  ({} | {'setRegions'} ...)
+%       requiresAny  upstream step ids, ANY one is enough - the branch-agnostic
+%                    middle of the pipeline (see below); wbPrereqs owns the rule
 %       produces     logical product tokens          ({'contrast_t'})
 %       interactive  false | @(s)tf                  (blocks for user input?)
 %       needsRaw     true for runGuided*             (also passes the raw file)
 %       artifacts    report-image globs              ({'_c.jpg'})
 %       settingGroups Nx2 cell {label,{fields}}      (param-editor groups)
+%       basicFields  the fields a protocol actually tunes  ({'contrastType',...});
+%                    everything else in settingGroups is ADVANCED (see below)
 %       sharedKeys   fields propagated between steps ({'trustLimitsK',...})
 %       presets      struct of named default bundles (.default = launcher values)
 %       tips         struct field->tooltip           (from the %Example comments)
@@ -42,6 +46,8 @@
 %                    column belongs to; wbFileModel also derives 'epoch'/'bolus')
 %       branchScope  'one' | 'all' | 'copy'  - HOW MANY of a recording's branch
 %                    products the step consumes (see below)
+%       refBranch    'contrast' | 'cardiac' | '' - which BRANCH of the animal's
+%                    REFERENCE RECORDING this step prefers (see below)
 %
 % Notes (for the author):
 %   * The v1 registry is LSCI only.  The .cxd (bolus/intensity/CTTH) and .avi
@@ -63,9 +69,13 @@
 %     '_t_e_K' (strrep _K_d->_e_K_d on a _t_K_d input); wbFileModel still parses it
 %     to the right identity, but reconciling the wrapper to emit '_e_K' is a
 %     recommended separate fix.
-%   * 'guided' maps to runGuidedContrast (intensity variant deferred).  'export'
-%     writes no settings field - it is 'done' once its .xlsx exists on disk.
-%     setRegions is modelled perFile (only registration/vesselTypes are perGroup).
+%   * 'guided' maps to runGuidedContrast (intensity variant deferred).
+%     setRegions is modelled perFile (only registration/vesselTypes are perAnimal).
+%   * EXCEL EXPORT IS NOT A STEP (author, 2026-07-28).  It is neither configured in
+%     the Constructor nor run by the Processor: it is a STANDALONE tool that reads a
+%     finished session (spec §7/D9).  Everything here writes data products; the
+%     export writes a report, and mixing the two put a workbook column in a
+%     processing matrix that nobody wanted to tick.
 %   * BRANCHSCOPE - one raw recording yields SEVERAL co-registered products ('_t_K',
 %     '_c_K', '_e_K', ...), and the launchers are explicit about how many of them a
 %     step touches: '*_t_K_d.mat' means one branch, '*_K_d.mat' means all of them.
@@ -77,7 +87,7 @@
 %                that read the raw recording).
 %       'all'  - every branch product of the recording, as an Nx1 fNames column, the
 %                way the launcher passes '*_K_d.mat' (splitRegions, BFI,
-%                dynamicSegmentation, export).  The wrapper's own per-file loop then
+%                dynamicSegmentation).  The wrapper's own per-file loop then
 %                covers the branches, one workbench cell for the lot.
 %       'copy' - the step RUNS on the contrast-side file and the result is inherited
 %                by the other branches through the wrapper's s.fNamesCopyTo
@@ -87,10 +97,52 @@
 %                list from the recording's own siblings, so the field never has to be
 %                typed by hand.
 %     Steps left at 'one' whose launcher cell IS branch-wide: registration and
-%     vesselTypes (both perGroup - fan-out there would multiply the group columns and
+%     vesselTypes (both perAnimal - fan-out there would multiply the animal-row columns and
 %     needs its own design pass).
+%   * RAW PRODUCER vs DERIVED CONSUMER (author, 2026-07-28).  A step whose inGlob
+%     is NOT a '*.mat' glob reads the raw recording and writes a NEW, independent
+%     triplet: contrast writes '_t_K' (or '_s_K' when the type's contrastType is
+%     spatial), the internal cycle '_c_K'.  Every other step APPENDS to one of
+%     those products.  So one recording can carry TWO independent result sets, and
+%     the Constructor asks its question per (type, BRANCH): the raw producers are
+%     ticked once per type and each of them brings its branch ROW into existence;
+%     the derived consumers are ticked per row.  The split is DERIVED from inGlob
+%     and the row membership from 'branch' (empty = branch-agnostic, i.e. offered
+%     on every row) - wbTypeSelection owns both rules, and nothing anywhere lists
+%     the members by name.
+%   * REFBRANCH - the perAnimal steps work against the animal's REFERENCE
+%     RECORDING, which is pinned once per animal (a recording IDENTITY, valid for
+%     every file of that animal whatever its type or experimental group).  That
+%     recording owns several branch products, so each step declares WHICH branch of
+%     it it needs: registration templates on the contrast side ('_t'/'_s'), vessel
+%     typing paints on the cardiac side ('_c'), and the vascular tree - which is
+%     perFile but is derived on the cardiac product and inherited by its partners -
+%     prefers '_c' too.  '' = no preference.  It is the reference twin of
+%     branchScope, resolved by wbRefBranch with the same fall-back-to-any-branch
+%     rule wbExecutor>desiredStage uses for the inputs; the Constructor tab shows
+%     the resolved file per animal and the executor consumes it.  NOTHING here is a
+%     UI choice - the user pins a recording, not a branch.
 %
-% See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate
+%   * REQUIRES vs REQUIRESANY.  '*_K_d.mat' steps (setRegions, segmentation, BFI,
+%     registration) read ANY branch product of a recording, so their real
+%     prerequisite is "some entry step has run", not "contrast has run".  A purely
+%     pulsatile protocol starts at internalCycle and never computes a contrast
+%     product - listing 'contrast' as a hard requirement made it tick a step it
+%     does not run.  They therefore declare requiresAny={'contrast','internalCycle'};
+%     the FIRST entry is the default producer a one-click chain pulls in.  Hard
+%     chains (splitRegions after setRegions, pulsatility after BFI+internalCycle)
+%     stay in 'requires'.  wbPrereqs is the single definition of "satisfied".
+%
+%   * BASIC vs ADVANCED (author, 2026-07-28).  Most users never touch most of a
+%     step's settings.  basicFields names the handful a protocol is actually
+%     written around - the ones the launchers' %Example blocks comment on - and the
+%     settings panel renders those first, under 'Basic', with everything else
+%     collapsed below under 'Advanced'.  It is a DISPLAY split only: both halves
+%     resolve, save and invalidate identically, and a step with no basicFields
+%     shows all of its fields as Basic.
+%
+% See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
+%           wbPrereqs, wbRefBranch, wbTypeSelection, wbTypePresets
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -104,7 +156,7 @@ reg = base();  reg(1) = [];   % empty 1x0 struct array with the right fields
 
 % ---- 1. contrast (temporal) --------------------------------------------------
 s = base();
-s.id='contrast'; s.label='Contrast (RLS)'; s.wrapper=@runContrastFromRLS;
+s.id='contrast'; s.label='Contrast'; s.wrapper=@runContrastFromRLS;
 % s.contrastType chooses the flag: temporal -> _t_K, spatial -> _s_K (same branch)
 s.inGlob='*.rls'; s.outSuffix={'_t_K_d','_t_K_r','_t_K_s'}; s.outKind='new';
 s.outTransform=struct('from','.rls','to','_t_K_d.mat');   % spatial: '_s_K_d'
@@ -114,6 +166,7 @@ s.artifacts={'_c.jpg'}; s.branch='contrast';
 s.settingGroups={ 'Contrast calculation',{'contrastType','contrastKernel','decimFactor','decimMethod'};
                   'Performance',{'procType'};
                   'Initial masking',{'trustLimitsK','trustLimitsI','minTrust','manualMask'} };
+s.basicFields={'contrastType','contrastKernel','decimFactor','manualMask'};
 s.sharedKeys={'trustLimitsK','trustLimitsI','libraryFolder'};
 s.enums=struct('contrastType',{{'temporal','spatial'}},'decimMethod',{{'sharp','leaking'}}, ...
                'procType',{{'gpu','cpu'}});
@@ -143,6 +196,7 @@ s.settingGroups={ 'Contrast calculation',{'trustLimitsK','trustLimitsI','contras
                   'Exclusion criteria',{'excludeFirstNCycles','coeffsSTD','coeffsRel','coeffsAbs'};
                   'Cycle calculation',{'method','decimationSpace','framesToAverage', ...
                      'contrastKernelT','contrastKernelPreproc','interpFactor','smoothCoef1','minPromCoef'} };
+s.basicFields={'method','maxFrqIni','minFrqIni','excludeFirstNCycles'};
 s.sharedKeys={'trustLimitsK','trustLimitsI','libraryFolder'};
 s.enums=struct('method',{{'sLSCIMM','tLSCIMM','ltLSCIMM','sLSCIMMM'}});
 s.presets=struct('default',struct('trustLimitsK',[0.01 0.3],'trustLimitsI',[5 250], ...
@@ -158,7 +212,7 @@ reg(end+1)=s;
 
 % ---- 3. externalCycle (NVC) -------------------------------------------------
 s = base();
-s.id='externalCycle'; s.label='External cycle (NVC)'; s.wrapper=@runExternalCycle;
+s.id='externalCycle'; s.label='External cycle'; s.wrapper=@runExternalCycle;
 % external/epoch cycle of the contrast side (t or s): the stage flag BECOMES e,
 % i.e. the single suffix _e_K (the contrast base is kept in the settings, not the
 % name - see wbFileModel rationale)
@@ -173,6 +227,7 @@ s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDu
                   'Masking',{'maskType','enablelRejectionModification'};
                   'Rejection',{'rejectBlCoef','rejectEpochCoef','rejectFinCoef','rejectPeakCoef', ...
                      'rejectBlSimCoef','rejectSimCoef','rejectTimeLoss','rejectFirstEpoch'} };
+s.basicFields={'stimStartType','stimOffset','epochsN','epochDurationSec','epochBaselineSec','epochStimStartSec','epochFinaleSec','maskType','enablelRejectionModification'};
 s.sharedKeys={'libraryFolder'};
 s.enums=struct('stimStartType',{{'offset','manual'}},'maskType',{{'basic','cMask','selection'}});
 s.presets=struct('default',struct('stimStartType','offset','stimOffset',0,'epochsN',20, ...
@@ -189,7 +244,8 @@ reg(end+1)=s;
 s = base();
 s.id='setRegions'; s.label='Regions'; s.wrapper=@setRegions;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
-s.gatingField='setRegions'; s.requires={'contrast'}; s.produces={'regionsMask'};
+s.gatingField='setRegions'; s.requires={}; s.requiresAny={'contrast','internalCycle'};
+s.produces={'regionsMask'};
 s.interactive=true;                                   % always opens the ROI editor
 s.branch=''; s.branchScope='copy';                    % draw on _t, inherit onto _c/_e
 s.settingGroups={};                                   % fully interactive, no numeric params
@@ -205,6 +261,7 @@ s.outTransform=struct('from','','to','Roi');          % RoiN_ prefix, N per regi
 s.gatingField='splitRegions'; s.requires={'setRegions'}; s.produces={'regionCrops'};
 s.branch=''; s.branchScope='all';                     % crop every branch of the recording
 s.settingGroups={ 'Options',{'deleteOriginal'} };
+s.basicFields={'deleteOriginal'};
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('deleteOriginal',false));
 s.tips=struct('deleteOriginal','true only if you will not re-define regions');
@@ -214,7 +271,8 @@ reg(end+1)=s;
 s = base();
 s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
-s.gatingField='runSegmentation'; s.requires={'contrast'}; s.produces={'segmentation'};
+s.gatingField='runSegmentation'; s.requires={}; s.requiresAny={'contrast','internalCycle'};
+s.produces={'segmentation'};
 s.artifacts={'_cm.jpg','_vs.jpg'};
 s.branch=''; s.branchScope='copy';                % computed on contrast side, copied to cardiac
 s.settingGroups={ 'Contrast',{'trustLimitsK'};
@@ -222,6 +280,7 @@ s.settingGroups={ 'Contrast',{'trustLimitsK'};
                   'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'} };
                   % no 'Copy to siblings' panel: branchScope 'copy' means wbExecutor
                   % derives s.fNamesCopyTo from the recording's own branch products
+s.basicFields={'lSizeN','sSizeN','sens','sMinL'};
 s.sharedKeys={'trustLimitsK','prchNSize','sMinL','correctNodes','simR','difR','sStat','libraryFolder'};
 s.enums=struct('sStat',{{'median','mean'}});
 s.presets=struct('default',struct('trustLimitsK',[0.001 0.99],'lSizeN',141,'sSizeN',9, ...
@@ -244,6 +303,7 @@ s.artifacts={'_vs.jpg'}; s.branch=''; s.branchScope='all';
 s.settingGroups={ 'Labelling (match segmentation)',{'sMinL','prchNSize','correctNodes','simR','difR'};
                   'Dynamic segmentation',{'sMinP2R2','sMaxLBI','sMaxCLR','sMaxKK','iniNSize','sMaxP2D'};
                   'Quality & interpolation',{'gSizeN','minOverlapMask','minOverlapSelf','pInterpF'} };
+s.basicFields={'sMinL','minOverlapMask'};
 s.sharedKeys={'sMinL','prchNSize','correctNodes','simR','difR','libraryFolder'};
 s.presets=struct('default',struct('sMinL',15,'prchNSize',50,'correctNodes',true,'simR',0.3, ...
     'difR',0.4,'sMinP2R2',0.95,'sMaxLBI',(1/7)/15,'sMaxCLR',1.3,'sMaxKK',0.3,'iniNSize',7, ...
@@ -255,7 +315,7 @@ reg(end+1)=s;
 
 % ---- 8. guided --------------------------------------------------------------
 s = base();
-s.id='guided'; s.label='Guided (full-res)'; s.wrapper=@runGuidedContrast;
+s.id='guided'; s.label='Guided'; s.wrapper=@runGuidedContrast;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runGuidedContrast'; s.requires={'segmentation'}; s.produces={'guidedTraces'};
 s.needsRaw=true; s.branch='contrast';
@@ -264,23 +324,24 @@ s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct());
 reg(end+1)=s;
 
-% ---- 9. registration (per group) --------------------------------------------
+% ---- 9. registration (per animal) --------------------------------------------
 s = base();
 s.id='registration'; s.label='Registration'; s.wrapper=@runRegistration;
-s.arity='perGroup';                                   % 2-D fNames row; col 1 = template
+s.arity='perAnimal';                                   % 2-D fNames row; col 1 = template
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runRegistration';                      % code writes runRegistration (header drift A4)
-s.requires={'contrast'}; s.produces={'registered'};
+s.requires={}; s.requiresAny={'contrast','internalCycle'}; s.produces={'registered'};
 s.interactive=@(ss) ~(isfield(ss,'silent') && isscalar(ss.silent) && isequal(ss.silent,true));
-s.artifacts={'_registration.png'}; s.branch='';
+s.artifacts={'_registration.png'}; s.branch=''; s.refBranch='contrast';   % template = the reference's _t|_s
 s.settingGroups={ 'Registration',{'tFormType','matchSegmentation','prchNSize','silent','forceMethod','rotationLimit'} };
+s.basicFields={'tFormType','silent','forceMethod'};
 s.sharedKeys={'prchNSize','libraryFolder'};
 s.enums=struct('tFormType',{{'affine','rigid','similarity','translation'}}, ...
-               'forceMethod',{{'correlation','intensity'}});
+               'forceMethod',{{'auto','correlation','intensity'}});
 s.presets=struct('default',struct('tFormType','affine','matchSegmentation',true,'prchNSize',50, ...
-    'silent',true,'forceMethod','correlation','rotationLimit',45));
+    'silent',true,'forceMethod','auto','rotationLimit',45));
 s.tips=struct('silent','true = pick the best transform automatically (no manual landmarks)', ...
-    'forceMethod','''intensity'' or ''correlation'' to force in silent mode', ...
+    'forceMethod','''auto'' tries both and keeps the best; force one only if auto misbehaves', ...
     'rotationLimit','degrees; reject registrations rotating beyond this ([] = none)');
 reg(end+1)=s;
 
@@ -290,9 +351,10 @@ s.id='BFI'; s.label='BFI'; s.wrapper=@runBFI;
 s.inGlob='*_K_d.mat'; s.outSuffix={'_BFI_d','_BFI_r','_BFI_s'}; s.outKind='new';
 s.outTransform=struct('from','_K_d.mat','to','_BFI_d.mat');   % branch-preserving strrep
 s.gatingField='calculateBFI';                         % REAL field (differs from fn name)
-s.requires={'contrast'}; s.produces={'bfi'};
+s.requires={}; s.requiresAny={'contrast','internalCycle'}; s.produces={'bfi'};
 s.branch=''; s.branchScope='all';                     % _t AND _c both need a BFI product
 s.settingGroups={ 'Conversion',{'deleteOriginal','method'} };
+s.basicFields={'deleteOriginal'};
 s.sharedKeys={'libraryFolder'};
 s.enums=struct('method',{{'basic'}});
 s.presets=struct('default',struct('deleteOriginal',false,'method','basic'));
@@ -310,6 +372,7 @@ s.settingGroups={ 'Bands',{'vFR','cFR','wFR','wVPO'};
                   'Normalisation',{'normalisation','normsize','tgtFS'};
                   'Peaks & percentiles',{'pcts','otsuMaxN','otsuElbow','nPeakProm'};
                   'Signals & levels',{'vsmSignals','segVsmReturn','ppxVsmReturn'} };
+s.basicFields={'vFR','cFR','tgtFS','vsmSignals'};
 s.sharedKeys={'libraryFolder'};
 s.enums=struct('normalisation',{{'mean','median','mmean','mmedian'}});
 s.presets=struct('default',struct('vFR',[0.05 0.25],'cFR',[0.4 0.6],'wFR',[0.01 1],'wVPO',10, ...
@@ -332,6 +395,7 @@ s.gatingField='runPulsatility'; s.requires={'BFI','internalCycle'}; s.produces={
 s.branch='cardiac';
 s.settingGroups={ 'Harmonic model',{'nHarm'};
                   'Analysis levels',{'segPulsReturn','ppxPulsReturn'} };
+s.basicFields={'nHarm'};
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('nHarm',5, ...
     'segPulsReturn',{{'markers','model','reconstruction'}},'ppxPulsReturn',{{'markers'}}));
@@ -340,15 +404,16 @@ s.tips=struct('nHarm','number of harmonics in the sinusoidal cardiac model', ...
     'ppxPulsReturn','per-pixel maps ([] = off; non-empty enables marker maps)');
 reg(end+1)=s;
 
-% ---- 13. vesselTypes (per group) --------------------------------------------
+% ---- 13. vesselTypes (per animal) --------------------------------------------
 s = base();
 s.id='vesselTypes'; s.label='Vessel types'; s.wrapper=@setVesselTypes;
-s.arity='perGroup';                                   % 2-D fNames row; col 1 = reference
+s.arity='perAnimal';                                   % 2-D fNames row; col 1 = reference
 s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVesselTypes'; s.requires={'BFI','segmentation'}; s.produces={'vesselTypes'};
 s.interactive=true;                                   % paint GUI (per-file skipped under useReference)
-s.branch='';
+s.branch=''; s.refBranch='cardiac';                   % paint target = the reference's _c
 s.settingGroups={ 'Reference',{'useReference'} };
+s.basicFields={'useReference'};
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('useReference',false));
 s.tips=struct('useReference','true = paint the first (reference) file only, inherit to the rest');
@@ -360,29 +425,15 @@ s.id='vascularTree'; s.label='Vascular tree'; s.wrapper=@setVascularTree;
 s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVascularTree'; s.requires={'vesselTypes','pulsatility'}; s.produces={'hierarchy'};
 s.interactive=@(ss) ~(isfield(ss,'autoOnly') && isscalar(ss.autoOnly) && isequal(ss.autoOnly,true));
-s.branch='cardiac';
+s.branch='cardiac'; s.refBranch='cardiac';   % the hierarchy is derived on the _c side
 s.settingGroups={ 'Hierarchy derivation',{'autoOnly','phiWeights','useHarmonicPhase','propagatePartners'} };
+s.basicFields={'autoOnly'};
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('autoOnly',false,'phiWeights',[1 1 1],'useHarmonicPhase',false, ...
     'propagatePartners',{{'t','s'}}));
 s.tips=struct('autoOnly','true = derive & save without opening the tree editor', ...
     'phiWeights','relative weight of [foot peak -PI] in the flow potential', ...
     'propagatePartners','after a _c file is derived, copy the hierarchy to these partners');
-reg(end+1)=s;
-
-% ---- 15. export -------------------------------------------------------------
-s = base();
-s.id='export'; s.label='Export (Excel)';
-s.wrapper=@(settings,fNames) exportToExcel(fNames);   % drop-s adapter: exportToExcel
-                                                      % is a Utility (no hook seam),
-                                                      % the executor calls wrapper(s,fNames)
-s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='none';
-s.gatingField='';                                     % writes no settings field
-s.requires={'BFI'}; s.produces={};
-s.branch=''; s.branchScope='all';                     % one workbook per branch product
-s.settingGroups={};
-s.sharedKeys={};
-s.presets=struct('default',struct());
 reg(end+1)=s;
 
 % ---- optional modality filter ----------------------------------------------
@@ -399,9 +450,9 @@ function s = base()
 s = struct( ...
     'id','', 'label','', 'wrapper',[], 'arity','perFile', ...
     'inGlob','', 'outSuffix',{{}}, 'outKind','inplace', 'outTransform',[], ...
-    'gatingField','', 'requires',{{}}, 'produces',{{}}, ...
+    'gatingField','', 'requires',{{}}, 'requiresAny',{{}}, 'produces',{{}}, ...
     'interactive',false, 'needsRaw',false, 'artifacts',{{}}, ...
-    'settingGroups',{{}}, 'sharedKeys',{{}}, ...
+    'settingGroups',{{}}, 'basicFields',{{}}, 'sharedKeys',{{}}, ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
-    'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one');
+    'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'refBranch','');
 end

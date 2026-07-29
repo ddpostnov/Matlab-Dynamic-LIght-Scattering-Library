@@ -31,10 +31,26 @@
 %   file name for a given flag chain + role - the workbench needs the latter to
 %   derive a step's expected output/input names without a directory scan.
 %
+%   MODALITY is a GUESS, and the user owns it.  A file's extension narrows what
+%   it can possibly be - a .rls is a speckle recording of some sort, an .avi is a
+%   video - but not which: the parser picks the most likely member and the Files
+%   tab offers the rest in a dropdown.  wbFileModel('modalities') is the whole
+%   vocabulary and wbFileModel('modalities',ext) the subset an extension allows:
+%
+%       LSCI    laser speckle contrast imaging      HSLSCI  high-speed LSCI
+%       DLSI    dynamic light scattering imaging    EPFL    fluorescence
+%       HYPER   hyperspectral imaging               WMYO    wire myograph
+%       PMYO    pressure myograph
+%
+%   Most are stubs for modalities the library will grow into; the RULE is what
+%   matters - the vocabulary lives here, once, and nothing hardcodes it elsewhere.
+%
 % Syntax:
 %    model = wbFileModel(path)                         % decompose one path
 %    name  = wbFileModel('compose', model, chain, role)% build a sibling .mat name
 %    p     = wbFileModel('identity', model)            % [RoiN_]stem (no flags)
+%    ms    = wbFileModel('modalities')                 % the whole vocabulary
+%    ms    = wbFileModel('modalities', ext)            % those an extension allows
 %
 % Inputs:
 %    path   - char/string full path (or bare name) of a recording or product.
@@ -45,9 +61,20 @@
 % Outputs:
 %    model - struct with fields: path, folder, name, ext, modality, roi (double
 %            or []), roiPrefix, stem, identity, flags (cellstr, name order),
-%            stage, branch, product, role, isRaw, isReference, group.  branch is
-%            derived from stage: t|s -> 'contrast', c -> 'cardiac', e -> 'epoch',
-%            b -> 'bolus'.
+%            stage, branch, product, role, isRaw, isReference, animal, type,
+%            index, expGroup.  branch is derived from stage: t|s -> 'contrast',
+%            c -> 'cardiac', e -> 'epoch', b -> 'bolus'.
+%
+%   LABEL AXES.  'animal' is the SUBJECT id (what getFileNamesList calls the
+%   animalIdentifier) - the scope of registration / vessel typing / the reference
+%   recording.  'type' is the recording's experimental role, which owns the
+%   processing configuration.  'index' is the recording index within an animal.
+%   'expGroup' is the EXPERIMENTAL group, a comparison label used by Export and
+%   Explore only; processing ignores it.  They are INDEPENDENT per-file labels -
+%   a group may span animals and an animal may span groups - so none is ever
+%   derived from another, and none has a fixed vocabulary.  All four are stamped
+%   by the discovery layer (wbDiscoverFiles via wbTypeModel), not by this name
+%   parser, which leaves them empty.
 %
 % Notes:
 %    The stage flag is a single token, but a LEGACY external-cycle file written
@@ -57,7 +84,8 @@
 %    literally ends in a stage letter before a real '_<product>_<role>' is the
 %    inherent (rare) ambiguity of the flat naming scheme.
 %
-% See also: wbStepRegistry, wbStateEngine, wbDiscoverFiles, getFileNamesList
+% See also: wbStepRegistry, wbStateEngine, wbDiscoverFiles, wbTypeModel,
+%           getFileNamesList
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -76,6 +104,10 @@ if nargin>=1 && (ischar(varargin{1}) || (isstring(varargin{1}) && isscalar(varar
         case 'identity'
             m = varargin{2};
             out = fullfile(m.folder,[m.roiPrefix m.stem]);
+            return
+        case 'modalities'
+            if numel(varargin)>=2, out = modalitiesFor(varargin{2});
+            else,                  out = allModalities(); end
             return
     end
 end
@@ -149,7 +181,10 @@ model = struct( ...
     'role',        role, ...
     'isRaw',       isRaw, ...
     'isReference', false, ...
-    'group',       '');
+    'animal',      '', ...
+    'type',        '', ...
+    'index',       '', ...
+    'expGroup',    '');
 end
 
 % =====================================================================
@@ -174,16 +209,41 @@ end
 end
 
 % =====================================================================
+function ms = allModalities()
+%allModalities  The modality vocabulary, in menu order.  THE single definition.
+ms = {'LSCI','HSLSCI','DLSI','EPFL','HYPER','WMYO','PMYO'};
+end
+
+% =====================================================================
+function ms = modalitiesFor(ext)
+%modalitiesFor  What a given file extension can legitimately be.
+%   The container constrains the physics: a .rls holds raw speckle frames, so it
+%   is one of the speckle modalities; a video can be a myograph or a wide-field
+%   fluorescence/speckle recording.  A processed .mat can have come from any of
+%   them, so it is left unconstrained.
+ext = lower(char(ext));
+if ~isempty(ext) && ext(1)~='.', ext = ['.' ext]; end
+switch ext
+    case '.rls',                        ms = {'LSCI','HSLSCI','DLSI'};
+    case {'.mraw','.cihx'},             ms = setdiff(allModalities(),{'WMYO','PMYO'},'stable');
+    case {'.avi','.mp4','.mov','.mkv'}, ms = {'WMYO','EPFL','LSCI'};
+    case '.cxd',                        ms = {'EPFL','HYPER'};   % vendor fluorescence stack
+    otherwise,                          ms = allModalities();    % .mat products: any origin
+end
+end
+
+% =====================================================================
 function m = modalityOf(ext,product)
+%modalityOf  The BEST GUESS at a file's modality (the user can override it).
 switch lower(ext)
     case '.rls',                     m = 'LSCI';
-    case '.cxd',                     m = 'CXD';
-    case {'.avi','.mp4','.mov','.mkv'}, m = 'Myograph';
+    case '.cxd',                     m = 'EPFL';
+    case {'.avi','.mp4','.mov','.mkv'}, m = 'WMYO';
     case {'.mraw','.cihx'},          m = 'DLSI';
     case '.mat'
         switch product
             case 'K',   m = 'LSCI';
-            case 'I',   m = 'CXD';
+            case 'I',   m = 'EPFL';
             case 'g',   m = 'DLSI';
             case 'BFI', m = 'LSCI';   % BFI is produced from _K in the LSCI path
             otherwise,  m = 'LSCI';

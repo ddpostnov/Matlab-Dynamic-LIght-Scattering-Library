@@ -1,7 +1,7 @@
 %guiWorkbench - Processing Workbench: a file x step matrix for the LSCI pipeline.
 %
 %   A programmatic uifigure that turns the launcher workflow into a spreadsheet:
-%   ROWS are recordings (grouped by animal, reference first), COLUMNS are the
+%   ROWS are recordings (blocked by ANIMAL, reference first), COLUMNS are the
 %   pipeline steps from wbStepRegistry, and each CELL shows - and lets you queue -
 %   the state of one step for one recording (ready / done / stale / unavailable).
 %   The window is a thin controller: every decision is delegated to the headless
@@ -13,11 +13,48 @@
 %   error; Preview order lists the same plan without calling anything.  Finished
 %   cells turn into clickable 'done' buttons that open their report images.
 %
-%   Tabs: 1 Files (the three loaders + a grouped, sortable file list) *
-%         2 Process (the matrix + per-step settings + reports + a log pane) *
-%         3 Export  (a sheet/format selection UI over exportToExcel) *
-%         4 Explore (GUIs/workbench/guiExplore hosted in-tab, seeded from the
-%                    loaded files/groups) *
+%   THREE LABEL AXES.  Every file carries an ANIMAL (the subject - the scope of
+%   registration, vessel typing and the reference recording), a TYPE (its
+%   experimental role) and an experimental GROUP (a comparison label Export and
+%   Explore use and processing ignores), plus a recording INDEX.  They are
+%   independent - a group may span animals and an animal may span groups - and
+%   none has a fixed vocabulary: each is a regexp match over the file name, hand-
+%   overridable in the Files table (wbTypeModel).  Each animal owns at most ONE
+%   reference RECORDING (stored as an identity, so each step still resolves the
+%   branch it needs), pinned by the reference regexp or by hand.
+%
+%   CONFIGURATION IS A PROPERTY OF THE TYPE - AND OF THE PRODUCT.  The steps that
+%   read the raw recording (contrast, internal cycle) each write a NEW, independent
+%   triplet, and everything later APPENDS to one of them, so one recording can
+%   carry TWO independent result sets.  The Constructor therefore asks two
+%   questions: which RAW steps a type runs (top, once per type - each tick creates
+%   that type's product row), and which DERIVED steps each (type, product) row runs
+%   (bottom, one row per pipeline, cells greyed with their reason where a branch
+%   does not offer the step, and shown as inherited where a step is drawn once and
+%   copied to the other branches).  Both halves of a row label are data: the type
+%   token comes from the Files tab and the product flag from the producing step plus
+%   that type's own settings ('_t_K', '_s_K', '_c_K').  Settings stay keyed by
+%   (step, TYPE) - two rows of one type share them - so a divergent animal is
+%   simply a second type.  Rows are built FROM THE DATA: two types or eleven work
+%   with no code change, and nothing anywhere branches on a type's name.  The two
+%   per-animal steps (registration, vessel typing) span the animal instead and get
+%   their own box; which BRANCH FILE of each animal's reference recording every
+%   reference-taking step resolves to is reported in the selection summary.
+%
+%   Tabs: 1 Files (scan a root recursively for an extension - or add files by
+%                    hand - then CURATE: sort, delete, label every file (animal /
+%                    type / index / group / modality, in place or in bulk over a
+%                    selection), and pin ONE reference recording per animal.  The
+%                    other tabs stay locked until every field is assigned and the
+%                    file names are unique - see fileProblems) *
+%         2 Constructor (type x raw step on top with the per-animal steps beside
+%                    it, one (type, product) row per pipeline below, and the
+%                    per-(step,type) settings on the right; the summary carries the
+%                    resolved reference branches and the warnings) *
+%         3 Process (the matrix + per-step settings + reports + a log pane) *
+%         4 Export  (a sheet/format selection UI over exportToExcel) *
+%         5 Explore (GUIs/workbench/guiExplore hosted in-tab, seeded from the
+%                    loaded files/animals) *
 %
 % Syntax:
 %    guiWorkbench                       % open the workbench
@@ -26,8 +63,9 @@
 %   getappdata(h,'workbenchAPI') exposes a struct of function handles that drive
 %   the same internal logic as the UI (used by testWorkbenchShell).
 %
-% See also: wbStepRegistry, wbDiscoverFiles, wbStateEngine, wbSettingsModel,
-%           wbInvalidate, wbExecutor, wbModalGuard, wbArtifacts, wbSession,
+% See also: wbStepRegistry, wbDiscoverFiles, wbTypeModel, wbTypeSelection,
+%           wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
+%           wbRefBranch, wbExecutor, wbModalGuard, wbArtifacts, wbSession,
 %           guiExplore, guiMyograph
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
@@ -48,8 +86,21 @@ app.reg          = wbStepRegistry('LSCI');       % v1 columns (the LSCI steps)
 app.modality     = 'LSCI';
 app.sm           = wbSettingsModel('new');        % settings bag + overrides
 app.disc         = emptyDisc();
-app.rows         = emptyRows();                    % flat, group-major, reference-first
-app.groupNames   = {};
+app.rows         = emptyRows();                    % flat, animal-major, reference-first
+app.animalNames   = {};
+% ---- the curated working set (Files tab) ----
+app.files        = emptyFiles();                   % ONE ENTRY PER FILE (rows dedup by identity)
+app.root         = '';                             % scan root
+app.glob         = '*.rls';                        % scan glob: the raw recordings
+app.patterns     = wbTypeModel('emptyPatterns');   % animal/type/index/expGroup regexps
+app.patterns.ref = '';                             % + the reference regexp (not a label axis)
+app.overrides    = wbTypeModel('emptyOverrides');  % hand labels, path -> value, per axis
+app.modalityOvr  = containers.Map('KeyType','char','ValueType','char'); % path -> modality
+app.labelsAuto   = [];                             % regexp-only labels (to spot a real override)
+app.labels       = [];                             % labels actually in force
+app.autoRef      = containers.Map('KeyType','char','ValueType','char'); % animal -> identity (regexp)
+app.animalRefMan = containers.Map('KeyType','char','ValueType','char'); % animal -> identity (hand)
+app.animalRef    = containers.Map('KeyType','char','ValueType','char'); % animal -> identity (effective)
 app.modelArr     = wbFileModel('x.rls'); app.modelArr(1) = [];   % 1x0 model array
 app.base         = containers.Map('KeyType','char','ValueType','any');   % identity -> struct(stepId->state)
 app.checked      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> true
@@ -60,12 +111,17 @@ app.rendered     = containers.Map('KeyType','char','ValueType','any');   % 'iden
 app.cellComp     = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> handle
 app.gridRowOf    = containers.Map('KeyType','char','ValueType','double');% identity -> matrix grid row
 app.selStep      = app.reg(1).id;                  % step shown in the settings panel
+% ---- the Constructor: configuration per recording TYPE (never per file) ----
+app.typeSel      = wbTypeSelection('new');         % 'type||branch||stepId' -> true
+app.animalSel    = containers.Map('KeyType','char','ValueType','any'); % stepId -> true
+app.selType      = '';                             % type shown in the Constructor panel
+app.selCStep     = '';                             % step shown in the Constructor panel
 app.presetDir    = presetDirDefault();
 app.presetRef    = '';
 app.maxWidgets   = 800;                            % >this many rows -> uitable fallback
 app.running      = false;
 app.cancel       = false;
-app.exportSrcs   = struct('path',{},'rpath',{},'group',{},'label',{});  % exportable BFI sources
+app.exportSrcs   = struct('path',{},'rpath',{},'animal',{},'label',{}); % exportable BFI sources
 app.exploreAPI   = [];                             % handle bundle of the hosted guiExplore
 app.exploreHosted= false;                          % true = in-tab, false = child window / none
 app.exploreSeedKey = '';                           % file-set fingerprint of the last seed
@@ -79,14 +135,16 @@ fig = uifigure('Name','Processing Workbench','Position',[50 50 1500 880], ...
 app.fig = fig;
 g  = uigridlayout(fig,[1 1],'Padding',[4 4 4 4]);
 tg = uitabgroup(g);
-app.tabs.files   = uitab(tg,'Title','1 - Files');
-app.tabs.process = uitab(tg,'Title','2 - Process');
-app.tabs.export  = uitab(tg,'Title','3 - Export');
-app.tabs.explore = uitab(tg,'Title','4 - Explore');
+app.tabs.files       = uitab(tg,'Title','1 - Files');
+app.tabs.constructor = uitab(tg,'Title','2 - Constructor');
+app.tabs.process     = uitab(tg,'Title','3 - Process');
+app.tabs.export      = uitab(tg,'Title','4 - Export');
+app.tabs.explore     = uitab(tg,'Title','5 - Explore');
 app.tg = tg;
 setappdata(fig,'app',app);
 
 buildFilesTab(fig);
+buildConstructorTab(fig);
 buildProcessTab(fig);
 buildExportTab(fig);
 buildExploreTab(fig);
@@ -99,11 +157,74 @@ api = struct( ...
     'load',        @(varargin) apiLoad(fig,varargin{:}), ...
     'columns',     @() {getApp(fig).reg.id}, ...
     'rowCount',    @() numel(getApp(fig).rows), ...
-    'groups',      @() getApp(fig).groupNames, ...
+    'animals',     @() getApp(fig).animalNames, ...
+    ... % ---- Files tab: scan, curate, label, reference ----
+    'setSource',   @(root,glob) setSource(fig,root,glob), ...
+    'setPattern',  @(axis,rx) setPattern(fig,axis,rx), ...
+    'patterns',    @() getApp(fig).patterns, ...
+    'scan',        @() doScan(fig), ...
+    'addPaths',    @(p) addPaths(fig,p), ...
+    'deletePaths', @(p) deletePaths(fig,p), ...
+    'files',       @() getApp(fig).files, ...
+    'filePaths',   @() {getApp(fig).files.path}, ...
+    'fileTable',   @() fileTableData(getApp(fig)), ...
+    'setLabel',    @(p,axis,v) setLabel(fig,p,axis,v), ...
+    'labelValues', @(axis) labelValues(getApp(fig),axis), ...
+    'setModality', @(p,v) setModality(fig,p,v), ...
+    'quickAssign', @(p,field,v) quickAssign(fig,p,field,v), ...
+    'selectRows',  @(p) selectRows(fig,p), ...
+    'selectedPaths',@() selectedPaths(getApp(fig),getApp(fig).c.files), ...
+    'fileProblems',@() fileProblems(getApp(fig)), ...
+    'filesValid',  @() filesValid(getApp(fig)), ...
+    'filesBanner', @() getApp(fig).c.files.problems.Text, ...
+    'setReference',@(p) setReference(fig,p,true), ...
+    ... % ---- Constructor tab: raw producers, (type,branch) rows, animal steps ----
+    'constructorTypes',@() constructorTypes(getApp(fig)), ...
+    'typeStepIds', @() wbTypeSelection('typeSteps',   getApp(fig).reg), ...
+    'rawStepIds',  @() wbTypeSelection('rawSteps',    getApp(fig).reg), ...
+    'derivedStepIds',@() wbTypeSelection('derivedSteps',getApp(fig).reg), ...
+    'animalStepIds',@() wbTypeSelection('animalSteps',getApp(fig).reg), ...
+    'branchIds',   @() wbTypeSelection('branches',    getApp(fig).reg), ...
+    'typeFileCount',@(ty) typeFileCount(getApp(fig),ty), ...
+    'tickRaw',     @(ty,stepId,tf) tickRaw(fig,ty,stepId,tf), ...
+    'rawChecked',  @(ty,stepId) rawChecked(getApp(fig),ty,stepId), ...
+    'tickRow',     @(ty,br,stepId,tf) tickRow(fig,ty,br,stepId,tf), ...
+    'rowChecked',  @(ty,br,stepId) wbTypeSelection('isOn',getApp(fig).typeSel,ty,br,stepId), ...
+    'rowShown',    @(ty,br,stepId) rowShown(getApp(fig),ty,br,stepId), ...
+    'rowInherited',@(ty,br,stepId) rowInherited(getApp(fig),ty,br,stepId), ...
+    'rowSelection',@(ty,br) wbTypeSelection('steps',getApp(fig).typeSel,getApp(fig).reg,ty,br), ...
+    'rowInheritedSteps',@(ty,br) wbTypeSelection('inherited',getApp(fig).typeSel,getApp(fig).reg,ty,br), ...
+    'rowOffers',   @(br,stepId) wbTypeSelection('offers',getApp(fig).reg,br,stepId), ...
+    'rowWhyNot',   @(br,stepId) wbTypeSelection('why',getApp(fig).reg,br,stepId), ...
+    'constructorRows',@() constructorRows(getApp(fig)), ...
+    'rowFlag',     @(ty,br) rowFlagFor(getApp(fig),ty,br), ...
+    'typeRows',    @(ty) wbTypeSelection('rows',getApp(fig).typeSel,getApp(fig).reg,ty), ...
+    'derivedEnabled',@() ~isempty(constructorRows(getApp(fig))), ...
+    'tickAnimalStep',@(stepId,tf) tickAnimalStep(fig,stepId,tf), ...
+    'animalStepChecked',@(stepId) isKey(getApp(fig).animalSel,stepId), ...
+    'animalPlan',  @() animalStepPlan(getApp(fig)), ...
+    'animalPlanLines',@() animalPlanLines(getApp(fig)), ...
+    'constructorWarnings',@() constructorWarnings(getApp(fig)), ...
+    'summaryLines',@() summaryLines(getApp(fig)), ...
+    'editTypeSetting',@(ty,stepId,field,value) onTypeSettingEdit(fig,ty,stepId,field,value), ...
+    'getTypeSetting',@(ty,stepId,field) getTypeSetting(fig,ty,stepId,field), ...
+    'copyTypeConfig',@(src,dst) copyTypeConfig(fig,src,dst), ...
+    'presetNames', @() wbTypePresets('names'), ...
+    'applyPreset', @(name,ty) applyPreset(fig,name,ty), ...
+    'resetTypeConfig',@(ty) resetTypeConfig(fig,ty), ...
+    'selectType',  @(ty) selectConstructorType(fig,ty), ...
+    'clearReference',@(p) setReference(fig,p,false), ...
+    'animalRef',   @(a) animalRefOf(getApp(fig),a), ...
+    'animalRefs',  @() getApp(fig).animalRef, ...
+    'filesStatus', @() getApp(fig).c.files.status.Text, ...
+    'tabsLocked',  @() ~filesValid(getApp(fig)), ...
+    'nextEnabled', @() strcmp(getApp(fig).c.files.nextBtn.Enable,'on'), ...
+    'goNext',      @() guardTabSwitchTo(fig,getApp(fig).tabs.constructor), ...
+    'currentTab',  @() getApp(fig).tg.SelectedTab.Title, ...
     'cellState',   @(id,stepId) resolveCellState(getApp(fig),id,stepId), ...
     'check',       @(id,stepId,tf) apiCheck(fig,id,stepId,tf), ...
     'checkColumn', @(stepId,tf) checkColumn(fig,stepId,tf), ...
-    'checkGroup',  @(g,tf) checkGroup(fig,g,tf), ...
+    'checkAnimal', @(a,tf) checkAnimal(fig,a,tf), ...
     'checkModality',@(m,tf) checkModality(fig,m,tf), ...
     'checkAll',    @(tf) checkAll(fig,tf), ...
     'checkedList', @() checkedList(fig), ...
@@ -131,6 +252,7 @@ setappdata(fig,'workbenchAPI',api);
 
 renderMatrix(fig);
 selectStep(fig,app.selStep);
+renderConstructor(fig);
 if nargout>0, h = fig; end
 end
 
@@ -138,10 +260,16 @@ end
 function app = getApp(fig), app = getappdata(fig,'app'); end
 function setApp(fig,app), setappdata(fig,'app',app); end
 function d = emptyDisc()
-d = struct('fNames',{{}},'models',{{}},'flat',[],'groups',[],'referenceMode',false);
+d = struct('fNames',{{}},'models',{{}},'flat',[],'animals',[],'referenceMode',false, ...
+    'patterns',wbTypeModel('emptyPatterns'));
 end
 function r = emptyRows()
-r = struct('model',{},'identity',{},'group',{},'groupIdx',{},'rowInGroup',{},'isRef',{},'label',{});
+r = struct('model',{},'identity',{},'animal',{},'animalIdx',{},'rowInAnimal',{},'isRef',{},'label',{});
+end
+function f = emptyFiles()
+%emptyFiles  The curated working set: one entry per FILE (see buildFileEntries).
+f = struct('model',{},'path',{},'name',{},'animal',{},'type',{},'index',{}, ...
+    'expGroup',{},'modality',{},'isRef',{});
 end
 function d = presetDirDefault()
 d = fullfile(prefdir,'guiWorkbenchPresets');
@@ -151,43 +279,1153 @@ function k = cellKey(identity,stepId), k = [identity '||' stepId]; end
 
 %% ===================== FILES tab ==================================== %%
 function buildFilesTab(fig)
+%buildFilesTab  The curation surface: scan a tree (or pick by hand), then sort,
+%   delete and label every file on the animal / type / index / group axes and pin
+%   ONE reference recording per animal.
 app = getApp(fig); t = app.tabs.files;
 gl = uigridlayout(t,[1 1],'Padding',[6 6 6 6]);
-lp = uigridlayout(gl,[7 1],'RowHeight',{'fit','fit','fit','fit','1x','fit','fit'},'RowSpacing',6);
+%   EIGHT rows, one per child: a child beyond the declared row count lands in an
+%   auto-added row of height '1x', which is what blew the session buttons up.
+lp = uigridlayout(gl,[8 1], ...
+    'RowHeight',{'fit','fit','fit','1x','fit','fit','fit','fit'},'RowSpacing',6);
 
-uilabel(lp,'Text','Load recordings (all three loaders group by animal, reference first):','FontWeight','bold');
+uilabel(lp,'Text',['Scan a root folder for an extension (or add files by hand), then curate: ' ...
+    'sort, delete, label and pin one reference recording per ANIMAL.'],'FontWeight','bold','WordWrap','on');
 
-% -- structured loader row (getFileNamesList) --
-sp = uigridlayout(lp,[1 6],'ColumnWidth',{'fit','1.6x','fit','1x','fit','fit'},'Padding',[0 0 0 0]);
+% -- source row: root + glob + the loaders --
+sp = uigridlayout(lp,[1 9], ...
+    'ColumnWidth',{'fit','2x','fit','fit','0.9x','fit','fit','fit','fit'},'Padding',[0 0 0 0]);
 uilabel(sp,'Text','root');
-c.root = uieditfield(sp,'text','Value','','Tooltip','folder searched recursively');
-uilabel(sp,'Text','glob / animal / ref');
-c.glob = uieditfield(sp,'text','Value','*_t_K_d.mat','Tooltip','dir() glob, e.g. *_t_K_d.mat');
-c.animal = uieditfield(sp,'text','Value','[A-Z]+\d+','Tooltip','animal-id regexp (empty = one group)');
-c.ref = uieditfield(sp,'text','Value','','Tooltip','reference regexp -> pinned to column 1 (empty = none)');
+c.root = uieditfield(sp,'text','Value','','Tooltip','folder searched RECURSIVELY by Scan', ...
+    'ValueChangedFcn',@(s,~)onSourceEdit(fig));
+uibutton(sp,'Text','Browse...','ButtonPushedFcn',@(~,~)uiBrowseRoot(fig));
+uilabel(sp,'Text','files');
+c.glob = uieditfield(sp,'text','Value',app.glob,'ValueChangedFcn',@(s,~)onSourceEdit(fig), ...
+    'Tooltip',tipGlob());
+uibutton(sp,'Text','Scan','BackgroundColor',[0.82 0.92 0.82],'ButtonPushedFcn',@(~,~)uiScan(fig), ...
+    'Tooltip','recurse the root for the glob and REPLACE the working set');
+uibutton(sp,'Text','Add files...','ButtonPushedFcn',@(~,~)uiAddFiles(fig), ...
+    'Tooltip','pick files by hand (multiselect) and ADD them to the working set');
+uibutton(sp,'Text','Add folder...','ButtonPushedFcn',@(~,~)uiAddFolder(fig), ...
+    'Tooltip','recurse another folder for the glob and ADD what it finds');
+uibutton(sp,'Text','Clear','ButtonPushedFcn',@(~,~)uiClear(fig),'Tooltip','empty the working set (no file is deleted)');
 
-% -- loader buttons --
-bp = uigridlayout(lp,[1 4],'Padding',[0 0 0 0]);
-uibutton(bp,'Text','Load structured','ButtonPushedFcn',@(~,~)uiLoadStructured(fig), ...
-    'Tooltip','recurse root for the glob, group by animal, pin the reference (getFileNamesList)');
-uibutton(bp,'Text','Load folder...','ButtonPushedFcn',@(~,~)uiLoadFolder(fig), ...
-    'Tooltip','pick a folder, recurse for the glob, group by the animal regexp');
-uibutton(bp,'Text','Add files...','ButtonPushedFcn',@(~,~)uiLoadManual(fig), ...
-    'Tooltip','pick files by hand (multiselect), group by the animal regexp');
-uibutton(bp,'Text','Clear','ButtonPushedFcn',@(~,~)uiClear(fig));
+% -- regexp row: one box per label axis + the reference rule --
+rp = uigridlayout(lp,[2 5],'RowHeight',{'fit','fit'},'Padding',[0 0 0 0],'RowSpacing',1);
+axes5 = {'animal','Animal','[A-Z]+\d+',tipAnimal(); 'type','Type','',tipType(); ...
+         'index','Rec. index','',tipIndex(); 'expGroup','Group (experimental)','',tipExpGroup(); ...
+         'ref','Reference','',tipRef()};
+for k = 1:size(axes5,1)
+    lb = uilabel(rp,'Text',axes5{k,2},'FontSize',10); lb.Layout.Row = 1; lb.Layout.Column = k;
+    f  = patField(rp,fig,axes5{k,1},axes5{k,3},axes5{k,4});
+    f.Layout.Row = 2; f.Layout.Column = k;
+    c.pat.(axes5{k,1}) = f;
+end
 
-uilabel(lp,'Text','Loaded files (grouped, reference first; column headers are sortable - a view only, execution walks group -> reference -> row):','WordWrap','on');
-c.fileTbl = uitable(lp,'ColumnName',{'group','file','ref','modality','stage'}, ...
-    'ColumnSortable',[true true true true true],'RowName',{});
+% -- the curation table --
+%   MODALITY is read-only here on purpose: a uitable's ColumnFormat dropdown is
+%   one list for the whole COLUMN, and what a file may legally be depends on ITS
+%   extension (wbFileModel owns that rule).  Rather than offering illegal values
+%   and refusing them afterwards, the modality is set through Quick assign below,
+%   whose dropdown is narrowed to what every selected row can actually be.
+c.fileTbl = uitable(lp, ...
+    'ColumnName',fileTableColumns(), ...
+    'ColumnFormat',repmat({'char'},1,numel(fileTableColumns())), ...
+    'ColumnEditable',fileTableEditable(), ...
+    'ColumnWidth',fileTableWidths(), ...
+    'ColumnSortable',true(1,numel(fileTableColumns())),'RowName',{}, ...
+    'SelectionType','row','Multiselect','on', ...
+    'CellEditCallback',@(s,e)onFileTableEdit(fig,s,e));
+c.fileTbl.ColumnFormat{1} = 'logical';              % the reference tick
 
-% -- session row --
-ssp = uigridlayout(lp,[1 4],'Padding',[0 0 0 0]);
+% -- quick assign: give EVERY selected row the same value in one go -----------
+cp = uigridlayout(lp,[1 7], ...
+    'ColumnWidth',{'fit','fit','fit','1.2x','fit','fit','2x'},'Padding',[0 0 0 0]);
+uilabel(cp,'Text','Quick assign: set','FontWeight','bold');
+c.assignAxis = uidropdown(cp,'Items',assignableColumns(),'Value','type', ...
+    'Tooltip','which field the selected rows get', ...
+    'ValueChangedFcn',@(~,~)refreshAssignItems(fig));
+uilabel(cp,'Text','=');
+c.assignVal = uidropdown(cp,'Items',{''},'Value','','Editable','on', ...
+    'Tooltip','pick a value already in use, or TYPE A NEW ONE - the vocabulary is yours');
+uibutton(cp,'Text','Apply to selected rows','BackgroundColor',[0.85 0.9 1], ...
+    'ButtonPushedFcn',@(~,~)uiAssignLabel(fig), ...
+    'Tooltip','set this field on EVERY selected row at once (select rows by clicking / shift-clicking the table)');
+uibutton(cp,'Text','Delete selected','BackgroundColor',[1 0.88 0.82], ...
+    'ButtonPushedFcn',@(~,~)uiDeleteSelected(fig), ...
+    'Tooltip','remove the selected rows from the WORKING SET only - nothing is ever deleted from disk');
+c.curStatus = uilabel(cp,'Text','','FontAngle','italic','FontSize',10);
+
+c.problems = uilabel(lp,'Text','','WordWrap','on','FontWeight','bold');
+c.status   = uilabel(lp,'Text','No files loaded.','WordWrap','on');
+
+% -- session row (RowHeight fit: buttons keep their natural height) --
+ssp = uigridlayout(lp,[1 5],'RowHeight',{'fit'}, ...
+    'ColumnWidth',{'fit','fit','1x','fit','fit'},'Padding',[0 0 0 0]);
 uibutton(ssp,'Text','Save session...','ButtonPushedFcn',@(~,~)uiSaveSession(fig));
 uibutton(ssp,'Text','Load session...','ButtonPushedFcn',@(~,~)uiLoadSession(fig));
-c.status = uilabel(ssp,'Text','No files loaded.');
+uilabel(ssp,'Text','the session carries the file list, its labels, the references and the settings', ...
+    'FontAngle','italic','FontSize',10);
+c.nextBtn = uibutton(ssp,'Text','Next: Constructor','BackgroundColor',[0.82 0.92 0.82], ...
+    'ButtonPushedFcn',@(~,~)goToConstructor(fig), ...
+    'Tooltip','continue to the Constructor (enabled once every file is labelled)');
 uibutton(ssp,'Text','Exit workbench','ButtonPushedFcn',@(~,~)requestExit(fig),'BackgroundColor',[1 0.82 0.82]);
 
 app.c.files = c; setApp(fig,app);
+end
+
+function f = patField(parent,fig,axis,dflt,tip)
+%patField  One regexp box, wired to the pattern struct.
+f = uieditfield(parent,'text','Value',dflt,'Tooltip',tip, ...
+    'ValueChangedFcn',@(s,~)onPatternEdit(fig,axis,s.Value));
+end
+
+function cols = fileTableColumns()
+%fileTableColumns  The curation table's HEADERS.  'file' (the bare name, without
+%   its extension) plus 'file type' (the extension) is the row KEY, so file names
+%   must be unique across the scanned tree - the workbench refuses to go on when
+%   they are not (see fileProblems), which is also the library's own naming rule.
+cols = {'reference','file','animal','type','index','group','file type','modality','stage'};
+end
+function keys = fileTableKeys()
+%fileTableKeys  Field-safe names for the same columns (headers carry a space).
+keys = {'reference','file','animal','type','index','group','filetype','modality','stage'};
+end
+function e = fileTableEditable()
+%fileTableEditable  What may be typed in place.  The name, its extension, the
+%   parsed stage and the modality are properties OF THE FILE, not labels.
+e = [true false true true true true false false false];
+end
+function w = fileTableWidths()
+%fileTableWidths  'reference' is just wide enough for its own header; the rest
+%   size to their content.
+w = [{78}, repmat({'auto'},1,numel(fileTableColumns())-1)];
+end
+function cols = assignableColumns()
+%assignableColumns  The fields Quick assign (and a direct cell edit) can set.
+cols = {'animal','type','index','group','modality'};
+end
+
+%% ---- Files-tab tooltips (the guiExplore idiom: examples, not prose) ---- %%
+function t = tipGlob()
+t = sprintf(['dir() glob matched against the file NAME, searched recursively.\n' ...
+    '   *.rls           raw LSCI recordings\n' ...
+    '   *_t_K_d.mat     temporal-contrast SOURCE files\n' ...
+    '   *_BFI_d.mat     every BFI branch\n' ...
+    'This is a GLOB (shell wildcards), not a regexp - the boxes below are regexps.']);
+end
+function t = tipAnimal()
+t = sprintf(['Regexp whose MATCH is the ANIMAL id - the subject.  One animal owns one\n' ...
+    'reference recording and is the scope of registration / vessel typing.\n' ...
+    '   [A-Z]+\\d+        PSY01, REG12, AB3 ...\n' ...
+    '   m\\d+             m07, m11 ...\n' ...
+    '   (mouse|rat)\\d+   a species-prefixed id\n' ...
+    'No match -> the "(unassigned)" bucket.  Empty = every file in one row.']);
+end
+function t = tipType()
+t = sprintf(['Regexp whose MATCH is the recording TYPE - its experimental role.  The type\n' ...
+    'owns the processing configuration, so files of one type are processed alike.\n' ...
+    '   BV|BN|BP         one lab''s slow / NVC / pulsatile recordings\n' ...
+    '   ctrl|stim|washout   another lab''s protocol\n' ...
+    '   \\d(?=BP)         whatever your names actually carry\n' ...
+    'There is NO built-in list of types: the values are whatever this matches.\n' ...
+    'No match -> the "(untyped)" bucket, which is a type like any other.']);
+end
+function t = tipIndex()
+t = sprintf(['Regexp whose MATCH is the recording index inside an animal (a stratifier).\n' ...
+    '   [aik]\\d           a condition+repeat token, e.g. i2, k1, a2\n' ...
+    '   run(\\d+)          the number after "run"\n' ...
+    '   \\d+(?=_c_)        the digits just before _c_\n' ...
+    'Leave empty to treat every file as the same index.']);
+end
+function t = tipExpGroup()
+t = sprintf(['Regexp whose MATCH is the EXPERIMENTAL group - a comparison label used by\n' ...
+    'Export and Explore.  Processing ignores it entirely.\n' ...
+    '   KO|WT             genotype taken from the name\n' ...
+    '   Ctrl|Stroke       condition taken from the name\n' ...
+    '   pre|post          a timepoint\n' ...
+    'It is INDEPENDENT of the animal: a group may span animals and one animal\n' ...
+    'may span groups.  No match -> the "(ungrouped)" bucket.']);
+end
+function t = tipRef()
+t = sprintf(['Regexp picking the REFERENCE recording of each animal, valid for ALL of\n' ...
+    'that animal''s files whatever their type or group.  Passed to getFileNamesList,\n' ...
+    'which forces the match into column 1.\n' ...
+    '   1BP_c_BFI_d\\.mat  the animal''s first pulsatile recording\n' ...
+    '   _ref_             a name you mark by hand\n' ...
+    'Applied by Scan.  You can always override it by ticking "ref" in the table -\n' ...
+    'a hand-pinned reference wins, and an animal may legally have none.']);
+end
+
+%% ===================== CONSTRUCTOR tab ============================== %%
+function buildConstructorTab(fig)
+%buildConstructorTab  Configure the pipeline per recording TYPE - and, below, per
+%   (type, BRANCH) row, because ONE RAW RECORDING CAN DRIVE TWO INDEPENDENT RESULT
+%   SETS.  The steps that read the recording itself (contrast, internal cycle) each
+%   write a new triplet, and everything later APPENDS to one of those products:
+%     TOP    what each type computes FROM THE RECORDING (the raw producers), with
+%            the two per-animal steps beside it;
+%     BOTTOM what is then done to each product - one row per (type, product), so
+%            "segment the cardiac branch but not the contrast one" is sayable;
+%     RIGHT  the settings of one (step, type) - configuration is per TYPE, so both
+%            rows of a type share it.
+%   Every row is built FROM THE DATA (two types or eleven, no code change, nothing
+%   branching on a token's value), and the per-animal reference plan and the
+%   warnings live in the selection summary - the one place status is read.
+app = getApp(fig); t = app.tabs.constructor;
+gl = uigridlayout(t,[1 2],'ColumnWidth',{'2.2x','1x'},'Padding',[6 6 6 6],'ColumnSpacing',8);
+
+% -- LEFT: header + raw panel + derived rows + summary --
+% the raw panel is sized to its content by renderRawPanel (a 'fit' row cannot
+% measure the scrollable grids inside it), the rest shares what is left
+left = uigridlayout(gl,[4 1],'RowHeight',{'fit',170,'1.3x','1x'},'RowSpacing',6);
+c.left = left;
+
+hdr = uigridlayout(left,[2 1],'RowHeight',{'fit','fit'},'Padding',[0 0 0 0],'RowSpacing',3);
+uilabel(hdr,'Text',['Tick the steps each recording TYPE runs.  A type owns its ' ...
+    'processing configuration and every file of that type is processed alike - if one ' ...
+    'animal needs different parameters, make it a second type on the Files tab.'], ...
+    'WordWrap','on','FontWeight','bold');
+tb = uigridlayout(hdr,[1 7], ...
+    'ColumnWidth',{'fit','1x','fit','1x','fit','fit','1.2x'},'Padding',[0 0 0 0]);
+uilabel(tb,'Text','Copy configuration from');
+c.copySrc = uidropdown(tb,'Items',{''},'Value','', ...
+    'Tooltip',['a standard protocol, or another type you have already configured.  ' ...
+               'A protocol only POPULATES the boxes - everything stays editable.']);
+uilabel(tb,'Text','to');
+c.copyDst = uidropdown(tb,'Items',{''},'Value','','Tooltip','the type to overwrite');
+uibutton(tb,'Text','Copy','BackgroundColor',[0.85 0.9 1],'ButtonPushedFcn',@(~,~)uiCopyType(fig), ...
+    'Tooltip','give the second type the first one''s selected steps AND settings');
+uibutton(tb,'Text','Reset selected type','ButtonPushedFcn',@(~,~)uiResetType(fig), ...
+    'Tooltip','drop the type shown on the right back to the launcher defaults');
+c.status = uilabel(tb,'Text','','FontAngle','italic','FontSize',10);
+
+c.rawPanel = uipanel(left,'Title','1 - Raw processing: what each TYPE computes from the recording', ...
+    'FontWeight','bold');
+c.derivedPanel = uipanel(left,'Title','2 - Derived processing: one row per TYPE and PRODUCT', ...
+    'FontWeight','bold');
+c.summaryPanel = uipanel(left,'Title','Selection summary','FontWeight','bold');
+
+% -- RIGHT: settings for one (step, type) --
+right = uigridlayout(gl,[4 1],'RowHeight',{'fit','fit','fit','1x'},'RowSpacing',6);
+sel = uigridlayout(right,[2 2],'ColumnWidth',{'fit','1x'},'RowHeight',{'fit','fit'}, ...
+    'Padding',[0 0 0 0],'RowSpacing',3);
+uilabel(sel,'Text','Type','FontWeight','bold');
+c.typeDrop = uidropdown(sel,'Items',{'(no types)'},'Value','(no types)', ...
+    'Tooltip','the recording type whose settings are edited below', ...
+    'ValueChangedFcn',@(s,~)selectConstructorType(fig,s.Value));
+uilabel(sel,'Text','Step','FontWeight','bold');
+c.stepDrop = uidropdown(sel,'Items',{''},'Value','', ...
+    'Tooltip','the step whose settings are shown below', ...
+    'ValueChangedFcn',@(s,~)selectConstructorStep(fig,s.Value));
+c.stepInfo = uilabel(right,'Text','','WordWrap','on','FontAngle','italic');
+c.scopeInfo = uilabel(right,'Text','','WordWrap','on','FontSize',10);
+c.paramPanel = uipanel(right,'BorderType','none');   % the section stack owns the scroll
+
+app.c.constructor = c; setApp(fig,app);
+end
+
+%% ---- Constructor: raw producers, then the (type,branch) rows ------- %%
+function renderConstructor(fig)
+%renderConstructor  Rebuild every Constructor surface from the current data.
+app = getApp(fig);
+if ~isfield(app,'c') || ~isfield(app.c,'constructor'), return; end
+renderRawPanel(fig);
+renderDerivedPanel(fig);
+refreshConstructorSelectors(fig);
+refreshSummary(fig);
+end
+
+function types = constructorTypes(app)
+%constructorTypes  The matrix rows: the type values ACTUALLY IN THE DATA, in order
+%   of first appearance.  Never a list - '(untyped)' is a row like any other, and a
+%   type that no file carries any more simply has no row (its configuration is kept
+%   so re-typing a file brings the row back unchanged).
+types = {};
+if isempty(app.files) || isempty(app.labels), return; end
+types = wbTypeModel('values', app.labels, 'type');
+end
+function n = typeFileCount(app,type)
+n = 0;
+if isempty(app.files), return; end
+n = nnz(strcmp({app.files.type}, char(type)));
+end
+
+function renderRawPanel(fig)
+%renderRawPanel  The raw producers (type x step, small) with the per-animal steps
+%   beside them.  Ticking a producer is what brings its branch ROW into existence
+%   below - the two panels are one decision seen twice.
+app = getApp(fig); c = app.c.constructor;
+delete(c.rawPanel.Children);
+gl = uigridlayout(c.rawPanel,[1 2],'ColumnWidth',{'1.7x','1x'}, ...
+    'Padding',[4 4 4 4],'ColumnSpacing',8);
+renderRawMatrix(fig,gl);
+renderAnimalBox(fig,gl);
+% no dead space under two types, no clipping under eleven: the panel is exactly as
+% tall as the taller of its two halves, and only then does the matrix scroll
+if isfield(c,'left') && isgraphics(c.left)
+    nT = numel(constructorTypes(app));
+    nA = numel(wbTypeSelection('animalSteps', app.reg));
+    h  = max(66 + 26*nA, 96 + 26*nT);
+    rh = c.left.RowHeight; rh{2} = min(320,max(120,h)); c.left.RowHeight = rh;
+end
+end
+
+function renderRawMatrix(fig,parent)
+%renderRawMatrix  One checkbox per (type, raw producer).  The producers are the
+%   steps whose input is the recording itself - derived from the registry, never
+%   listed - and each writes its own independent product.
+app = getApp(fig);
+types = constructorTypes(app);
+cols  = wbTypeSelection('rawSteps', app.reg);
+if isempty(types) || isempty(cols)
+    g = uigridlayout(parent,[1 1],'Padding',[16 16 16 16]);
+    uilabel(g,'Text','Load and label recordings on the Files tab to populate the type matrix.', ...
+        'HorizontalAlignment','center','FontAngle','italic');
+    return
+end
+
+grid = uigridlayout(parent,[1+numel(types) 1+numel(cols)], ...
+    'ColumnWidth',[{170}, repmat({120},1,numel(cols))], ...
+    'RowHeight',[{50}, repmat({26},1,numel(types))], ...
+    'RowSpacing',2,'ColumnSpacing',2,'Padding',[2 2 2 2],'Scrollable','on');
+h = uilabel(grid,'Text','Type  \  Raw step','FontWeight','bold');
+h.Layout.Row = 1; h.Layout.Column = 1;
+for s = 1:numel(cols)
+    step = stepById(app.reg,cols{s});
+    hp = uigridlayout(grid,[2 1],'RowHeight',{'1x','fit'},'Padding',[1 1 1 1],'RowSpacing',1);
+    hp.Layout.Row = 1; hp.Layout.Column = s+1;
+    uilabel(hp,'Text',step.label,'WordWrap','on','FontSize',10,'Tooltip',rawStepTip(step));
+    gr = uigridlayout(hp,[1 1],'Padding',[0 0 0 0]);
+    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
+end
+for r = 1:numel(types)
+    ty = types{r};
+    lb = uilabel(grid,'Text',sprintf('%s - %d files', ty, typeFileCount(app,ty)), ...
+        'FontWeight','bold','Tooltip','every file of this type is processed alike');
+    lb.Layout.Row = r+1; lb.Layout.Column = 1;
+    for s = 1:numel(cols)
+        step = stepById(app.reg,cols{s});
+        cb = uicheckbox(grid,'Text',rowFlagFor(app,ty,step.branch), ...
+            'Value',wbTypeSelection('isOn',app.typeSel,ty,step.branch,cols{s}), ...
+            'FontSize',10,'Tooltip',rawCellTip(app,ty,step), ...
+            'ValueChangedFcn',@(o,~)tickRaw(fig,ty,cols{s},o.Value));
+        cb.Layout.Row = r+1; cb.Layout.Column = s+1;
+    end
+end
+end
+
+function t = rawStepTip(step)
+t = sprintf(['%s reads the raw recording and writes a NEW, independent product.\n' ...
+    'Ticking it gives this type a %s row below; everything done to that product is ' ...
+    'ticked there.'], step.label, step.branch);
+end
+function t = rawCellTip(app,type,step)
+t = sprintf('%s produces %s%s for every %s recording.', step.label, ...
+    rowFlagFor(app,type,step.branch), ' ', type);
+end
+
+function lines = tickRaw(fig,type,stepId,tf)
+%tickRaw  Switch one raw producer on/off for a TYPE - i.e. create or remove that
+%   type's branch row.  The row's own configuration is KEPT when it goes away, so
+%   re-ticking the producer brings it back exactly as it was, and the OTHER row is
+%   never touched.
+app = getApp(fig);
+type = char(type); stepId = char(stepId);
+step = stepById(app.reg,stepId);
+if isempty(step), lines = {}; return; end
+br = step.branch;
+app.typeSel = wbTypeSelection('set', app.typeSel, app.reg, type, br, stepId, logical(tf));
+setApp(fig,app);
+lines = {sprintf('constructor: [%s] %s %s -> %s row %s', type, ternary(logical(tf),'+','-'), ...
+    stepId, rowFlagFor(getApp(fig),type,br), ternary(logical(tf),'added','removed'))};
+if ~tf
+    kept = wbTypeSelection('steps', app.typeSel, app.reg, type, br);
+    if isempty(kept)
+        lines{end+1} = sprintf('  its configuration is kept - re-tick %s to get the row back', stepId);
+    end
+end
+for i = 1:numel(lines), wbLog(fig,lines{i}); end
+renderConstructor(fig);
+end
+
+function lines = tickRow(fig,type,branch,stepId,tf)
+%tickRow  Tick / untick one cell of a (type,branch) row and run the cascade.
+%   TICK pulls the prerequisites in, so a chain is constructible in one click;
+%   UNTICK pushes the dependants out, since they could no longer run.  Both stay
+%   INSIDE the row - the other branch of the same recording is a separate pipeline -
+%   and both are logged, because a box the user did not click must never move
+%   silently.
+app = getApp(fig);
+type = char(type); branch = char(branch); stepId = char(stepId);
+flag = rowFlagFor(app,type,branch);
+[app.typeSel, changed, animalIds] = wbTypeSelection('set', app.typeSel, app.reg, ...
+    type, branch, stepId, logical(tf));
+lines = {};
+if tf
+    lines{end+1} = sprintf('constructor: [%s %s] + %s', type, flag, stepId);
+    if ~isempty(changed)
+        lines{end+1} = sprintf('  auto-ticked prerequisite(s) of %s: %s', stepId, strjoin(changed,', '));
+    end
+    for i = 1:numel(animalIds)                     % a prerequisite that is an ANIMAL step
+        app.animalSel(animalIds{i}) = true;
+    end
+    if ~isempty(animalIds)
+        lines{end+1} = sprintf('  also ticked animal step(s) %s (%s requires them)', ...
+            strjoin(animalIds,', '), stepId);
+    end
+else
+    lines{end+1} = sprintf('constructor: [%s %s] - %s', type, flag, stepId);
+    if ~isempty(changed)
+        lines{end+1} = sprintf('  unticked dependant(s) of %s: %s', stepId, strjoin(changed,', '));
+    end
+    animalIds = animalIds(cellfun(@(id) isKey(app.animalSel,id), animalIds));
+    if ~isempty(animalIds)
+        % animal steps span every type and both rows, so ONE row dropping a
+        % prerequisite must not switch them off for the rest - say so instead.
+        lines{end+1} = sprintf('  note: animal step(s) %s stay selected, but %s %s no longer provides %s', ...
+            strjoin(animalIds,', '), type, flag, stepId);
+    end
+end
+setApp(fig,app);
+for i = 1:numel(lines), wbLog(fig,lines{i}); end
+renderConstructor(fig);
+end
+
+%% ---- Constructor: the derived (type, branch) rows ------------------ %%
+function rows = constructorRows(app)
+%constructorRows  The bottom panel's rows: one per (type, BRANCH) the user has
+%   asked for.  BOTH halves of the label are data - the type is whatever token the
+%   Files tab produced, and the product flag is resolved from the producing step
+%   plus THIS TYPE's own settings, so a spatial protocol reads '_s_K' where a
+%   temporal one reads '_t_K', in the same session.
+rows = struct('type',{},'branch',{},'flag',{},'label',{},'files',{});
+types = constructorTypes(app);
+brs   = wbTypeSelection('branches', app.reg);
+for i = 1:numel(types)
+    for b = 1:numel(brs)
+        if ~wbTypeSelection('rowOn', app.typeSel, app.reg, types{i}, brs{b}), continue; end
+        rows(end+1) = mkRow(app,types{i},brs{b}); %#ok<AGROW>
+    end
+end
+end
+function r = mkRow(app,type,branch)
+f = rowFlagFor(app,type,branch);
+r = struct('type',type,'branch',branch,'flag',f, ...
+           'label',sprintf('%s (%s)',type,f),'files',typeFileCount(app,type));
+end
+
+function f = rowFlagFor(app,type,branch)
+%rowFlagFor  The PRODUCT FLAG a (type,branch) row's files carry - '_t_K', '_s_K',
+%   '_c_K'.  Never a literal: the producing step's own outSuffix supplies the
+%   product and the default stage, and a producer whose stage is a SETTING (the
+%   contrast step's contrastType) is asked for this type's answer.  Row identity
+%   is (type, BRANCH), so switching a project from temporal to spatial contrast
+%   changes the flag shown and the files resolved, not the configuration.
+f = '';
+pid = wbTypeSelection('producer', app.reg, branch);
+if isempty(pid), return; end
+step = stepById(app.reg,pid);
+if isempty(step.outSuffix), return; end
+m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t, product K
+st = m.stage;
+alt = settingStage(app,type,step);
+if ~isempty(alt), st = alt; end
+f = ['_' st '_' m.product];
+end
+
+function st = settingStage(app,type,step)
+%settingStage  The stage flag a producer writes when its own SETTINGS choose it.
+%   Only the contrast step does today (temporal -> _t, spatial -> _s); the rule
+%   lives here once and both the row labels and the file resolution read it.
+st = '';
+s = wbSettingsModel('resolve', app.sm, step, char(type));
+if isfield(s,'contrastType'), st = stageOfContrastType(s.contrastType); end
+end
+function st = stageOfContrastType(v)
+st = 't';
+if strcmpi(char(string(v)),'spatial'), st = 's'; end
+end
+
+function tf = rawChecked(app,type,stepId)
+%rawChecked  Is this raw producer on for this type - i.e. does its row exist?
+tf = wbTypeSelection('isOn', app.typeSel, type, branchOfStep(app.reg,stepId), stepId);
+end
+function tf = rowShown(app,type,branch,stepId)
+%rowShown  What the cell DISPLAYS: its own tick, or the one it inherits.
+tf = wbTypeSelection('effective', app.typeSel, app.reg, type, branch, stepId);
+end
+function tf = rowInherited(app,type,branch,stepId)
+%rowInherited  Is this cell showing a tick that belongs to the copy-source row?
+[~,tf] = wbTypeSelection('effective', app.typeSel, app.reg, type, branch, stepId);
+end
+
+function renderDerivedPanel(fig)
+%renderDerivedPanel  One row per (type, product), columns = the derived steps.  A
+%   cell is greyed with its reason when the row's branch does not offer that step
+%   (vasomotion is contrast-only, pulsatility cardiac-only), and shown as an
+%   INHERITED tick when the step is drawn once on the contrast side and copied to
+%   the other branches (setRegions, segmentation - branchScope 'copy').
+app = getApp(fig); c = app.c.constructor;
+delete(c.derivedPanel.Children);
+cols = wbTypeSelection('derivedSteps', app.reg);
+rows = constructorRows(app);
+types = constructorTypes(app);
+if isempty(cols) || (isempty(rows) && isempty(types))
+    g = uigridlayout(c.derivedPanel,[1 1],'Padding',[16 16 16 16]);
+    uilabel(g,'Text','Load and label recordings on the Files tab first.', ...
+        'HorizontalAlignment','center','FontAngle','italic');
+    return
+end
+
+gl = uigridlayout(c.derivedPanel,[2 1],'RowHeight',{'fit','1x'},'RowSpacing',4,'Padding',[4 4 4 4]);
+uilabel(gl,'Text',derivedHint(rows),'WordWrap','on','FontAngle','italic','FontSize',10);
+
+% with no producer ticked there is nothing to append to: show the shape, disabled
+preview = isempty(rows);
+if preview
+    for i = 1:numel(types), rows(end+1) = mkRow(app,types{i},''); end %#ok<AGROW>
+end
+
+grid = uigridlayout(gl,[1+numel(rows) 1+numel(cols)], ...
+    'ColumnWidth',[{190}, repmat({88},1,numel(cols))], ...
+    'RowHeight',[{56}, repmat({28},1,numel(rows))], ...
+    'RowSpacing',2,'ColumnSpacing',2,'Padding',[2 2 2 2],'Scrollable','on');
+h = uilabel(grid,'Text','Type (product)  \  Step','FontWeight','bold');
+h.Layout.Row = 1; h.Layout.Column = 1;
+for s = 1:numel(cols)
+    step = stepById(app.reg,cols{s});
+    hp = uigridlayout(grid,[2 1],'RowHeight',{'1x','fit'},'Padding',[1 1 1 1],'RowSpacing',1);
+    hp.Layout.Row = 1; hp.Layout.Column = s+1;
+    uilabel(hp,'Text',step.label,'WordWrap','on','FontSize',10,'Tooltip',headerTip(step));
+    gr = uigridlayout(hp,[1 1],'Padding',[0 0 0 0]);
+    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
+end
+for r = 1:numel(rows)
+    row = rows(r);
+    txt = row.label;
+    if preview, txt = sprintf('%s - tick a raw step above', row.type); end
+    lb = uilabel(grid,'Text',sprintf('%s - %d files', txt, row.files),'FontWeight','bold', ...
+        'Tooltip','one pipeline: this type''s recordings, this product');
+    lb.Layout.Row = r+1; lb.Layout.Column = 1;
+    if preview, lb.FontColor = [0.45 0.45 0.45]; end
+    for s = 1:numel(cols)
+        cb = makeRowCell(fig,grid,app,row,cols{s},preview);
+        cb.Layout.Row = r+1; cb.Layout.Column = s+1;
+    end
+end
+end
+
+function cb = makeRowCell(fig,grid,app,row,stepId,preview)
+%makeRowCell  One derived cell: live, greyed-with-a-reason, or inherited.
+why = wbTypeSelection('why', app.reg, row.branch, stepId);
+if preview || ~isempty(why)
+    if isempty(why), why = 'tick a raw step above to give this type a product to work on'; end
+    cb = uicheckbox(grid,'Text','','Value',false,'Enable','off','Tooltip',why);
+    return
+end
+[tf,inh] = wbTypeSelection('effective', app.typeSel, app.reg, row.type, row.branch, stepId);
+if inh
+    src = wbTypeSelection('anchorBranch', app.reg);
+    cb = uicheckbox(grid,'Text','','Value',tf,'Enable','off', ...
+        'Tooltip',sprintf('%s  Tick it on the %s row.', ...
+        sharedReason(stepById(app.reg,stepId)), rowFlagFor(app,row.type,src)));
+    return
+end
+cb = uicheckbox(grid,'Text','','Value',tf,'Tooltip',cellTip(app.reg,stepId), ...
+    'ValueChangedFcn',@(o,~)tickRow(fig,row.type,row.branch,stepId,o.Value));
+end
+
+function t = sharedReason(step)
+%sharedReason  Why a step is ticked once for the whole recording instead of per
+%   row - straight from its branchScope, which is also what the executor obeys.
+switch step.branchScope
+    case 'copy'
+        t = sprintf(['%s is done ONCE, on the contrast product, and the result is ' ...
+            'inherited by the other products of the same recording.'], step.label);
+    otherwise
+        t = sprintf(['%s runs over EVERY product of a recording in one call, so it ' ...
+            'cannot be on for one product and off for another.'], step.label);
+end
+end
+
+function t = derivedHint(rows)
+if isempty(rows)
+    t = ['Nothing to configure yet: tick a raw step above.  Each raw step gives its ' ...
+         'type a product, and each product is its own pipeline row here.'];
+else
+    t = ['One row = one pipeline (a type''s recordings, one product).  A type running ' ...
+         'both raw steps gets two independent rows.'];
+end
+end
+
+function t = cellTip(reg,stepId)
+step = stepById(reg,stepId);
+t = step.label;
+req = wbPrereqs('describe',step);
+if ~isempty(req)
+    t = [t sprintf('\nneeds %s - ticking this ticks them too, in this row', req)];
+end
+end
+
+%% ---- Constructor: the per-animal steps ----------------------------- %%
+function renderAnimalBox(fig,parent)
+%renderAnimalBox  The steps that span the ANIMAL (registration, vessel typing):
+%   ONE box, one line each - a checkbox and a 'settings' button, exactly like the
+%   step columns beside it.  Their parameters open in the settings panel on the
+%   right rather than inline, and WHICH BRANCH FILE of each animal's reference they
+%   resolve to is reported in the selection summary, the one place status is read.
+app = getApp(fig);
+ids = wbTypeSelection('animalSteps', app.reg);
+p  = uipanel(parent,'Title','Applied per animal','FontWeight','bold','FontSize',10);
+n  = max(1,numel(ids));
+gl = uigridlayout(p,[n+1 2],'ColumnWidth',{'1x','fit'}, ...
+    'RowHeight',[repmat({'fit'},1,n), {'1x'}], ...
+    'RowSpacing',6,'ColumnSpacing',6,'Padding',[8 8 8 8]);
+for i = 1:numel(ids)
+    step = stepById(app.reg,ids{i});
+    uicheckbox(gl,'Text',step.label,'Value',isKey(app.animalSel,step.id), ...
+        'Tooltip',animalStepTip(step), ...
+        'ValueChangedFcn',@(o,~)tickAnimalStep(fig,step.id,o.Value));
+    uibutton(gl,'Text','settings','FontSize',9, ...
+        'Tooltip','open this step''s parameters in the settings panel', ...
+        'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
+end
+uilabel(gl,'Text',['One run per animal, over all of its files whatever their type ' ...
+    'or product.  These parameters are global.'],'WordWrap','on','FontSize',9, ...
+    'FontColor',[0.4 0.4 0.4]);
+end
+
+function t = animalStepTip(step)
+t = sprintf(['%s runs ONCE per animal over all of its files, whatever their type.\n' ...
+    'It reads the animal''s reference recording''s %s branch.'], step.label, refBranchWord(step));
+end
+function w = refBranchWord(step)
+switch step.refBranch
+    case 'contrast', w = 'contrast (_t/_s)';
+    case 'cardiac',  w = 'cardiac (_c)';
+    otherwise,       w = 'any';
+end
+end
+function s = warnLine(w)
+if isempty(w), s = 'Every selected step can resolve its reference.'; else, s = ['Warning: ' strjoin(w,'   |   ')]; end
+end
+
+function tickAnimalStep(fig,stepId,tf)
+%tickAnimalStep  Switch one per-animal step on/off.  It is NOT a row of the type
+%   matrix: it spans the animal, so it is one flag for the whole session.
+%   Ticking it pulls its prerequisites in FOR EVERY TYPE - the step runs over all
+%   of an animal's files whatever their type, so each of them must produce what it
+%   reads (vessel typing needs a BFI everywhere, registration a contrast).
+app = getApp(fig);
+stepId = char(stepId);
+if ~any(strcmp(stepId, wbTypeSelection('animalSteps',app.reg))), return; end
+if tf, app.animalSel(stepId) = true;
+elseif isKey(app.animalSel,stepId), remove(app.animalSel,stepId);
+end
+setApp(fig,app);
+wbLog(fig,sprintf('constructor: animal step %s %s', stepId, ternary(logical(tf),'on','off')));
+if tf, autoTickPrereqs(fig,stepId); end
+renderConstructor(fig);
+end
+
+function autoTickPrereqs(fig,stepId)
+%autoTickPrereqs  Give every type the steps this animal step consumes.  The step
+%   runs over ALL of an animal's files whatever their type or product, so each type
+%   must produce what it reads - and a type with no row yet gets the raw producer
+%   that creates one (wbPrereqs names the default producer of a requiresAny list).
+app = getApp(fig);
+step = stepById(app.reg,stepId);
+if isempty(step) || isempty(wbPrereqs('all',step)), return; end
+types = constructorTypes(app);
+ticked = {};
+for t = 1:numel(types)
+    ty  = types{t};
+    brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+    if isempty(brs)                                  % no product yet: make one
+        pid = defaultProducerFor(app.reg, step.id);
+        if ~isempty(pid)
+            app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, ty, ...
+                branchOfStep(app.reg,pid), pid);
+            ticked = [ticked, {pid}]; %#ok<AGROW>
+        end
+        brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+    end
+    for b = 1:numel(brs)
+        have = wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b});
+        need = wbPrereqs('missing', step, have);     % nothing when the row already feeds it
+        for r = 1:numel(need)
+            if ~wbTypeSelection('offers', app.reg, brs{b}, need{r}), continue; end
+            app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, ty, brs{b}, need{r});
+            ticked = [ticked, need(r)]; %#ok<AGROW>
+        end
+    end
+end
+setApp(fig,app);
+if ~isempty(ticked)
+    wbLog(fig,sprintf('  ticked %s for every type - %s runs over all of an animal''s files', ...
+        strjoin(unique(ticked,'stable'),', '), stepId));
+end
+end
+
+function id = defaultProducerFor(reg,stepId)
+%defaultProducerFor  The raw producer a step's prerequisite chain ends at, so a
+%   type with no row yet can be given one.  wbPrereqs already names the DEFAULT
+%   producer of a requiresAny list (its first entry); this just follows the chain
+%   until it reaches a step that reads the recording itself.
+id = ''; seen = {}; frontier = {char(stepId)};
+while ~isempty(frontier)
+    cur = frontier{1}; frontier(1) = [];
+    if any(strcmp(cur,seen)), continue; end
+    seen{end+1} = cur; %#ok<AGROW>
+    if ~isempty(branchOfStep(reg,cur)), id = cur; return; end
+    frontier = [frontier, wbPrereqs('missing', stepById(reg,cur), {})]; %#ok<AGROW>
+end
+end
+
+function b = branchOfStep(reg,stepId)
+%branchOfStep  The row a raw producer creates ('' when the step is not one).
+b = '';
+step = stepById(reg,stepId);
+if isempty(step), return; end
+if any(strcmp(stepId, wbTypeSelection('rawSteps',reg))), b = step.branch; end
+end
+
+function plan = animalStepPlan(app)
+%animalStepPlan  Per animal x reference-taking step: the pinned reference recording
+%   and the file that step resolves to on it (wbRefBranch).  This is the surface
+%   that makes D5 legible - the user pins a RECORDING, each step takes the branch
+%   of it that it needs, and a missing branch falls back rather than failing.
+%   THE STEPS ARE THOSE DECLARING A refBranch, not "the per-animal ones": vessel
+%   typing paints the reference's _c, registration templates on its _t, and the
+%   vascular tree - per FILE, but derived on the cardiac product - prefers _c too.
+plan = struct('animal',{},'refIdentity',{},'refLabel',{},'stepId',{},'stepLabel',{}, ...
+              'selected',{},'path',{},'name',{},'status',{},'note',{});
+if isempty(app.files) || isempty(app.labels), return; end
+animals = wbTypeModel('values', app.labels, 'animal');
+ids     = refStepsOf(app.reg);
+for a = 1:numel(animals)
+    an    = animals{a};
+    refId = animalRefOf(app,an);
+    rm    = modelForIdentity(app,refId);
+    cst   = contrastStageForModel(app,rm);
+    ty    = typeOfIdentity(app,refId);
+    for i = 1:numel(ids)
+        step = stepById(app.reg,ids{i});
+        r = wbRefBranch(step, rm, cst);
+        plan(end+1) = struct('animal',an,'refIdentity',refId,'refLabel',shortId(refId), ...
+            'stepId',step.id,'stepLabel',step.label,'selected',stepIsSelected(app,step,ty), ...
+            'path',r.path,'name',r.name,'status',r.status,'note',r.note); %#ok<AGROW>
+    end
+end
+end
+
+function ids = refStepsOf(reg)
+%refStepsOf  The steps that resolve a branch OF THE REFERENCE recording, in
+%   registry order - derived from refBranch, never a name list.
+ids = reshape({reg(~cellfun(@isempty,{reg.refBranch})).id},1,[]);
+end
+
+function tf = stepIsSelected(app,step,type)
+%stepIsSelected  Whether a step will run on THIS reference recording: the animal
+%   panel decides for a per-animal step (it spans every type), while a per-file one
+%   is on only if a row of the reference's OWN type ticked it.
+if strcmp(step.arity,'perAnimal'), tf = isKey(app.animalSel,step.id); return; end
+tf = false;
+if isempty(type), return; end
+brs = wbTypeSelection('rows', app.typeSel, app.reg, type);
+for b = 1:numel(brs)
+    if wbTypeSelection('isOn', app.typeSel, type, brs{b}, step.id), tf = true; return; end
+end
+end
+
+function m = modelForIdentity(app,identity)
+%modelForIdentity  The wbFileModel of any loaded FILE of that recording ([] if none).
+m = [];
+if isempty(identity), return; end
+for i = 1:numel(app.files)
+    if strcmp(app.files(i).model.identity, identity), m = app.files(i).model; return; end
+end
+m = wbFileModel(identity);          % not loaded, but the identity still locates it
+end
+
+function lines = animalPlanLines(app)
+%animalPlanLines  One line per animal: its reference and every animal step's file.
+lines = {};
+plan = animalStepPlan(app);
+if isempty(plan), return; end
+animals = unique({plan.animal},'stable');
+for a = 1:numel(animals)
+    p = plan(strcmp({plan.animal},animals{a}));
+    if isempty(p(1).refIdentity)
+        lines{end+1} = sprintf('%s: NO reference recording pinned', animals{a}); %#ok<AGROW>
+        continue
+    end
+    bits = cell(1,numel(p));
+    for i = 1:numel(p)
+        switch p(i).status
+            case 'ok',       bits{i} = sprintf('%s %s', p(i).stepId, p(i).name);
+            case 'fallback', bits{i} = sprintf('%s %s (fallback)', p(i).stepId, p(i).name);
+            otherwise,       bits{i} = sprintf('%s (no file)', p(i).stepId);
+        end
+    end
+    lines{end+1} = sprintf('%s: ref = %s -> %s', animals{a}, p(1).refLabel, strjoin(bits,' | ')); %#ok<AGROW>
+end
+end
+
+function w = constructorWarnings(app)
+%constructorWarnings  What a SELECTED reference-taking step cannot resolve.  Warn,
+%   never block: an animal may legally have no reference until the step is run.
+%   A FILE THAT IS ABOUT TO BE PRODUCED IS NOT A PROBLEM.  Vessel typing reads a
+%   _BFI file; complaining that it is missing while BFI is ticked for that type is
+%   noise, since the run order puts BFI first.  So a missing/fallback branch is
+%   only reported when the step that would produce it is NOT selected.
+w = {};
+plan = animalStepPlan(app);
+for i = 1:numel(plan)
+    p = plan(i);
+    if ~p.selected, continue; end
+    if strcmp(p.status,'noref')
+        w{end+1} = sprintf('%s: %s is selected but the animal has no reference recording', ...
+            p.animal, p.stepId); %#ok<AGROW>
+    elseif any(strcmp(p.status,{'fallback','missing'})) && ~willBeProduced(app,p)
+        w{end+1} = sprintf('%s: %s - %s', p.animal, p.stepId, p.note); %#ok<AGROW>
+    end
+end
+end
+
+function tf = willBeProduced(app,p)
+%willBeProduced  Whether this run will create the file the step wants, so that
+%   its absence today is not worth a warning.  The reference recording's own TYPE
+%   decides, and the two failure modes ask different questions:
+%     'missing'  - no readable file at all: every prerequisite of the step must be
+%                  ticked for that type (vessel typing warning about an absent
+%                  _BFI is noise when BFI is queued to run first);
+%     'fallback' - a file exists but on the WRONG branch: the entry step that
+%                  creates the wanted branch must be ticked as well, because no
+%                  amount of downstream work will produce a cardiac product from a
+%                  contrast one.
+tf = false;
+step = stepById(app.reg,p.stepId);
+if isempty(step) || isempty(wbPrereqs('all',step)), return; end
+ty = typeOfIdentity(app,p.refIdentity);
+if isempty(ty), return; end
+sel = animalStepsOn(app);
+brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+for b = 1:numel(brs)
+    sel = [sel, wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b}), ...
+                wbTypeSelection('inherited', app.typeSel, app.reg, ty, brs{b})]; %#ok<AGROW>
+end
+tf  = wbPrereqs('met', step, unique(sel,'stable'));
+if tf && strcmp(p.status,'fallback')
+    % the wanted branch does not exist yet: only its raw producer can create it
+    tf = any(strcmp(wbTypeSelection('producer', app.reg, step.refBranch), sel));
+end
+end
+
+function ty = typeOfIdentity(app,identity)
+ty = '';
+for i = 1:numel(app.files)
+    if strcmp(app.files(i).model.identity, identity), ty = app.files(i).type; return; end
+end
+end
+function ids = animalStepsOn(app)
+ids = wbTypeSelection('animalSteps', app.reg);
+ids = ids(cellfun(@(id) isKey(app.animalSel,id), ids));
+end
+
+%% ---- Constructor: settings per (step, type) ------------------------ %%
+function refreshConstructorSelectors(fig)
+%refreshConstructorSelectors  Keep the type / step dropdowns valid for the data.
+app = getApp(fig); c = app.c.constructor;
+types = constructorTypes(app);
+srcItems = [presetItems(), types];      % the protocols first, then your own types
+if isempty(types)
+    c.typeDrop.Items = {'(no types)'}; c.typeDrop.Value = '(no types)';
+    c.copySrc.Items  = srcItems; c.copySrc.Value = srcItems{1};
+    c.copyDst.Items  = {''}; c.copyDst.Value = '';
+    app.selType = ''; setApp(fig,app);
+else
+    c.typeDrop.Items = types;
+    if ~any(strcmp(app.selType,types)), app.selType = types{1}; end
+    c.typeDrop.Value = app.selType;
+    c.copySrc.Items = srcItems; c.copyDst.Items = types;
+    if ~any(strcmp(c.copySrc.Value,srcItems)), c.copySrc.Value = srcItems{1}; end
+    c.copyDst.Value = app.selType;
+    setApp(fig,app);
+end
+% every step is editable here, INCLUDING the per-animal ones - their box carries a
+% 'settings' button like any other column and its parameters open in this panel
+cols = {app.reg.id};
+app = getApp(fig);
+if isempty(cols)
+    c.stepDrop.Items = {''}; c.stepDrop.ItemsData = {''}; app.selCStep = '';
+else
+    lbls = cell(1,numel(cols));
+    for i = 1:numel(cols)
+        st = stepById(app.reg,cols{i});
+        lbls{i} = st.label;
+        if strcmp(st.arity,'perAnimal'), lbls{i} = [st.label '  (per animal)']; end
+    end
+    c.stepDrop.Items = lbls; c.stepDrop.ItemsData = cols;
+    if ~any(strcmp(app.selCStep,cols)), app.selCStep = cols{1}; end
+    c.stepDrop.Value = app.selCStep;
+end
+setApp(fig,app);
+refreshConstructorSettings(fig);
+end
+
+function selectConstructorType(fig,type)
+app = getApp(fig);
+types = constructorTypes(app);
+if ~any(strcmp(type,types)), return; end
+app.selType = char(type); setApp(fig,app);
+c = app.c.constructor;
+if isgraphics(c.typeDrop), c.typeDrop.Value = app.selType; end
+refreshConstructorSettings(fig);
+end
+function selectConstructorStep(fig,stepId)
+app = getApp(fig);
+if ~any(strcmp(stepId, {app.reg.id})), return; end
+app.selCStep = char(stepId); setApp(fig,app);
+c = app.c.constructor;
+if isgraphics(c.stepDrop), c.stepDrop.Value = app.selCStep; end
+refreshConstructorSettings(fig);
+end
+
+function refreshConstructorSettings(fig)
+%refreshConstructorSettings  Render the settings panel for the selected step.
+%   SCOPE depends on the step: a per-file step is configured per TYPE, while a
+%   per-animal step spans every type by definition and so edits the global layer.
+app = getApp(fig); c = app.c.constructor;
+if ~isgraphics(c.paramPanel), return; end
+step = [];
+if ~isempty(app.selCStep), step = stepById(app.reg,app.selCStep); end
+isAnimal = ~isempty(step) && strcmp(step.arity,'perAnimal');
+if isempty(step) || (isempty(app.selType) && ~isAnimal)
+    delete(c.paramPanel.Children);
+    g = uigridlayout(c.paramPanel,[1 1],'Padding',[8 8 8 8]);
+    uilabel(g,'Text','Label the files with a TYPE on the Files tab first.','WordWrap','on','FontAngle','italic');
+    c.stepInfo.Text = ''; c.scopeInfo.Text = '';
+    return
+end
+c.stepInfo.Text = stepInfoText(step);
+if isAnimal
+    c.scopeInfo.Text = sprintf(['%s runs once per ANIMAL, over all of its files whatever ' ...
+        'their type or product, so these values are GLOBAL - there is no per-type ' ...
+        'version of them.'], step.label);
+    buildSettingsPanel(fig,c.paramPanel,step,'');
+else
+    c.scopeInfo.Text = sprintf(['These values apply to EVERY file of type "%s" (%d file(s)) - both of ' ...
+        'its product rows if it has two - and to no other type.  Editing one marks this ' ...
+        'type''s downstream steps stale.'], app.selType, typeFileCount(app,app.selType));
+    buildSettingsPanel(fig,c.paramPanel,step,app.selType);
+end
+end
+
+function v = getTypeSetting(fig,type,stepId,field)
+app = getApp(fig);
+s = wbSettingsModel('resolve', app.sm, stepById(app.reg,stepId), char(type));
+v = getfieldOr(s,field,[]);
+end
+
+function onTypeSettingEdit(fig,type,stepId,field,rawval)
+%onTypeSettingEdit  An edit scoped to ONE type: it changes that type's resolved
+%   settings, its files' fingerprints, and nothing of any other type.
+app = getApp(fig);
+type = char(type);
+step = stepById(app.reg,stepId);
+if isempty(step), return; end
+value = coerceValue(step,field,rawval);
+if ismember(field,step.sharedKeys)
+    app.sm = wbSettingsModel('setTypeShared', app.sm, type, field, value);
+    seed = field;                      % shared: every step of THIS type that reads it
+else
+    app.sm = wbSettingsModel('setTypeStep', app.sm, type, stepId, field, value);
+    seed = stepId;                     % STEP-ID keyed, never field-keyed: 'deleteOriginal'
+end                                    % on BFI must not disturb splitRegions
+setApp(fig,app);
+recomputeBase(fig);                    % new fingerprint for this type's files
+applyInvalidation(fig,seed,type);      % forward cascade, restricted to this type
+refreshCells(fig,{});
+% a setting can change the PRODUCT this type writes (contrastType -> _t_K | _s_K),
+% and that flag is on every row label and checkbox - so redraw them, do not leave
+% the panels showing the flag the type had before the edit
+renderRawPanel(fig);
+renderDerivedPanel(fig);
+refreshConstructorSettings(fig);
+refreshSummary(fig);
+wbLog(fig,sprintf('edit [%s] %s.%s -> %s',type,stepId,field,val2str(value)));
+end
+
+function items = presetItems()
+%presetItems  The standard protocols, tagged so they cannot collide with a type
+%   token (a user is free to call a type 'NVC').
+names = wbTypePresets('names');
+items = cellfun(@(n) ['[protocol] ' n], names, 'UniformOutput', false);
+end
+function name = presetNameOf(item)
+%presetNameOf  '' when the picked item is a type rather than a protocol.
+name = '';
+item = char(item);
+tag = '[protocol] ';
+if startsWith(item, tag) && wbTypePresets('exists', item(numel(tag)+1:end))
+    name = item(numel(tag)+1:end);
+end
+end
+
+function copyTypeConfig(fig,src,dst)
+%copyTypeConfig  "Build a BP out of a BV", or out of a standard protocol: same
+%   steps, same settings, then diverge.  A protocol source populates the boxes and
+%   leaves the settings at the launcher defaults - it defines a pipeline, not
+%   parameters.
+app = getApp(fig);
+src = char(src); dst = char(dst);
+if isempty(dst), setConstructorStatus(fig,'Pick a type to configure.'); return; end
+preset = presetNameOf(src);
+if ~isempty(preset)
+    applyPreset(fig,preset,dst); return
+end
+if isempty(src) || strcmp(src,dst)
+    setConstructorStatus(fig,'Pick two different types.'); return
+end
+app.typeSel = wbTypeSelection('copy', app.typeSel, app.reg, src, dst);
+app.sm      = wbSettingsModel('copyType', app.sm, src, dst);
+setApp(fig,app);
+recomputeBase(fig);
+wbLog(fig,sprintf('constructor: copied configuration %s -> %s', src, dst));
+setConstructorStatus(fig,sprintf('%s now matches %s.', dst, src));
+renderConstructor(fig); refreshCells(fig,{});
+end
+
+function applyPreset(fig,presetName,type)
+%applyPreset  Populate one type's checkboxes from a standard protocol.
+%   The RAW steps go first, because they are what create the rows; every other step
+%   then lands on each row that offers it - a protocol listing both entry steps
+%   therefore configures both pipelines, and one listing a single metric leaves the
+%   other branch alone.  The per-animal steps go to the animal panel, never into a
+%   row, and each tick still runs the ordinary prerequisite cascade - so a protocol
+%   can never produce a selection the Constructor would reject.
+app = getApp(fig);
+p = wbTypePresets('get', presetName);
+if isempty(p), return; end
+app.typeSel = wbTypeSelection('clear', app.typeSel, app.reg, type);
+raw = wbTypeSelection('rawSteps', app.reg);
+for i = 1:numel(p.steps)
+    if ~any(strcmp(p.steps{i},raw)), continue; end
+    b = branchOfStep(app.reg,p.steps{i});
+    app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, type, b, p.steps{i});
+end
+brs = wbTypeSelection('rows', app.typeSel, app.reg, type);
+for i = 1:numel(p.steps)
+    if any(strcmp(p.steps{i},raw)), continue; end
+    for b = 1:numel(brs)
+        if ~wbTypeSelection('offers', app.reg, brs{b}, p.steps{i}), continue; end
+        app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, type, brs{b}, p.steps{i});
+    end
+end
+for i = 1:numel(p.animalSteps), app.animalSel(p.animalSteps{i}) = true; end
+setApp(fig,app);
+recomputeBase(fig);
+wbLog(fig,sprintf('constructor: %s configured from the "%s" protocol (%s)', ...
+    type, p.name, p.note));
+setConstructorStatus(fig,sprintf('%s configured from "%s".', type, p.name));
+renderConstructor(fig); refreshCells(fig,{});
+end
+
+function resetTypeConfig(fig,type)
+%resetTypeConfig  Drop one type back to the launcher defaults (steps and settings).
+app = getApp(fig);
+type = char(type);
+if isempty(type), setConstructorStatus(fig,'No type selected.'); return; end
+app.typeSel = wbTypeSelection('clear', app.typeSel, app.reg, type);
+app.sm      = wbSettingsModel('resetType', app.sm, type);
+setApp(fig,app);
+recomputeBase(fig);
+wbLog(fig,sprintf('constructor: reset %s to the launcher defaults', type));
+setConstructorStatus(fig,sprintf('%s reset to the launcher defaults.', type));
+renderConstructor(fig); refreshCells(fig,{});
+end
+
+function uiCopyType(fig)
+c = getApp(fig).c.constructor;
+copyTypeConfig(fig, c.copySrc.Value, c.copyDst.Value);
+end
+function uiResetType(fig)
+resetTypeConfig(fig, getApp(fig).selType);
+end
+function setConstructorStatus(fig,msg)
+c = getApp(fig).c.constructor;
+if isfield(c,'status') && isgraphics(c.status), c.status.Text = msg; end
+end
+
+%% ---- Constructor: the selection summary ---------------------------- %%
+function lines = summaryLines(app)
+%summaryLines  The sanity check before switching to Processing: what each ROW will
+%   actually run, and how much of it there is.  One line per (type, product), so a
+%   type driving both branches is shown as the two pipelines it really is.  An
+%   INHERITED 'copy' step is named on the row that inherits it but is NOT counted
+%   there - it runs once, on the row it is drawn on.
+lines = {};
+types = constructorTypes(app);
+for i = 1:numel(types)
+    ty  = types{i};
+    n   = typeFileCount(app,ty);
+    brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+    if isempty(brs)
+        lines{end+1} = sprintf('%s: (no raw step selected) - %d file(s)', ty, n); %#ok<AGROW>
+        continue
+    end
+    for b = 1:numel(brs)
+        ids = wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b});
+        inh = wbTypeSelection('inherited', app.typeSel, app.reg, ty, brs{b});
+        lbl = sprintf('%s (%s)', ty, rowFlagFor(app,ty,brs{b}));
+        txt = strjoin(ids,', ');
+        if ~isempty(inh)
+            txt = sprintf('%s [+ inherited: %s]', txt, strjoin(inh,', '));
+        end
+        lines{end+1} = sprintf('%s: %s (%d %s x %d files = %d cell-runs)', ...
+            lbl, txt, numel(ids), plural(numel(ids),'step'), n, numel(ids)*n); %#ok<AGROW>
+    end
+end
+aids = {};
+allAnimal = wbTypeSelection('animalSteps', app.reg);
+for i = 1:numel(allAnimal)
+    if isKey(app.animalSel,allAnimal{i}), aids{end+1} = allAnimal{i}; end %#ok<AGROW>
+end
+nA = 0;
+if ~isempty(app.labels), nA = numel(wbTypeModel('values', app.labels, 'animal')); end
+if isempty(aids)
+    lines{end+1} = sprintf('Animal steps: none selected - %d animal(s)', nA);
+else
+    lines{end+1} = sprintf('Animal steps: %s (%d %s x %d %s = %d runs)', ...
+        strjoin(aids,', '), numel(aids), plural(numel(aids),'step'), ...
+        nA, plural(nA,'animal'), numel(aids)*nA);
+end
+end
+function w = plural(n,word)
+w = word; if n~=1, w = [word 's']; end
+end
+
+function refreshSummary(fig)
+%refreshSummary  The one place status is read: what every row runs, what the animal
+%   steps will run over, WHICH FILE of each animal's reference each
+%   reference-taking step resolves to, and what cannot be resolved yet.
+app = getApp(fig); c = app.c.constructor;
+if ~isfield(c,'summaryPanel') || ~isgraphics(c.summaryPanel), return; end
+delete(c.summaryPanel.Children);
+g = uigridlayout(c.summaryPanel,[2 1],'RowHeight',{'1x','fit'}, ...
+    'RowSpacing',3,'Padding',[4 4 4 4]);
+lines = summaryLines(app);
+ref   = animalPlanLines(app);
+if isempty(ref), ref = {'(no animals loaded)'}; end
+lines = [lines, {''}, {'References:'}, ref];
+uitextarea(g,'Value',lines,'Editable','off','FontName','monospaced', ...
+    'Tooltip',['what each row runs, and the reference RECORDING of each animal with ' ...
+               'the branch file every reference-taking step resolves to']);
+w = constructorWarnings(app);
+lb = uilabel(g,'Text',warnLine(w),'WordWrap','on');
+if isempty(w), lb.FontColor = [0 0.45 0]; else, lb.FontColor = [0.75 0.35 0]; end
 end
 
 %% ===================== PROCESS tab ================================== %%
@@ -284,7 +1522,7 @@ app = getApp(fig); c = app.c.export;
 srcs = resolveExportSources(app);
 app.exportSrcs = srcs; setApp(fig,app);
 items = cell(1,numel(srcs));
-for i = 1:numel(srcs), items{i} = sprintf('%s   [%s]', srcs(i).label, srcs(i).group); end
+for i = 1:numel(srcs), items{i} = sprintf('%s   [%s]', srcs(i).label, srcs(i).animal); end
 c.fileList.Items = items;
 if isempty(srcs)
     c.fileList.ItemsData = {};
@@ -321,7 +1559,7 @@ function srcs = resolveExportSources(app)
 %resolveExportSources  Exportable *_BFI_d.mat sources for the loaded recordings.
 %   For each loaded row, glob the recording's base name for *_BFI_d.mat, keep the
 %   identity matches whose _r.mat sibling (exportToExcel's real input) exists.
-srcs = struct('path',{},'rpath',{},'group',{},'label',{});
+srcs = struct('path',{},'rpath',{},'animal',{},'label',{});
 seen = containers.Map('KeyType','char','ValueType','logical');
 for i = 1:numel(app.rows)
     r = app.rows(i); m = r.model;
@@ -337,7 +1575,7 @@ for i = 1:numel(app.rows)
         if ~isfile(rp), continue; end                          % export needs the RESULTS file
         seen(p) = true;
         [~,nm,ex] = fileparts(p);
-        srcs(end+1) = struct('path',p,'rpath',rp,'group',r.group,'label',[nm ex]); %#ok<AGROW>
+        srcs(end+1) = struct('path',p,'rpath',rp,'animal',r.animal,'label',[nm ex]); %#ok<AGROW>
     end
 end
 end
@@ -488,8 +1726,8 @@ function buildExploreTab(fig)
 app = getApp(fig); t = app.tabs.explore;
 gl = uigridlayout(t,[2 1],'RowHeight',{'fit','1x'},'Padding',[6 6 6 6],'RowSpacing',6);
 tb = uigridlayout(gl,[1 2],'ColumnWidth',{'fit','1x'},'Padding',[0 0 0 0]);
-uibutton(tb,'Text','Load workbench files & groups','ButtonPushedFcn',@(~,~)seedExplore(fig,true), ...
-    'Tooltip','seed the explorer with the workbench''s loaded recordings (_r.mat) and groups');
+uibutton(tb,'Text','Load workbench files & animals','ButtonPushedFcn',@(~,~)seedExplore(fig,true), ...
+    'Tooltip','seed the explorer with the workbench''s loaded recordings (_r.mat), one explorer group per animal');
 c.exploreStatus = uilabel(tb,'Text','(switch to this tab to seed from the loaded files)','FontAngle','italic');
 host = uipanel(gl,'BorderType','none');
 app.c.explore = c; app.exploreSeedKey = '';
@@ -519,8 +1757,11 @@ seedExplore(fig,true);
 end
 
 function seedExplore(fig, force)
-%seedExplore  Push the workbench's exportable RESULTS files + groups into the
+%seedExplore  Push the workbench's exportable RESULTS files + animals into the
 %   hosted guiExplore (only when the file set actually changed, unless forced).
+%   NOTE the explorer's own axis is called 'group' and is the EXPERIMENTAL group;
+%   this seed fills it with the workbench's ANIMAL, which is what it carried before
+%   the two axes were told apart (Phase 5 will feed it the real expGroup).
 if nargin<2, force = false; end
 app = getApp(fig);
 if ~isfield(app,'exploreAPI') || isempty(app.exploreAPI)
@@ -538,14 +1779,14 @@ if isempty(rpaths)
 end
 app.exploreAPI.loadPaths(rpaths, '_r\.mat$', '', '');           % seed the file list
 a = app.exploreAPI.getApp(); order = {a.files.path};            % explore's file order
-groups = unique({srcs.group},'stable');
-for gi = 1:numel(groups)
-    mem = {srcs(strcmp({srcs.group},groups{gi})).rpath};
+animals = unique({srcs.animal},'stable');
+for ai = 1:numel(animals)
+    mem = {srcs(strcmp({srcs.animal},animals{ai})).rpath};
     idx = find(ismember(order, mem));
-    if ~isempty(idx), app.exploreAPI.createGroup(groups{gi}, idx); end
+    if ~isempty(idx), app.exploreAPI.createGroup(animals{ai}, idx); end
 end
-setExploreStatus(fig, sprintf('Seeded %d file(s) in %d group(s) from the workbench.', ...
-    numel(rpaths), numel(groups)));
+setExploreStatus(fig, sprintf('Seeded %d file(s) in %d animal(s) from the workbench.', ...
+    numel(rpaths), numel(animals)));
 end
 
 function setExploreStatus(fig,msg)
@@ -557,7 +1798,9 @@ end
 
 %% ===================== tab-change seeding ========================== %%
 function onTabSelected(fig)
-%onTabSelected  Lazily refresh the Export list / seed Explore when its tab shows.
+%onTabSelected  Gate the move off the Files tab, then lazily refresh the Export
+%   list / seed Explore when its tab shows.
+if ~guardTabSwitch(fig), return; end
 app = getApp(fig);
 if ~isfield(app,'tg') || ~isgraphics(app.tg), return; end
 tab = app.tg.SelectedTab;
@@ -567,49 +1810,235 @@ end
 end
 
 %% ===================== loaders ===================================== %%
-function uiLoadStructured(fig)
-c = getApp(fig).c.files;
-root = strtrim(c.root.Value);
-if isempty(root) || ~isfolder(root), alert(fig,'Set a valid root folder first.'); return; end
-disc = wbDiscoverFiles('structured', root, strtrim(c.glob.Value), ...
-    strtrim(c.animal.Value), strtrim(c.ref.Value));
-applyDiscovery(fig,disc);
+function onSourceEdit(fig)
+%onSourceEdit  Remember the root/glob boxes (they are session state, not just UI).
+app = getApp(fig); c = app.c.files;
+app.root = strtrim(c.root.Value);
+app.glob = strtrim(c.glob.Value);
+setApp(fig,app);
 end
-function uiLoadFolder(fig)
-c = getApp(fig).c.files;
-root = uigetdir(defaultDir(c.root.Value),'Pick a folder to scan recursively');
-if isequal(root,0), return; end
-c.root.Value = root;
-disc = wbDiscoverFiles('folder', root, strtrim(c.glob.Value), strtrim(c.animal.Value));
-applyDiscovery(fig,disc);
+function onPatternEdit(fig,axis,value)
+%onPatternEdit  A label regexp changed -> re-derive every label (overrides win).
+setPattern(fig,axis,value);
 end
-function uiLoadManual(fig)
-c = getApp(fig).c.files;
+function setPattern(fig,axis,value)
+app = getApp(fig);
+if ~isfield(app.patterns,axis), return; end
+app.patterns.(axis) = strtrim(char(value));
+setApp(fig,app);
+syncFilesControls(fig);
+if strcmp(axis,'ref'), return; end                  % the reference rule applies on Scan
+rebuildWorkingSet(fig, {app.files.path}, true);
+end
+function setSource(fig,root,glob)
+app = getApp(fig);
+if nargin>=2 && ~isempty(root), app.root = char(root); end
+if nargin>=3 && ~isempty(glob), app.glob = char(glob); end
+setApp(fig,app); syncFilesControls(fig);
+end
+
+function uiBrowseRoot(fig)
+app = getApp(fig);
+d = uigetdir(defaultDir(app.root),'Pick the root folder to scan recursively');
+if isequal(d,0), return; end
+setSource(fig,d,'');
+end
+function uiScan(fig)
+app = getApp(fig);
+if isempty(app.root) || ~isfolder(app.root)
+    alert(fig,'Set a valid root folder first (Browse... or type one).'); return
+end
+doScan(fig);
+end
+function n = doScan(fig)
+%doScan  Recurse the root for the glob and REPLACE the working set.
+%   With a Reference regexp this goes through getFileNamesList's reference mode,
+%   which forces the matching file into column 1 - that file's recording IDENTITY
+%   becomes the animal's default reference (a hand-pinned one still wins).
+app = getApp(fig);
+p = app.patterns;
+if isempty(p.ref)
+    disc = wbDiscoverFiles('folder', app.root, app.glob, p.animal, p.type, p.expGroup);
+else
+    disc = wbDiscoverFiles('structured', app.root, app.glob, p.animal, p.ref, p.type, p.expGroup);
+end
+app.autoRef = autoRefsFrom(disc);
+setApp(fig,app);
+n = rebuildWorkingSet(fig, gridPaths(disc), false);
+end
+function uiAddFiles(fig)
+app = getApp(fig);
 [f,p] = uigetfile({'*.mat;*.rls;*.cxd;*.avi','Recordings & products';'*.*','All files'}, ...
-    'Pick files (multiselect)','MultiSelect','on',defaultDir(c.root.Value));
+    'Pick files (multiselect)','MultiSelect','on',defaultDir(app.root));
 if isequal(f,0), return; end
 if ischar(f), f = {f}; end
-paths = cellfun(@(x)fullfile(p,x),f,'UniformOutput',false);
-disc = wbDiscoverFiles('manual', paths, strtrim(c.animal.Value));
-applyDiscovery(fig,disc);
+addPaths(fig, cellfun(@(x)fullfile(p,x),f,'UniformOutput',false));
+end
+function uiAddFolder(fig)
+app = getApp(fig);
+d = uigetdir(defaultDir(app.root),'Pick a folder to scan recursively and ADD');
+if isequal(d,0), return; end
+disc = wbDiscoverFiles('folder', d, app.glob, app.patterns.animal, ...
+    app.patterns.type, app.patterns.expGroup);
+addPaths(fig, gridPaths(disc));
+end
+function n = addPaths(fig,paths)
+%addPaths  Union new paths into the working set (manual is the escape hatch, so
+%   it must COEXIST with a scan rather than replace it).
+app = getApp(fig);
+if ischar(paths), paths = {paths}; end
+n = rebuildWorkingSet(fig, [reshape({app.files.path},1,[]), reshape(paths,1,[])], true);
+end
+function n = deletePaths(fig,paths)
+%deletePaths  Drop rows from the WORKING SET.  Nothing is removed from disk.
+app = getApp(fig);
+if ischar(paths), paths = {paths}; end
+keep = setdiff(reshape({app.files.path},1,[]), reshape(paths,1,[]), 'stable');
+n = rebuildWorkingSet(fig, keep, true);
 end
 function uiClear(fig)
-applyDiscovery(fig,emptyDisc());
+app = getApp(fig);
+app.autoRef      = containers.Map('KeyType','char','ValueType','char');
+app.animalRefMan = containers.Map('KeyType','char','ValueType','char');
+setApp(fig,app);
+rebuildWorkingSet(fig, {}, false);
 end
 function apiLoad(fig,mode,varargin)
-%apiLoad  Programmatic loader: run wbDiscoverFiles(mode,...) and adopt the result.
+%apiLoad  Programmatic loader: run wbDiscoverFiles(mode,...) and adopt the result
+%   as the working set (the labels then come from the current regexp boxes).
 disc = wbDiscoverFiles(mode, varargin{:});
-applyDiscovery(fig,disc);
+app  = getApp(fig);
+if isfield(disc,'patterns')
+    f = intersect(fieldnames(app.patterns), fieldnames(disc.patterns));
+    for i = 1:numel(f), app.patterns.(f{i}) = disc.patterns.(f{i}); end
+end
+app.autoRef      = autoRefsFrom(disc);
+app.animalRefMan = containers.Map('KeyType','char','ValueType','char');
+setApp(fig,app); syncFilesControls(fig);
+rebuildWorkingSet(fig, gridPaths(disc), false);
 end
 function d = defaultDir(v)
 if ~isempty(v) && isfolder(v), d = v; else, d = pwd; end
 end
 
-function applyDiscovery(fig,disc)
-%applyDiscovery  Adopt a discovery result: flatten to rows, set modality, render.
+function paths = gridPaths(disc)
+%gridPaths  The discovery grid's files as a flat list, row-major (animal order).
+paths = {};
+if ~isfield(disc,'fNames') || isempty(disc.fNames), return; end
+g = disc.fNames.';                                   % transpose -> row-major read
+paths = reshape(g(~cellfun(@isempty,g)),1,[]);
+end
+
+function m = autoRefsFrom(disc)
+%autoRefsFrom  Animal -> reference recording IDENTITY, taken from column 1 of a
+%   reference-mode grid (that IS getFileNamesList's answer to the ref regexp).
+%   getFileNamesList puts SOMETHING in column 1 for every animal, matched or not,
+%   so the match is re-checked here: an animal whose files match nothing simply
+%   has no reference, which is legal.
+m = containers.Map('KeyType','char','ValueType','char');
+if ~isfield(disc,'referenceMode') || ~disc.referenceMode, return; end
+rx = '';
+if isfield(disc,'patterns') && isfield(disc.patterns,'ref'), rx = disc.patterns.ref; end
+for r = 1:size(disc.models,1)
+    mdl = disc.models{r,1};
+    if isempty(mdl), continue; end
+    if ~isempty(rx) && isempty(regexp(mdl.name, rx, 'once')), continue; end
+    m(mdl.animal) = mdl.identity;                   % identity: never a branch flag
+end
+end
+
+%% ===================== the curation loop ============================ %%
+function n = rebuildWorkingSet(fig, paths, keepOverlay)
+%rebuildWorkingSet  THE Files-tab loop.  Curated paths -> labels (regexp, then
+%   hand overrides) -> per-animal references -> the animal grid -> rows + table.
+%   Every curation action (scan, add, delete, label edit, reference tick, pattern
+%   edit) funnels through here, so there is one definition of the working set.
+app = getApp(fig);
+paths = uniqueStable(cleanPathList(paths));
+
+% ---- labels: the regexp answer, then the hand overrides on top -------------
+app.labelsAuto = wbTypeModel('derive', paths, app.patterns);
+app.labels     = wbTypeModel('applyOverrides', app.labelsAuto, app.overrides);
+% modality is PARSED from the extension/product rather than matched, so it rides
+% alongside the regexp axes with its own override map (same path->value contract)
+app.labels.modality = modalityLabels(paths, app.modalityOvr);
+
+% ---- effective per-animal reference: hand-pinned wins over the regexp ------
+animalsNow = wbTypeModel('values', app.labels, 'animal');
+app.animalRef = containers.Map('KeyType','char','ValueType','char');
+for i = 1:numel(animalsNow)
+    a = animalsNow{i};
+    if isKey(app.animalRefMan,a),  app.animalRef(a) = app.animalRefMan(a);
+    elseif isKey(app.autoRef,a),   app.animalRef(a) = app.autoRef(a);
+    end
+end
+app.animalRef = pruneRefs(app.animalRef, paths);     % a ref whose file is gone is no ref
+
+% ---- the animal grid + the deduped matrix rows -----------------------------
+disc = wbDiscoverFiles('curated', paths, app.labels, app.animalRef);
+disc.patterns = app.patterns;
+app.files = buildFileEntries(app, paths, disc);
+setApp(fig,app);
+adoptDiscovery(fig, disc, keepOverlay);
+n = numel(paths);
+end
+
+function labels = modalityLabels(paths, ovr)
+%modalityLabels  The parsed modality of each file, with any hand override on top.
+%   An override is only honoured if the EXTENSION allows it (wbFileModel owns
+%   that rule), so a stale session can never resurrect an impossible pairing.
+labels = cell(1,numel(paths));
+for i = 1:numel(paths)
+    m = wbFileModel(paths{i});
+    v = m.modality;
+    if isa(ovr,'containers.Map') && isKey(ovr,paths{i})
+        cand = ovr(paths{i});
+        if any(strcmp(cand, wbFileModel('modalities', m.ext))), v = cand; end
+    end
+    labels{i} = v;
+end
+end
+
+function files = buildFileEntries(app, paths, disc)
+%buildFileEntries  One entry per FILE: its model and its five curated fields.
+%   (app.rows stays one entry per RECORDING - a recording owns several branch
+%   products and the matrix must not show it twice.)
+files = emptyFiles();
+byPath = containers.Map('KeyType','char','ValueType','any');
+for r = 1:size(disc.models,1)
+    for c = 1:size(disc.models,2)
+        if isempty(disc.models{r,c}), continue; end
+        byPath(disc.models{r,c}.path) = disc.models{r,c};
+    end
+end
+for i = 1:numel(paths)
+    p = paths{i};
+    if isKey(byPath,p), m = byPath(p); else, m = wbFileModel(p); end
+    isRef = isKey(app.animalRef, m.animal) && strcmp(app.animalRef(m.animal), m.identity);
+    files(end+1) = struct('model',m,'path',p,'name',m.name, ...
+        'animal',m.animal,'type',m.type,'index',m.index,'expGroup',m.expGroup, ...
+        'modality',m.modality,'isRef',logical(isRef)); %#ok<AGROW>
+end
+end
+
+function m = pruneRefs(m, paths)
+%pruneRefs  Drop any reference whose recording no longer has a file in the set.
+if m.Count==0, return; end
+live = containers.Map('KeyType','char','ValueType','logical');
+for i = 1:numel(paths)
+    mm = wbFileModel(paths{i}); live(mm.identity) = true;
+end
+k = keys(m);
+for i = 1:numel(k)
+    if ~isKey(live, m(k{i})), remove(m,k{i}); end
+end
+end
+
+function adoptDiscovery(fig,disc,keepOverlay)
+%adoptDiscovery  Adopt a discovery grid: flatten to rows, set modality, render.
 app = getApp(fig);
 app.disc = disc;
-[app.rows, app.groupNames, app.modelArr] = flattenDisc(disc);
+[app.rows, app.animalNames, app.modelArr] = flattenDisc(disc);
 if ~isempty(app.modelArr)
     mods = {app.modelArr.modality};
     app.modality = modeStr(mods);
@@ -617,15 +2046,384 @@ else
     app.modality = 'LSCI';
 end
 app.reg = wbStepRegistry(app.modality);
-% a fresh load starts with no session overlay
-app.checked = containers.Map('KeyType','char','ValueType','any');
-app.stale   = containers.Map('KeyType','char','ValueType','any');
+if nargin<3 || ~keepOverlay
+    % a fresh load starts with no session overlay
+    app.checked = containers.Map('KeyType','char','ValueType','any');
+    app.stale   = containers.Map('KeyType','char','ValueType','any');
+end
 setApp(fig,app);
 recomputeBase(fig);
 refreshFileTable(fig);
 refreshStepSelector(fig);
 renderMatrix(fig); selectStep(fig,getApp(fig).selStep);
+renderConstructor(fig);       % types are data: a label edit adds/removes a row live
 refreshStatus(fig);
+end
+%% ---- curation actions (table edits, assignment, references) -------- %%
+function setLabel(fig,path,axis,value)
+%setLabel  Hand-assign one label.  A value that equals what the regexp already
+%   says clears the override instead of freezing it, so re-tuning the regexp
+%   still works; anything else is remembered path->value and survives a re-scan.
+app = getApp(fig);
+axis = axisFieldOf(axis);
+if isempty(axis) || ~isfield(app.overrides,axis), return; end
+value = strtrim(char(value));
+k = find(strcmp(app.labelsAuto.path, path), 1);
+if isempty(value) || (~isempty(k) && strcmp(value, app.labelsAuto.(axis){k}))
+    if isKey(app.overrides.(axis), path), remove(app.overrides.(axis), path); end
+else
+    app.overrides.(axis)(path) = value;
+end
+setApp(fig,app);
+rebuildWorkingSet(fig, {app.files.path}, true);
+end
+function a = axisFieldOf(axis)
+%axisFieldOf  Accept the table's column name ('group') for the axis ('expGroup').
+switch char(axis)
+    case {'group','expGroup'}, a = 'expGroup';
+    case {'animal','type','index'}, a = char(axis);
+    otherwise, a = '';
+end
+end
+function ok = setModality(fig,path,value)
+%setModality  Hand-correct a file's modality.  The EXTENSION decides what is
+%   possible (a .rls cannot be a myograph video), so an impossible value is
+%   refused rather than stored - wbFileModel owns that rule.
+ok = false;
+app = getApp(fig);
+i = find(strcmp({app.files.path}, path), 1);
+if isempty(i), return; end
+value = strtrim(char(value));
+allowed = wbFileModel('modalities', app.files(i).model.ext);
+if ~any(strcmp(value,allowed)), return; end
+if strcmp(value, wbFileModel(path).modality)
+    if isKey(app.modalityOvr,path), remove(app.modalityOvr,path); end   % back to parsed
+else
+    app.modalityOvr(path) = value;
+end
+setApp(fig,app);
+rebuildWorkingSet(fig, {app.files.path}, true);
+ok = true;
+end
+function setReference(fig,path,tf)
+%setReference  Tick/untick 'ref'.  RADIO SEMANTICS SCOPED TO THE ANIMAL: pinning
+%   a recording replaces that animal's previous reference and leaves every other
+%   animal alone.  What is stored is the recording IDENTITY, never a file path -
+%   each step resolves the branch (_t / _c / ...) it needs at run time.
+app = getApp(fig);
+i = find(strcmp({app.files.path}, path), 1);
+if isempty(i), return; end
+m = app.files(i).model;
+if tf
+    app.animalRefMan(m.animal) = m.identity;
+else
+    if isKey(app.animalRefMan,m.animal), remove(app.animalRefMan,m.animal); end
+    if isKey(app.autoRef,m.animal),      remove(app.autoRef,m.animal); end
+end
+setApp(fig,app);
+rebuildWorkingSet(fig, {app.files.path}, true);
+end
+function id = animalRefOf(app,animal)
+id = '';
+if isKey(app.animalRef,animal), id = app.animalRef(animal); end
+end
+function v = labelValues(app,axis)
+axis = axisFieldOf(axis);
+if isempty(axis) || isempty(app.labels), v = {}; return; end
+v = wbTypeModel('values', app.labels, axis);
+end
+
+function onFileTableEdit(fig,src,~)
+%onFileTableEdit  Reconcile the whole table after any cell edit.
+%   Reading the FULL Data, keyed by the non-editable 'file' column, instead of
+%   the edited index keeps this correct whatever the table's sort order is - a
+%   sorted uitable renumbers what the user sees, not its Data.  The key works
+%   because file names are unique across a scanned tree; a name that is NOT
+%   unique is reported by fileProblems and its rows are left alone here.
+D = src.Data;
+if isempty(D), return; end
+col = columnIndex();
+newRef = ''; unRef = {}; refused = {};
+for i = 1:size(D,1)
+    p = pathOfName(getApp(fig), charOf(D{i,col.file}), charOf(D{i,col.filetype}));
+    if isempty(p), continue; end                            % unknown or ambiguous
+    for ax = {'animal','type','index','group'}
+        f = fileEntry(getApp(fig), p);                      % labels may have moved
+        v = charOf(D{i,col.(ax{1})});
+        if ~strcmp(v, f.(axisFieldOf(ax{1}))), setLabel(fig,p,ax{1},v); end
+    end
+    f = fileEntry(getApp(fig), p);
+    if  logical(D{i,col.reference}) && ~f.isRef
+        if isempty(animalRefOf(getApp(fig), f.animal))
+            newRef = p;
+        else
+            refused{end+1} = sprintf('%s already has a reference', f.animal); %#ok<AGROW>
+        end
+    end
+    if ~logical(D{i,col.reference}) &&  f.isRef, unRef{end+1} = p; end %#ok<AGROW>
+end
+% the reference is a RADIO scoped to the animal: pin one where there is none, or
+% unpin the current one first (the other rows of that animal are greyed meanwhile)
+if ~isempty(newRef)
+    setReference(fig,newRef,true);
+else
+    for i = 1:numel(unRef), setReference(fig,unRef{i},false); end
+end
+if ~isempty(refused)
+    setCurStatus(fig, ['refused: ' strjoin(unique(refused),'; ') ...
+        ' - untick its current reference first.']);
+end
+refreshFileTable(fig); refreshStatus(fig);
+end
+function f = fileEntry(app,path)
+%fileEntry  The working-set entry of one path ([] when it is not in the set).
+f = [];
+k = find(strcmp({app.files.path}, path), 1);
+if ~isempty(k), f = app.files(k); end
+end
+function p = pathOfName(app,name,ext)
+%pathOfName  The path behind a table row, keyed by its name + extension columns -
+%   '' when the pair is not in the set or is AMBIGUOUS (two files of that name,
+%   which fileProblems flags as a hard block).
+p = '';
+if nargin<3, ext = ''; end
+k = find(strcmp({app.files.name}, [name ext]));
+if isscalar(k), p = app.files(k).path; end
+end
+function setCurStatus(fig,msg)
+c = getApp(fig).c.files;
+if isfield(c,'curStatus') && isgraphics(c.curStatus), c.curStatus.Text = msg; end
+end
+function c = columnIndex()
+%columnIndex  Field-safe name -> column number of the curation table.
+names = fileTableKeys();
+c = struct();
+for i = 1:numel(names), c.(names{i}) = i; end
+end
+function s = charOf(v)
+if isempty(v), s = ''; elseif ischar(v), s = v; else, s = char(string(v)); end
+end
+
+function uiAssignLabel(fig)
+%uiAssignLabel  Give EVERY selected row the same value in one action.
+app = getApp(fig); c = app.c.files;
+sel = selectedPaths(app,c);
+if isempty(sel)
+    setCurStatus(fig,'Select one or more rows in the table first (click, then shift/ctrl-click).');
+    return
+end
+v = strtrim(c.assignVal.Value);
+if isempty(v), setCurStatus(fig,'Type or pick a value first.'); return; end
+field = c.assignAxis.Value;
+[n,refused] = quickAssign(fig, sel, field, v);
+msg = sprintf('%d of %d selected row(s) -> %s "%s".', n, numel(sel), field, v);
+if refused > 0
+    msg = [msg sprintf('  %d refused (the file extension does not allow it).', refused)];
+end
+setCurStatus(fig,msg);
+end
+function [n,refused] = quickAssign(fig, paths, field, value)
+%quickAssign  Set one field on many files at once - the bulk-curation workhorse
+%   behind "Apply to selected rows" (and the programmatic entry point for it).
+n = 0; refused = 0;
+if ischar(paths), paths = {paths}; end
+for i = 1:numel(paths)
+    if strcmp(field,'modality')
+        if setModality(fig,paths{i},value), n = n + 1; else, refused = refused + 1; end
+    else
+        setLabel(fig,paths{i},field,value);
+        n = n + 1;
+    end
+end
+refreshFileTable(fig); refreshStatus(fig);
+end
+function uiDeleteSelected(fig)
+app = getApp(fig); c = app.c.files;
+sel = selectedPaths(app,c);
+if isempty(sel), c.curStatus.Text = 'Select one or more rows first.'; return; end
+deletePaths(fig,sel);
+c.curStatus.Text = sprintf('%d row(s) removed from the working set (files untouched on disk).', numel(sel));
+end
+function selectRows(fig,paths)
+%selectRows  Select the table rows holding these paths (the programmatic twin of
+%   clicking / shift-clicking, so bulk curation is drivable and testable).
+app = getApp(fig); t = app.c.files.fileTbl;
+if ~isgraphics(t), return; end
+if ischar(paths), paths = {paths}; end
+D = t.DisplayData; if isempty(D), D = t.Data; end
+col = columnIndex(); rows = [];
+for i = 1:size(D,1)
+    p = pathOfName(app, charOf(D{i,col.file}), charOf(D{i,col.filetype}));
+    if ~isempty(p) && any(strcmp(p,paths)), rows(end+1) = i; end %#ok<AGROW>
+end
+t.Selection = reshape(rows,1,[]);   % row-selection tables demand a 1-by-N vector
+refreshAssignItems(fig);
+end
+
+function sel = selectedPaths(app,c)
+%selectedPaths  The selected rows as PATHS, read through the DISPLAYED data so a
+%   sorted table selects what the user actually clicked.
+sel = {};
+t = c.fileTbl;
+if ~isgraphics(t), return; end
+idx = [];
+if isprop(t,'DisplaySelection'), idx = t.DisplaySelection; end
+if isempty(idx) && isprop(t,'Selection'), idx = t.Selection; end
+if isempty(idx), return; end
+if strcmp(t.SelectionType,'row')
+    idx = unique(idx(:));            % row selection: a 1-by-N list of ROW indices
+else
+    idx = unique(idx(:,1));          % cell selection: N-by-2 [row col] pairs
+end
+D = t.DisplayData;
+if isempty(D), D = t.Data; end
+col = columnIndex();
+for i = 1:numel(idx)
+    if idx(i) > size(D,1), continue; end
+    p = pathOfName(app, charOf(D{idx(i),col.file}), charOf(D{idx(i),col.filetype}));
+    if ~isempty(p), sel{end+1} = p; end %#ok<AGROW>
+end
+end
+
+%% ---- the gate: nothing proceeds on a half-curated file set --------- %%
+function [problems, warnings] = fileProblems(app)
+%fileProblems  What still stands between this file set and processing.
+%   BLOCKING problems: file names that are not unique across the scanned tree
+%   (the workbench keys rows, and the pipeline keys products, by name), and any
+%   file whose animal / type / index / group is still sitting in its no-match
+%   bucket.  Every field must be assigned before the next stage - use the regexp
+%   boxes, or select the rows and Quick-assign them.
+%   WARNINGS do not block: an animal with no reference recording is legal until
+%   a per-animal step (registration, vessel typing) is actually selected.
+problems = {}; warnings = {};
+if isempty(app.files), problems = {'No files loaded - scan a folder or add files.'}; return; end
+
+names = {app.files.name};
+[u,~,ic] = unique(names);
+dup = u(accumarray(ic,1) > 1);
+if ~isempty(dup)
+    problems{end+1} = sprintf(['%d file name(s) appear more than once (%s). ' ...
+        'The workbench and the pipeline identify recordings BY NAME, so a scanned ' ...
+        'tree must not repeat one - rename them or scan a narrower root.'], ...
+        numel(dup), strjoin(shortList(dup),', '));
+end
+
+%   'index' is the one axis whose no-match bucket ('1') is a real answer - with no
+%   index regexp every file simply IS index 1 - so only an empty one is missing.
+ax = {'animal','type','index','expGroup'};
+nm = {'animal','type','index','group'};
+for i = 1:numel(ax)
+    bucket = wbTypeModel('default', ax{i});
+    if strcmp(ax{i},'index'), bucket = char(0);  end        % never matches: '1' is fine
+    bad = strcmp({app.files.(ax{i})}, bucket) | cellfun(@isempty,{app.files.(ax{i})});
+    if any(bad)
+        problems{end+1} = sprintf('%d file(s) have no %s assigned (%s).', ...
+            nnz(bad), nm{i}, strjoin(shortList({app.files(bad).name}),', ')); %#ok<AGROW>
+    end
+end
+
+noRef = {};
+animalsNow = wbTypeModel('values', app.labels, 'animal');
+for i = 1:numel(animalsNow)
+    if ~isKey(app.animalRef, animalsNow{i}), noRef{end+1} = animalsNow{i}; end %#ok<AGROW>
+end
+if ~isempty(noRef)
+    warnings{end+1} = sprintf(['%d animal(s) have no reference recording (%s) - ' ...
+        'legal, but registration and vessel typing need one.'], ...
+        numel(noRef), strjoin(shortList(noRef),', '));
+end
+end
+function s = shortList(c)
+%shortList  At most four names, so a status line stays a status line.
+s = reshape(c,1,[]);
+if numel(s) > 4, s = [s(1:4), {sprintf('+%d more',numel(s)-4)}]; end
+end
+function tf = filesValid(app)
+tf = isempty(fileProblems(app));
+end
+function refreshProblems(fig)
+%refreshProblems  The banner above the status line: the gate, in words.
+app = getApp(fig); c = app.c.files;
+if ~isfield(c,'problems') || ~isgraphics(c.problems), return; end
+[p,w] = fileProblems(app);
+syncTabLock(fig);                       % no files = nothing to move on to, either
+if isempty(app.files)
+    c.problems.Text = ''; return
+end
+if isempty(p)
+    c.problems.Text = ['Ready for processing.' warnText(w)];
+    c.problems.FontColor = [0 0.45 0];
+else
+    c.problems.Text = ['Not ready - fix before processing:  ' strjoin(p,'   |   ') warnText(w)];
+    c.problems.FontColor = [0.75 0.2 0];
+end
+syncTabLock(fig);
+end
+
+function syncTabLock(fig)
+%syncTabLock  Grey the other tabs (and disable Next) while the file set is
+%   incomplete.  A uitab has no Enable property, so the lock is its title colour
+%   plus guardTabSwitch, which bounces a click back to the Files tab.
+app = getApp(fig);
+ok = filesValid(app);
+locked = [0.62 0.62 0.62]; open = [0 0 0];
+names = fieldnames(app.tabs);
+for i = 1:numel(names)
+    tb = app.tabs.(names{i});
+    if strcmp(names{i},'files') || ~isgraphics(tb) || ~isprop(tb,'ForegroundColor'), continue; end
+    tb.ForegroundColor = ternary(ok, open, locked);
+end
+if isfield(app.c,'files') && isfield(app.c.files,'nextBtn') && isgraphics(app.c.files.nextBtn)
+    app.c.files.nextBtn.Enable = ternary(ok,'on','off');
+end
+end
+
+function goToConstructor(fig)
+%goToConstructor  The Files tab's "Next": move on once the set is complete.
+if ~guardTabSwitchTo(fig, getApp(fig).tabs.constructor), return; end
+end
+function s = warnText(w)
+if isempty(w), s = ''; else, s = ['   (' strjoin(w,'; ') ')']; end
+end
+function tf = guardTabSwitch(fig)
+%guardTabSwitch  Refuse to leave the Files tab while the file set is incomplete.
+%   The author's rule: no half-curated set reaches the next stage.
+tf = true;
+app = getApp(fig);
+if ~isfield(app,'tg') || ~isgraphics(app.tg), return; end
+if isequal(app.tg.SelectedTab, app.tabs.files), return; end
+if filesValid(app), return; end
+app.tg.SelectedTab = app.tabs.files;
+tf = false;
+alertIncomplete(fig,app);
+end
+
+function tf = guardTabSwitchTo(fig,tab)
+%guardTabSwitchTo  Move to a tab, or refuse and say what is still missing.
+tf = false;
+app = getApp(fig);
+if ~isfield(app,'tg') || ~isgraphics(app.tg), return; end
+if ~filesValid(app), alertIncomplete(fig,app); return; end
+app.tg.SelectedTab = tab;
+tf = true;
+end
+
+function alertIncomplete(fig,app)
+alert(fig, sprintf(['Finish the Files tab first:\n\n%s\n\nEvery file needs an animal, ' ...
+    'type, index and group.  Select rows and use Quick assign to set them in bulk.'], ...
+    strjoin(fileProblems(app), newline)));
+end
+
+function p = cleanPathList(p)
+if isempty(p), p = {}; return; end
+if ischar(p), p = {p}; end
+p = reshape(p,1,[]);
+p = p(~cellfun(@isempty,p));
+p = cellfun(@char,p,'UniformOutput',false);
+end
+function u = uniqueStable(c)
+if isempty(c), u = {}; return; end
+[~,ia] = unique(c,'stable'); u = c(sort(ia));
 end
 
 function refreshStepSelector(fig)
@@ -640,8 +2438,8 @@ if ~any(strcmp(app.selStep,{app.reg.id})), app.selStep = app.reg(1).id; end
 c.stepDrop.Value = app.selStep; setApp(fig,app);
 end
 
-function [rows, groupNames, modelArr] = flattenDisc(disc)
-%flattenDisc  Discovery grid -> flat rows in group-major, reference-first order.
+function [rows, animalNames, modelArr] = flattenDisc(disc)
+%flattenDisc  Discovery grid -> flat rows in animal-major, reference-first order.
 %   ONE ROW PER RECORDING IDENTITY.  A recording can own several branch products
 %   with the SAME identity (e.g. a _t_K and a _c_K from one .rls), so a glob that
 %   matches more than one branch (*_K_d.mat) would otherwise emit duplicate rows.
@@ -650,20 +2448,20 @@ function [rows, groupNames, modelArr] = flattenDisc(disc)
 %   _s files (wbStateEngine), so the anchor branch does not change what runs.  In
 %   the normal single-entry-glob workflow no identity ever repeats, so this is a
 %   no-op there.
-rows = emptyRows(); groupNames = {}; modelArr = wbFileModel('x.rls'); modelArr(1) = [];
+rows = emptyRows(); animalNames = {}; modelArr = wbFileModel('x.rls'); modelArr(1) = [];
 if isempty(disc.models), return; end
 seen = containers.Map('KeyType','char','ValueType','logical');
 [nr,nc] = size(disc.models);
 for r = 1:nr
-    if ~isempty(disc.groups) && numel(disc.groups)>=r, gname = disc.groups(r).name; else, gname = sprintf('group%d',r); end
-    groupNames{end+1} = gname; %#ok<AGROW>
+    if ~isempty(disc.animals) && numel(disc.animals)>=r, aname = disc.animals(r).name; else, aname = sprintf('animal%d',r); end
+    animalNames{end+1} = aname; %#ok<AGROW>
     for cc = 1:nc
         m = disc.models{r,cc};
         if isempty(m), continue; end
         if isKey(seen, m.identity), continue; end     % dedup: one row per recording
         seen(m.identity) = true;
-        row = struct('model',m,'identity',m.identity,'group',gname,'groupIdx',r, ...
-            'rowInGroup',cc,'isRef',logical(disc.referenceMode && cc==1), ...
+        row = struct('model',m,'identity',m.identity,'animal',aname,'animalIdx',r, ...
+            'rowInAnimal',cc,'isRef',logical(disc.referenceMode && cc==1), ...
             'label',fileLabel(m));
         rows(end+1) = row; %#ok<AGROW>
         modelArr(end+1) = m; %#ok<AGROW>
@@ -676,26 +2474,109 @@ if isempty(c), s = 'LSCI'; return; end
 u = unique(c); n = cellfun(@(x)sum(strcmp(x,c)),u); [~,i] = max(n); s = u{i};
 end
 
+function D = fileTableData(app)
+%fileTableData  The curation table's Data: ONE ROW PER FILE, in working-set order.
+n = numel(app.files);
+D = cell(n,numel(fileTableColumns()));
+for i = 1:n
+    f = app.files(i);
+    [~,bare,ext] = fileparts(f.path);
+    D(i,:) = {f.isRef, bare, f.animal, f.type, f.index, f.expGroup, ...
+              ext, f.modality, stageLabel(f.model)};
+end
+end
 function refreshFileTable(fig)
 app = getApp(fig); c = app.c.files;
-n = numel(app.rows);
-D = cell(n,5);
-for i = 1:n
-    r = app.rows(i); m = r.model;
-    D(i,:) = {r.group, fileLabel(m), ternary(r.isRef,'ref',''), m.modality, stageLabel(m)};
+c.fileTbl.Data = fileTableData(app);
+styleReferenceColumn(fig);
+refreshAssignItems(fig);
+refreshProblems(fig);
 end
-c.fileTbl.Data = D;
+
+function styleReferenceColumn(fig)
+%styleReferenceColumn  Grey the reference ticks of an animal that already has one.
+%   The reference is a RADIO scoped to the animal: once it is pinned, the other
+%   rows of that animal are not available until it is unpinned, and the table says
+%   so (a uitable cannot disable a single cell, so this is colour + a refusal in
+%   the edit callback - onFileTableEdit).
+app = getApp(fig); t = app.c.files.fileTbl;
+if ~isgraphics(t), return; end
+removeStyle(t);
+if isempty(app.files), return; end
+col = columnIndex();
+rows = [];
+for i = 1:numel(app.files)
+    f = app.files(i);
+    if ~f.isRef && ~isempty(animalRefOf(app,f.animal)), rows(end+1) = i; end %#ok<AGROW>
+end
+if isempty(rows), return; end
+sty = uistyle('FontColor',[0.65 0.65 0.65],'BackgroundColor',[0.94 0.94 0.94]);
+addStyle(t, sty, 'cell', [rows(:), repmat(col.reference,numel(rows),1)]);
+end
+function refreshAssignItems(fig)
+%refreshAssignItems  Seed the assign combo from the values ACTUALLY IN USE on the
+%   chosen field - the vocabulary is discovered, never a built-in list, and the
+%   box stays editable so a brand-new value can simply be typed.  Modality is the
+%   one exception: its vocabulary IS fixed (wbFileModel owns it) and is offered
+%   narrowed to what every selected row's extension can be.
+app = getApp(fig); c = app.c.files;
+if ~isfield(c,'assignVal') || ~isgraphics(c.assignVal), return; end
+if strcmp(c.assignAxis.Value,'modality')
+    v = allowedModalitiesFor(app, selectedPaths(app,c));
+    c.assignVal.Editable = 'off';
+else
+    v = labelValues(app, c.assignAxis.Value);
+    c.assignVal.Editable = 'on';
+end
+if isempty(v), v = {''}; end
+cur = c.assignVal.Value;
+c.assignVal.Items = v;
+if any(strcmp(cur,v)), c.assignVal.Value = cur; else, c.assignVal.Value = v{1}; end
+end
+function v = allowedModalitiesFor(app, paths)
+%allowedModalitiesFor  What EVERY one of these files could be (the intersection).
+v = wbFileModel('modalities');
+for i = 1:numel(paths)
+    f = fileEntry(app, paths{i});
+    if isempty(f), continue; end
+    v = intersect(v, wbFileModel('modalities', f.model.ext), 'stable');
+end
 end
 function s = stageLabel(m)
 if m.isRaw, s = 'raw'; elseif isempty(m.flags), s = m.product; else, s = [strjoin(m.flags,'_') '_' m.product]; end
 end
-function refreshStatus(fig)
+function syncFilesControls(fig)
+%syncFilesControls  Push root/glob/patterns back into their boxes (session load).
 app = getApp(fig);
-if isempty(app.rows)
+if ~isfield(app,'c') || ~isfield(app.c,'files'), return; end
+c = app.c.files;
+if isgraphics(c.root), c.root.Value = app.root; end
+if isgraphics(c.glob), c.glob.Value = app.glob; end
+f = fieldnames(c.pat);
+for i = 1:numel(f)
+    if isfield(app.patterns,f{i}) && isgraphics(c.pat.(f{i}))
+        c.pat.(f{i}).Value = app.patterns.(f{i});
+    end
+end
+end
+function refreshStatus(fig)
+%refreshStatus  N files / A animals / T types / G groups / U untyped / R refless.
+app = getApp(fig);
+if isempty(app.files)
     txt = 'No files loaded.';
 else
-    txt = sprintf('%d files in %d group(s); modality %s.', ...
-        numel(app.rows), numel(app.groupNames), app.modality);
+    animalsNow = wbTypeModel('values', app.labels, 'animal');
+    nNoRef = 0;
+    for i = 1:numel(animalsNow)
+        if ~isKey(app.animalRef, animalsNow{i}), nNoRef = nNoRef + 1; end
+    end
+    nUntyped = sum(strcmp({app.files.type}, wbTypeModel('default','type')));
+    txt = sprintf(['%d files - %d animal(s) - %d type(s) - %d group(s) - ' ...
+        '%d untyped - %d animal(s) without a reference.  Modality %s.'], ...
+        numel(app.files), numel(animalsNow), ...
+        numel(wbTypeModel('values', app.labels, 'type')), ...
+        numel(wbTypeModel('values', app.labels, 'expGroup')), ...
+        nUntyped, nNoRef, app.modality);
 end
 app.c.files.status.Text = txt;
 end
@@ -716,10 +2597,17 @@ end
 setApp(fig,app);
 end
 function cs = curSettingsFor(app,model)
+%curSettingsFor  The settings a recording would run with - resolved for ITS TYPE,
+%   so the staleness fingerprint follows the type's configuration.
+ty = modelType(model);
 cs = struct();
 for k = 1:numel(app.reg)
-    cs.(app.reg(k).id) = wbSettingsModel('resolve', app.sm, app.reg(k), model);
+    cs.(app.reg(k).id) = wbSettingsModel('resolve', app.sm, app.reg(k), model, ty);
 end
+end
+function ty = modelType(model)
+ty = '';
+if isstruct(model) && isfield(model,'type'), ty = char(model.type); end
 end
 
 function s = resolveCellState(app,identity,stepId)
@@ -755,11 +2643,14 @@ function s = projectCheckable(app,identity,stepId)
 %   so this returns 'unavailable' for them.
 s = 'unavailable';
 step = stepById(app.reg,stepId);
-if isempty(step) || isempty(step.requires), return; end
-for i = 1:numel(step.requires)
-    reqState = resolveCellState(app,identity,step.requires{i});   % recurse over the DAG
-    if ~any(strcmp(reqState,{'done','stale','checked'})), return; end
+req  = wbPrereqs('all', step);
+if isempty(step) || isempty(req), return; end
+have = {};
+for i = 1:numel(req)
+    reqState = resolveCellState(app,identity,req{i});             % recurse over the DAG
+    if any(strcmp(reqState,{'done','stale','checked'})), have{end+1} = req{i}; end %#ok<AGROW>
 end
+if ~wbPrereqs('met', step, have), return; end
 s = 'ready';
 end
 
@@ -796,9 +2687,9 @@ function renderMatrixWidgets(fig)
 app = getApp(fig); c = app.c.process; reg = app.reg;
 nSteps = numel(reg);
 nCols  = 1 + nSteps;
-nGroups = numel(app.groupNames);
+nAnimals = numel(app.animalNames);
 nBody  = numel(app.rows);
-nRows  = 1 + nGroups + nBody;                      % header + group headers + files
+nRows  = 1 + nAnimals + nBody;                      % header + animal headers + files
 
 colW = [{190}, repmat({96},1,nSteps)];
 rowH = [{58}, num2cell(repmat(26,1,nRows-1))];
@@ -818,20 +2709,20 @@ for s = 1:nSteps
 end
 setApp(fig,app);
 
-% ---- body: group header + one row per file ----
+% ---- body: animal header + one row per file ----
 gridRow = 1;
-lastGroup = -1;
+lastAnimal = -1;
 app = getApp(fig);
 for i = 1:numel(app.rows)
     r = app.rows(i);
-    if r.groupIdx ~= lastGroup
+    if r.animalIdx ~= lastAnimal
         gridRow = gridRow + 1;
         gh = uigridlayout(grid,[1 3],'ColumnWidth',{'1x','fit','fit'},'Padding',[0 0 0 0]);
         gh.Layout.Row = gridRow; gh.Layout.Column = [1 nCols];
-        uilabel(gh,'Text',['  ' r.group],'FontWeight','bold','BackgroundColor',[0.92 0.92 0.96]);
-        uibutton(gh,'Text','check group','FontSize',9,'ButtonPushedFcn',@(~,~)checkGroup(fig,r.group,true));
-        uibutton(gh,'Text','clear','FontSize',9,'ButtonPushedFcn',@(~,~)checkGroup(fig,r.group,false));
-        lastGroup = r.groupIdx;
+        uilabel(gh,'Text',['  ' r.animal],'FontWeight','bold','BackgroundColor',[0.92 0.92 0.96]);
+        uibutton(gh,'Text','check animal','FontSize',9,'ButtonPushedFcn',@(~,~)checkAnimal(fig,r.animal,true));
+        uibutton(gh,'Text','clear','FontSize',9,'ButtonPushedFcn',@(~,~)checkAnimal(fig,r.animal,false));
+        lastAnimal = r.animalIdx;
     end
     gridRow = gridRow + 1;
     app.gridRowOf(r.identity) = gridRow;
@@ -895,8 +2786,8 @@ s = 'not available yet';
 step = stepById(app.reg,stepId);
 if isKey(app.base,identity) && ~any(strcmp(app.modality,step.modalities))
     s = ['not for ' app.modality];
-elseif ~isempty(step.requires)
-    s = ['needs: ' strjoin(step.requires,', ')];
+elseif ~isempty(wbPrereqs('all',step))
+    s = ['needs: ' wbPrereqs('describe',step)];
 end
 end
 
@@ -905,13 +2796,13 @@ function renderMatrixTable(fig)
 app = getApp(fig); c = app.c.process; reg = app.reg;
 gl = uigridlayout(c.matrixPanel,[2 1],'RowHeight',{'fit','1x'},'Padding',[4 4 4 4]);
 uilabel(gl,'Text',sprintf(['%d files exceed the widget limit (%d): showing a read-only ' ...
-    'state table. Use the toolbar / column / group checks to queue.'],numel(app.rows),app.maxWidgets), ...
+    'state table. Use the toolbar / column / animal checks to queue.'],numel(app.rows),app.maxWidgets), ...
     'WordWrap','on','FontAngle','italic');
 n = numel(app.rows);
 D = cell(n, numel(reg)+1);
 for i = 1:n
     r = app.rows(i);
-    D{i,1} = [r.group ' / ' r.label];
+    D{i,1} = [r.animal ' / ' r.label];
     for s = 1:numel(reg)
         D{i,s+1} = stateGlyph(resolveCellState(app,r.identity,reg(s).id));
     end
@@ -1021,10 +2912,10 @@ app = getApp(fig);
 for i = 1:numel(app.rows), setCheckedQuiet(app,app.rows(i).identity,stepId,tf); end
 setApp(fig,app); refreshCells(fig,{});
 end
-function checkGroup(fig,groupName,tf)
+function checkAnimal(fig,animalName,tf)
 app = getApp(fig);
 for i = 1:numel(app.rows)
-    if strcmp(app.rows(i).group,groupName)
+    if strcmp(app.rows(i).animal,animalName)
         for s = 1:numel(app.reg), setCheckedQuiet(app,app.rows(i).identity,app.reg(s).id,tf); end
     end
 end
@@ -1086,17 +2977,20 @@ function s = stepInfoText(step)
 bits = {};
 if ~isempty(step.gatingField), bits{end+1} = ['gates on settings.' step.gatingField];
 else, bits{end+1} = 'done by output (no settings field)'; end
-if strcmp(step.arity,'perGroup'), bits{end+1} = 'per-group (reference in column 1)'; end
+if strcmp(step.arity,'perAnimal'), bits{end+1} = 'per-animal (reference in column 1)'; end
 if ~isequal(step.interactive,false), bits{end+1} = 'interactive'; end
 if step.needsRaw, bits{end+1} = 'also needs the raw recording'; end
-if ~isempty(step.requires), bits{end+1} = ['requires ' strjoin(step.requires,', ')]; end
+if ~isempty(wbPrereqs('all',step)), bits{end+1} = ['requires ' wbPrereqs('describe',step)]; end
 s = strjoin(bits,'  |  ');
 end
 
-function buildSettingsPanel(fig,panel,step)
+function buildSettingsPanel(fig,panel,step,type)
 %buildSettingsPanel  Generalised buildParamEditor: render step.settingGroups.
+%   SCOPE.  An empty type edits the GLOBAL layer (the Process tab, and the
+%   per-animal steps, which span types by definition); a type edits that type's
+%   own layer and no other's - wbSettingsModel resolves and stores both.
+if nargin<4, type = ''; end
 delete(panel.Children);
-app = getApp(fig);
 groups = step.settingGroups;
 if isempty(groups)
     gl = uigridlayout(panel,[1 1],'Padding',[8 8 8 8]);
@@ -1104,41 +2998,101 @@ if isempty(groups)
         'WordWrap','on','FontAngle','italic');
     return
 end
-s = wbSettingsModel('resolve', app.sm, step);      % step-level resolution (no file)
-stack = uigridlayout(panel,[size(groups,1) 1],'RowHeight',repmat({'fit'},1,size(groups,1)), ...
-    'RowSpacing',8,'Padding',[6 6 6 6],'Scrollable','on');   % the grid owns the scroll, not the panel
-for gi = 1:size(groups,1)
-    p = uipanel(stack,'Title',groups{gi,1},'FontWeight','bold');
-    flds = groups{gi,2};
-    gg = uigridlayout(p,[numel(flds) 2],'ColumnWidth',{'fit','1x'}, ...
-        'RowHeight',repmat({'fit'},1,numel(flds)),'RowSpacing',3);
-    for fi = 1:numel(flds)
-        f = flds{fi};
-        lbl = uilabel(gg,'Text',f);
-        if isfield(step.tips,f), lbl.Tooltip = step.tips.(f); end
-        val = getfieldOr(s,f,[]);
-        makeParamControl(fig,gg,step,f,val);
+renderSections(fig,panel,step,type,true);
+end
+
+function renderSections(fig,parent,step,type,scroll)
+%renderSections  BASIC first, ADVANCED below - the only structure of a settings
+%   panel.  Both halves behave identically; the split is purely about what a user
+%   has to read before they can run something.
+%   TWO BOXES, AND NO BOXES INSIDE THEM (author, 2026-07-28).  A settings group is
+%   a bold heading with its fields under it, separated by space rather than by yet
+%   another border: nested frames made the panel unreadable at a glance.
+app = getApp(fig);
+s = wbSettingsModel('resolve', app.sm, step, type);   % step(+type)-level, no file
+[basic, advanced] = splitBasicAdvanced(step);
+sections = {'Basic', basic; 'Advanced', advanced};
+sections = sections(~cellfun(@isempty, sections(:,2)), :);
+stack = uigridlayout(parent,[size(sections,1) 1],'RowHeight',repmat({'fit'},1,size(sections,1)), ...
+    'RowSpacing',10,'Padding',[4 4 4 4],'Scrollable',ternary(scroll,'on','off'));
+for si = 1:size(sections,1)
+    sec = uipanel(stack,'Title',[sections{si,1} ' settings'],'FontWeight','bold', ...
+        'ForegroundColor',ternary(si==1,[0 0 0],[0.42 0.42 0.42]), ...
+        'Tooltip',sectionTip(sections{si,1}));
+    g = sections{si,2};
+    inner = uigridlayout(sec,[2*size(g,1) 1],'RowHeight',repmat({'fit'},1,2*size(g,1)), ...
+        'RowSpacing',4,'Padding',[8 6 8 8]);
+    for gi = 1:size(g,1)                            % heading, then its fields
+        uilabel(inner,'Text',g{gi,1},'FontWeight','bold','FontColor',[0.25 0.25 0.25]);
+        fieldGrid(fig,inner,step,g{gi,2},s,type);
     end
 end
 end
 
-function makeParamControl(fig,parent,step,field,val)
+function [basic, advanced] = splitBasicAdvanced(step)
+%splitBasicAdvanced  Deal a step's setting GROUPS into the two display sections.
+%   BASIC holds the fields a protocol is actually written around (the registry's
+%   basicFields); ADVANCED holds the rest, because most users never touch them.  A
+%   step that names no basic fields shows everything as Basic rather than hiding
+%   all of it under Advanced.
+groups = step.settingGroups;
+bf = {};
+if isfield(step,'basicFields'), bf = step.basicFields; end
+if isempty(bf), basic = groups; advanced = {}; return; end
+basic = {}; advanced = {};
+for gi = 1:size(groups,1)
+    flds = groups{gi,2};
+    isB  = ismember(flds, bf);
+    if any(isB),  basic(end+1,:)    = {groups{gi,1}, flds(isB)};  end %#ok<AGROW>
+    if any(~isB), advanced(end+1,:) = {groups{gi,1}, flds(~isB)}; end %#ok<AGROW>
+end
+end
+
+function t = sectionTip(name)
+if strcmp(name,'Basic')
+    t = 'the settings a protocol is normally written around';
+else
+    t = 'rarely changed - the launcher defaults suit most recordings';
+end
+end
+
+function fieldGrid(fig,parent,step,flds,s,type)
+%fieldGrid  label + control per field, laid out two columns and indented under the
+%   group heading (the indent replaces the frame the group used to be drawn in).
+gg = uigridlayout(parent,[numel(flds) 2],'ColumnWidth',{'fit','1x'}, ...
+    'RowHeight',repmat({'fit'},1,numel(flds)),'RowSpacing',3,'Padding',[12 0 0 2]);
+for fi = 1:numel(flds)
+    f = flds{fi};
+    lbl = uilabel(gg,'Text',f);
+    if isfield(step.tips,f), lbl.Tooltip = step.tips.(f); end
+    makeParamControl(fig,gg,step,f,getfieldOr(s,f,[]),type);
+end
+end
+
+function makeParamControl(fig,parent,step,field,val,type)
 %makeParamControl  One control sized to the field's type (enum/logical/cell/num).
+if nargin<6, type = ''; end
+cb = @(o) onSettingEditScoped(fig,type,step.id,field,o.Value);
 if isfield(step.enums,field)
     items = step.enums.(field);
     v = char(string(val)); if ~any(strcmp(v,items)), v = items{1}; end
-    uidropdown(parent,'Items',items,'Value',v, ...
-        'ValueChangedFcn',@(o,~)onSettingEdit(fig,step.id,field,o.Value));
+    uidropdown(parent,'Items',items,'Value',v,'ValueChangedFcn',@(o,~)cb(o));
 elseif islogical(defaultType(step,field))
-    uicheckbox(parent,'Text','','Value',logical(firstTrue(val)), ...
-        'ValueChangedFcn',@(o,~)onSettingEdit(fig,step.id,field,o.Value));
+    uicheckbox(parent,'Text','','Value',logical(firstTrue(val)),'ValueChangedFcn',@(o,~)cb(o));
 elseif iscell(val)
-    uieditfield(parent,'text','Value',cellToStr(val), ...
-        'ValueChangedFcn',@(o,~)onSettingEdit(fig,step.id,field,o.Value), ...
+    uieditfield(parent,'text','Value',cellToStr(val),'ValueChangedFcn',@(o,~)cb(o), ...
         'Tooltip','comma-separated list');
 else
-    uieditfield(parent,'text','Value',val2str(val), ...
-        'ValueChangedFcn',@(o,~)onSettingEdit(fig,step.id,field,o.Value));
+    uieditfield(parent,'text','Value',val2str(val),'ValueChangedFcn',@(o,~)cb(o));
+end
+end
+
+function onSettingEditScoped(fig,type,stepId,field,rawval)
+%onSettingEditScoped  Route an edit to the global layer or to one type's layer.
+if isempty(type)
+    onSettingEdit(fig,stepId,field,rawval);
+else
+    onTypeSettingEdit(fig,type,stepId,field,rawval);
 end
 end
 function t = defaultType(step,field)
@@ -1171,11 +3125,20 @@ selectStep(fig,app.selStep);
 wbLog(fig,sprintf('edit %s.%s -> %s',stepId,field,val2str(value)));
 end
 
-function applyInvalidation(fig,seed)
+function applyInvalidation(fig,seed,type)
 %applyInvalidation  Mark every DONE cell in the forward set of the edit stale.
+%   With a type, only that type's recordings are touched - which is the whole
+%   point of keying the settings by type: a BP edit must leave BV's done cells
+%   alone.  The seed is a STEP ID (or a shared-key name), never a bare field, so
+%   'deleteOriginal' edited on BFI cannot invalidate splitRegions.
 app = getApp(fig);
 if isempty(app.modelArr), return; end
-cells = wbInvalidate(app.reg, seed, app.modelArr);
+models = app.modelArr;
+if nargin>=3 && ~isempty(type)
+    models = models(strcmp({models.type}, char(type)));
+    if isempty(models), return; end
+end
+cells = wbInvalidate(app.reg, seed, models);
 for i = 1:size(cells,1)
     id = cells{i,1}; stepId = cells{i,2};
     if ~isKey(app.base,id), continue; end
@@ -1241,6 +3204,7 @@ recomputeBase(fig);
 app = getApp(fig); app.stale = containers.Map('KeyType','char','ValueType','any'); setApp(fig,app);
 refreshCells(fig,{});
 selectStep(fig,getApp(fig).selStep);
+renderConstructor(fig);            % a preset carries the per-type layers too
 refreshPresetDrop(fig);
 wbLog(fig,['loaded preset ' pth]);
 end
@@ -1263,7 +3227,8 @@ if strcmp(name,'(launcher defaults)')
     recomputeBase(fig);
     app = getApp(fig); app.stale = containers.Map('KeyType','char','ValueType','any'); setApp(fig,app);
     refreshCells(fig,{}); selectStep(fig,getApp(fig).selStep);
-    wbLog(fig,'reset to launcher defaults');
+    renderConstructor(fig);        % every per-type layer went with the bag
+    wbLog(fig,'reset to launcher defaults (global AND per-type settings)');
     return
 end
 loadPreset(fig,fullfile(getApp(fig).presetDir,name));
@@ -1283,15 +3248,30 @@ loadSessionFrom(fig,fullfile(p,f));
 end
 function saveSessionTo(fig,pth)
 app = getApp(fig);
-session = struct();
+session = wbSession('empty');
+% ---- the curated file set and how it was made ------------------------------
+session.root          = app.root;
+session.glob          = app.glob;
+session.patterns      = app.patterns;
+session.paths         = {app.files.path};
+session.overrides     = app.overrides;
+session.modalityOvr   = app.modalityOvr;
+session.animalRef     = app.animalRef;
+session.animalRefMan  = app.animalRefMan;
+% ---- the derived grid + the processing state --------------------------------
 session.fNames        = app.disc.fNames;
 session.referenceMode = app.disc.referenceMode;
-session.groupNames    = app.groupNames;
+session.animalNames   = app.animalNames;
 session.modality      = app.modality;
 session.rowOrder      = [];
 session.bag           = app.sm.bag;
 session.stepOverrides = app.sm.stepOverrides;
 session.fileOverrides = app.sm.fileOverrides;
+% ---- the Constructor's output: what each TYPE runs, and with what ----------
+session.typeBag       = app.sm.typeBag;
+session.typeOverrides = app.sm.typeOverrides;
+session.typeSel       = app.typeSel;
+session.animalSel     = app.animalSel;
 session.checked       = app.checked;
 session.staleOverlay  = app.stale;
 session.presetRef     = app.presetRef;
@@ -1299,93 +3279,92 @@ wbSession('save', pth, session);
 wbLog(fig,['saved session ' pth]);
 end
 function loadSessionFrom(fig,pth)
+%loadSessionFrom  Restore a session WITHOUT a re-scan: the curated path list, its
+%   labels (regexps + hand overrides + modality corrections), the per-animal
+%   references and the settings/overlay all come back from the sidecar.
 session = wbSession('load', pth);
 app = getApp(fig);
-% rebuild the discovery grid + rows from the stored paths (no disk scan needed)
-disc = discFromGrid(session.fNames, session.referenceMode, session.groupNames);
-app.disc = disc;
-[app.rows, app.groupNames, app.modelArr] = flattenDisc(disc);
+% ---- curation state ---------------------------------------------------------
+app.root         = session.root;
+if ~isempty(session.glob), app.glob = session.glob; end
+app.patterns     = session.patterns;
+app.overrides    = session.overrides;
+app.modalityOvr  = session.modalityOvr;
+app.animalRefMan = session.animalRefMan;
+app.autoRef      = session.animalRef;              % the effective refs, minus the
+k = keys(app.animalRefMan);                        % hand ones, are the auto ones
+for i = 1:numel(k)
+    if isKey(app.autoRef,k{i}), remove(app.autoRef,k{i}); end
+end
+% ---- settings model + overlay ----------------------------------------------
 app.modality = session.modality;
-app.reg = wbStepRegistry(app.modality);
-% restore the settings model
 app.sm = wbSettingsModel('new', session.bag);
 app.sm.stepOverrides = session.stepOverrides;
 foK = keys(session.fileOverrides); foV = values(session.fileOverrides);
 for i = 1:numel(foK), app.sm.fileOverrides(foK{i}) = foV{i}; end
-% restore the session overlay
-app.checked = session.checked;
-app.stale   = session.staleOverlay;
+% ---- the Constructor's output (absent from a pre-schema-3 sidecar) ---------
+tbK = keys(session.typeBag); tbV = values(session.typeBag);
+for i = 1:numel(tbK), app.sm.typeBag(tbK{i}) = tbV{i}; end
+toK = keys(session.typeOverrides); toV = values(session.typeOverrides);
+for i = 1:numel(toK), app.sm.typeOverrides(toK{i}) = toV{i}; end
+% the row set is rebuilt THROUGH wbTypeSelection, so a sidecar written before the
+% (type,branch) rows existed is upgraded to them instead of being read as empty
+app.typeSel   = wbTypeSelection('fromCells', keys(session.typeSel), app.reg);
+app.animalSel = session.animalSel;
+app.checked   = session.checked;
+app.stale     = session.staleOverlay;
 app.presetRef = session.presetRef;
+app.files     = emptyFiles();
 setApp(fig,app);
-recomputeBase(fig);                                % re-derive the disk baseline
-refreshFileTable(fig);
-refreshStepSelector(fig);
-renderMatrix(fig); selectStep(fig,getApp(fig).selStep);
-refreshStatus(fig); refreshPresetDrop(fig);
-wbLog(fig,['loaded session ' pth]);
-end
+syncFilesControls(fig);
 
-function disc = discFromGrid(fNames,referenceMode,groupNames)
-%discFromGrid  Rebuild a wbDiscoverFiles-shaped struct from a stored grid.
-[nr,nc] = size(fNames);
-models = cell(nr,nc);
-flat = wbFileModel('x.rls'); flat(1) = [];
-groups = struct('name',{},'rowIndex',{});
-for r = 1:nr
-    if numel(groupNames)>=r, gname = groupNames{r}; else, gname = sprintf('group%d',r); end
-    groups(r) = struct('name',gname,'rowIndex',r);
-    for cc = 1:nc
-        if isempty(fNames{r,cc}), continue; end
-        m = wbFileModel(fNames{r,cc});
-        m.group = gname;
-        m.isReference = referenceMode && cc==1;
-        models{r,cc} = m;
-        flat(end+1) = m; %#ok<AGROW>
-    end
-end
-disc = struct('fNames',{fNames},'models',{models},'flat',flat, ...
-    'groups',groups,'referenceMode',referenceMode);
+% the stored path list is authoritative; older sidecars only carry the grid
+paths = session.paths;
+if isempty(paths), paths = gridPaths(struct('fNames',{session.fNames})); end
+rebuildWorkingSet(fig, paths, true);
+refreshPresetDrop(fig);
+wbLog(fig,['loaded session ' pth]);
 end
 
 %% ===================== dry-run Run ================================= %%
 function entries = buildRunOrder(fig)
-%buildRunOrder  Ordered checked cells: group -> reference-first -> row -> step.
+%buildRunOrder  Ordered checked cells: animal -> reference-first -> row -> step.
 app = getApp(fig); reg = app.reg;
-entries = struct('groupIdx',{},'rowInGroup',{},'stepIdx',{},'stepId',{}, ...
-    'stepLabel',{},'identity',{},'label',{},'group',{},'isRef',{},'arity',{});
-seenPG = containers.Map('KeyType','char','ValueType','logical');
+entries = struct('animalIdx',{},'rowInAnimal',{},'stepIdx',{},'stepId',{}, ...
+    'stepLabel',{},'identity',{},'label',{},'animal',{},'isRef',{},'arity',{});
+seenPA = containers.Map('KeyType','char','ValueType','logical');
 for i = 1:numel(app.rows)
     r = app.rows(i);
     for s = 1:numel(reg)
         step = reg(s);
         state = resolveCellState(app,r.identity,step.id);
         if ~strcmp(state,'checked'), continue; end
-        if strcmp(step.arity,'perGroup')
-            k = [num2str(r.groupIdx) '||' step.id];
-            if isKey(seenPG,k), continue; end       % once per group, at the reference position
-            seenPG(k) = true;
-            e = mkEntry(r.groupIdx,1,s,step,groupRef(app,r.groupIdx),r.group,true);
+        if strcmp(step.arity,'perAnimal')
+            k = [num2str(r.animalIdx) '||' step.id];
+            if isKey(seenPA,k), continue; end       % once per animal, at the reference position
+            seenPA(k) = true;
+            e = mkEntry(r.animalIdx,1,s,step,animalRefIdentity(app,r.animalIdx),r.animal,true);
         else
-            e = mkEntry(r.groupIdx,r.rowInGroup,s,step,r.identity,r.group,r.isRef);
+            e = mkEntry(r.animalIdx,r.rowInAnimal,s,step,r.identity,r.animal,r.isRef);
         end
         entries(end+1) = e; %#ok<AGROW>
     end
 end
 if isempty(entries), return; end
-K = [[entries.groupIdx]', [entries.rowInGroup]', [entries.stepIdx]'];
+K = [[entries.animalIdx]', [entries.rowInAnimal]', [entries.stepIdx]'];
 [~,ord] = sortrows(K);
 entries = entries(ord);
 end
-function e = mkEntry(gi,rig,si,step,identity,group,isRef)
+function e = mkEntry(ai,ria,si,step,identity,animal,isRef)
 lbl = identity; [~,nm] = fileparts(identity); if ~isempty(nm), lbl = nm; end
-e = struct('groupIdx',gi,'rowInGroup',rig,'stepIdx',si,'stepId',step.id, ...
-    'stepLabel',step.label,'identity',identity,'label',lbl,'group',group, ...
+e = struct('animalIdx',ai,'rowInAnimal',ria,'stepIdx',si,'stepId',step.id, ...
+    'stepLabel',step.label,'identity',identity,'label',lbl,'animal',animal, ...
     'isRef',isRef,'arity',step.arity);
 end
-function id = groupRef(app,groupIdx)
+function id = animalRefIdentity(app,animalIdx)
 id = '';
 for i = 1:numel(app.rows)
-    if app.rows(i).groupIdx==groupIdx, id = app.rows(i).identity; return; end
+    if app.rows(i).animalIdx==animalIdx, id = app.rows(i).identity; return; end
 end
 end
 
@@ -1394,8 +3373,8 @@ entries = buildRunOrder(fig);
 lines = {sprintf('=== DRY RUN: %d step(s) would execute (no wrapper is called) ===',numel(entries))};
 for i = 1:numel(entries)
     e = entries(i);
-    if strcmp(e.arity,'perGroup'), who = ['GROUP ' e.group]; else, who = e.label; end
-    lines{end+1} = sprintf('  %2d. [%s] %-26s :: %s', i, e.group, who, e.stepLabel); %#ok<AGROW>
+    if strcmp(e.arity,'perAnimal'), who = ['ANIMAL ' e.animal]; else, who = e.label; end
+    lines{end+1} = sprintf('  %2d. [%s] %-26s :: %s', i, e.animal, who, e.stepLabel); %#ok<AGROW>
 end
 if numel(entries)==0
     lines{end+1} = '  (nothing checked - tick cells in the matrix first)';
@@ -1429,8 +3408,10 @@ function ctx = buildExecContext(fig)
 ctx = struct();
 ctx.reg           = getApp(fig).reg;
 ctx.modelOf       = @(id) modelByIdentity(fig,id);
-ctx.groupModels   = @(gi) groupModelArr(fig,gi);
-ctx.resolve       = @(step,mdl) wbSettingsModel('resolve', getApp(fig).sm, step, mdl);
+ctx.animalModels   = @(gi) animalModelArr(fig,gi);
+% the run must use the SAME layers the staleness fingerprint compares against
+% (curSettingsFor), or a cell would read stale the moment it finished
+ctx.resolve       = @(step,mdl) wbSettingsModel('resolve', getApp(fig).sm, step, mdl, modelType(mdl));
 ctx.contrastStage = @(mdl) contrastStageOf(fig,mdl);
 ctx.setState      = @(id,sid,state,msg) execSetState(fig,id,sid,state,msg);
 ctx.progress      = @(id,sid,f,l) execProgress(fig,id,sid,f,l);
@@ -1569,24 +3550,30 @@ for i = 1:numel(app.rows)
 end
 end
 
-function ms = groupModelArr(fig,groupIdx)
-%groupModelArr  A group's models ordered reference-first (rowInGroup order).
+function ms = animalModelArr(fig,animalIdx)
+%animalModelArr  An animal's models ordered reference-first (rowInAnimal order).
 app = getApp(fig);
-sel = app.rows([app.rows.groupIdx]==groupIdx);
+sel = app.rows([app.rows.animalIdx]==animalIdx);
 if isempty(sel), ms = []; return; end
-[~,ord] = sort([sel.rowInGroup]);
+[~,ord] = sort([sel.rowInAnimal]);
 sel = sel(ord);
 ms = [sel.model];
 end
 
 function st = contrastStageOf(fig,model)
 %contrastStageOf  't' or 's' - which contrast flag this project's files carry.
+st = contrastStageForModel(getApp(fig),model);
+end
+
+function st = contrastStageForModel(app,model)
+%contrastStageForModel  The contrast flag of one recording, per ITS TYPE's setting.
+%   The same rule the Constructor's row labels use (rowFlagFor > settingStage), so
+%   a spatial protocol reads '_s' everywhere - rows, files and reference alike.
 st = 't';
-app = getApp(fig);
-cstep = stepById(app.reg,'contrast');
-if isempty(cstep), return; end
-s = wbSettingsModel('resolve', app.sm, cstep, model);
-if isfield(s,'contrastType') && strcmpi(char(string(s.contrastType)),'spatial'), st = 's'; end
+pid = wbTypeSelection('producer', app.reg, 'contrast');
+if isempty(pid), return; end
+s = wbSettingsModel('resolve', app.sm, stepById(app.reg,pid), model, modelType(model));
+if isfield(s,'contrastType'), st = stageOfContrastType(s.contrastType); end
 end
 
 %% ===================== reports (artifacts) ========================= %%

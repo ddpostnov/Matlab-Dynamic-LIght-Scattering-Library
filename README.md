@@ -181,24 +181,58 @@ Plan your file/folder naming in advance — it saves a lot of time later.
 ## Processing Workbench
 
 `guiWorkbench` is the primary entry point: one window that turns the launcher workflow
-into a spreadsheet. **Rows are recordings** (grouped by animal, reference first),
+into a spreadsheet. **Rows are recordings** (blocked by animal, reference first),
 **columns are pipeline steps**, and each **cell** is the state of one step for one
 recording — *ready* (tick it to queue), *checked*, *running*, *done*, *stale* (a setting
 or an upstream re-run invalidated it) or *unavailable* (its prerequisites are not met).
 State is read from the files on disk, so a session you closed last week comes back with
 everything already done still marked done.
 
+Every file carries three **independent labels**, each a regexp match over its name that
+you can override by hand:
+
+| label | what it is | who uses it |
+|-------|-----------|-------------|
+| **animal** | the subject — same brain, same FOV, co-registerable. Owns **one reference recording**, valid for all of its files. | registration, vessel typing, the reference |
+| **type** | the recording's experimental role (`BV`/`BN`/`BP`, `ctrl`/`stim`/`washout`, `1`/`2`/`3` — whatever your names carry) | the processing configuration |
+| **group** | the **experimental** group, a comparison label (`KO`/`WT`, `pre`/`post`) | Export and Explore only; processing ignores it |
+
+They do not nest: a group may span several animals and one animal may span several
+groups, so none is ever derived from another. **There is no built-in list of animals,
+types or groups** — the values are simply whatever your regexps match or you type, and a
+name that matches nothing lands in an ordinary `(untyped)` / `(ungrouped)` bucket rather
+than being an error.
+
 ```matlab
 addpath(genpath('<path to this repository>'))
 guiWorkbench
 ```
 
-1. **1 - Files** — load your recordings with one of three loaders: **Load structured**
-   (root folder + file pattern + animal / reference regexps, the `getFileNamesList`
-   convention), **Load folder…** (recurse a folder), or **Add files…** (pick by hand).
-   All three group by animal with the reference recording first. **Save session… /
-   Load session…** store the file set, groups, settings and cell states in a `.mat`
-   sidecar, so long analyses survive a MATLAB restart.
+1. **1 - Files** — build and curate the working set. Point **root** at a folder, put an
+   extension or glob in **files** (`*.rls`, `*_t_K_d.mat`) and press **Scan** to recurse
+   the whole tree; **Add files…** and **Add folder…** add more by hand without throwing
+   the scan away. The five regexp boxes (**Animal**, **Type**, **Rec. index**,
+   **Group**, **Reference**) label what the scan finds — hover each for worked examples.
+   The table below is editable: click a column header to sort, and edit `animal`,
+   `type`, `index`, `group` or `modality` in place. To label many files at once — the
+   fast way — select the rows and use **Quick assign**: pick the field, pick or type the
+   value, press **Apply to selected rows**. A hand-made label beats the regexp and
+   survives a re-scan. `modality` is a dropdown constrained by the file extension (a
+   `.rls` can be `LSCI`/`HSLSCI`/`DLSI`, a video can be `WMYO`/`EPFL`/`LSCI`, …), so an
+   impossible pairing is simply refused. **Delete selected** drops rows from the working
+   set — **nothing is ever deleted from disk**.
+   Tick `ref` to pin an animal's **reference recording**: one per animal, valid for all
+   of its files whatever their type or group, replacing whatever the Reference regexp
+   picked. It is stored as a *recording identity*, so each step still resolves the
+   branch (`_t` / `_c` / …) it needs.
+   The banner under the table is the **gate**: every file needs an animal, a type, an
+   index and a group, and file names must be unique across the scanned tree (the
+   workbench and the pipeline both identify recordings by name). Until that holds, the
+   other tabs stay out of reach. An animal with no reference only warns — registration
+   and vessel typing are the steps that need one.
+   **Save session… / Load session…** store the curated list, its labels, the references,
+   the settings and the cell states in a versioned `.mat` sidecar, so a reload
+   reproduces the table with no re-scan and long analyses survive a MATLAB restart.
 2. **2 - Process** — tick the cells you want (**Check all** / **Clear checks** queue or
    clear every runnable cell at once). Pick a step in the **Step** dropdown on the right
    to open its **settings panel**; values shared between steps propagate automatically,
@@ -217,9 +251,10 @@ guiWorkbench
    selection UI over `exportToExcel`, which remains callable directly as
    `exportToExcel(fNames)` or `exportToExcel(fNames,opts)`.
 4. **4 - Explore** — the results explorer (`GUIs/workbench/guiExplore`) hosted in-tab.
-   Press **Load workbench files & groups** to seed it with the `_r.mat` results and
-   groups you loaded on the Files tab, then plot single recordings or group comparisons
-   and export publication figures. See [Exploring processed results](#exploring-processed-results).
+   Press **Load workbench files & animals** to seed it with the `_r.mat` results of the
+   files you loaded, one explorer group per animal, then plot single recordings or group
+   comparisons and export publication figures. See
+   [Exploring processed results](#exploring-processed-results).
 
 The workbench covers the **LSCI** pipeline. It never reimplements any processing — it
 orders, gates, parametrises and calls the same wrappers a launcher would.
@@ -256,7 +291,8 @@ video.
 
 For the finished `_r.mat` results (per-segment BFI / diameter / pulsatility / vasomotion,
 single files or group comparisons), use the **Explore** tab of `guiWorkbench`: it is
-seeded from the recordings and groups you already loaded, matches the plot type to the
+seeded from the recordings you already loaded (one explorer group per animal, which you
+can relabel there), matches the plot type to the
 data (time series, box plots, spectra, spectrograms, maps), and exports the figure at a
 chosen DPI. The same explorer can be opened on its own with `guiExplore`
 (`GUIs/workbench/guiExplore.m`) if you want to browse results without loading a workbench

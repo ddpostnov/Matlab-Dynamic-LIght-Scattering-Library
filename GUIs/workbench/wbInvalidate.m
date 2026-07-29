@@ -77,7 +77,9 @@ while changed
     changed = false;
     for k = 1:numel(reg)
         if mask(k), continue; end
-        if any(ismember(reg(k).requires, ids(mask)))
+        % staleness is deliberately BROAD: any declared producer counts, including
+        % an alternative the step did not happen to consume (wbPrereqs 'all')
+        if any(ismember(wbPrereqs('all', reg(k)), ids(mask)))
             mask(k) = true;
             changed = true;                      % a new hit may pull in more
         end
