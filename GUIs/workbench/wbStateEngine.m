@@ -1,17 +1,34 @@
 %wbStateEngine - Per-(file,step) state for the Processing Workbench matrix.
 %
-%   For one recording (a wbFileModel handle) and the step registry, compute the
-%   state of every step from three inputs - mirroring removeProcessedFiles but
-%   richer:
+%   For one FILE (a wbFileModel handle) and the step registry, compute the state
+%   of every step from three inputs - mirroring removeProcessedFiles but richer:
 %     1. Disk markers.  A step is DONE when its settings gating field is present
-%        in the recording's SETTINGS files.  The field is read from the UNION of
-%        every '<identity>*_s.mat' the recording owns, so detection survives the
-%        BFI rename (_K_->_BFI_) and any deleted originals - each step appends
-%        its gating field to the settings, and downstream _s files carry it
-%        forward.  The REAL gating field per step is used (01 A1).
+%        in the SETTINGS files OF THAT FILE'S OWN PIPELINE.  Each step appends its
+%        gating field to the settings and every downstream _s file carries it
+%        forward, so the union runs along the product chain ('_t_K_s' ->
+%        '_t_BFI_s'), which is what makes detection survive the BFI rename
+%        (_K_->_BFI_) and a deleted original.  The REAL gating field per step is
+%        used (01 A1).
 %     2. Prerequisites.  Every id in step.requires must be done, else unavailable.
 %     3. Settings fingerprint.  The current step settings are compared to the
 %        stored settings.(gatingField); a mismatch flips a done step to stale.
+%
+%   PER FILE, NOT PER RECORDING (spec D6/D8, author 2026-07-28).  One raw
+%   recording can drive TWO independent pipelines - the raw producers each write
+%   their own triplet ('_t_K', '_c_K') and everything later APPENDS to one of them
+%   - so unioning the gating fields across everything named after the recording
+%   made a half-processed recording read as fully done: a project where only the
+%   cardiac product ever got a BFI reported BFI as done for the contrast file too.
+%   The union is therefore confined to the queried file's own pipeline: settings
+%   files sitting on ANOTHER raw-producer branch are excluded, while a file
+%   derived from this one WITHIN the pipeline (the external cycle's '_e_K',
+%   which is a new stage flag but not a new pipeline) still counts.  Which
+%   branches are independent pipelines is read from the registry
+%   (wbTypeSelection('branches')), never listed by name here.
+%
+%   A model with NO stage flag - a raw '.rls'/'.cxd' recording, the natural row of
+%   a freshly scanned project - has no pipeline of its own yet and legitimately
+%   stands for the whole recording, so it keeps the full union.
 %
 %   States: 'unavailable' | 'ready' | 'done' | 'stale' | 'error'.  ('error' is
 %   set by the executor at run time, never here.)
@@ -22,7 +39,8 @@
 %    st = wbStateEngine(model, reg, curSettings, opts)
 %
 % Inputs:
-%    model       - a struct from wbFileModel (identifies the recording).
+%    model       - a struct from wbFileModel (identifies the FILE, and through
+%                  its .branch the pipeline whose settings are read).
 %    reg         - the struct array from wbStepRegistry.
 %    curSettings - (optional) struct whose fields are step ids, each a resolved
 %                  settings struct s (from wbSettingsModel).  Used only for the
@@ -35,7 +53,8 @@
 %    st - 1xN struct array aligned to reg, with fields:
 %           id, applicable (logical), state (char), reason (char).
 %
-% See also: wbFileModel, wbStepRegistry, wbInvalidate, removeProcessedFiles
+% See also: wbFileModel, wbStepRegistry, wbTypeSelection, wbInvalidate,
+%           removeProcessedFiles
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -48,8 +67,8 @@ function st = wbStateEngine(model, reg, curSettings, opts)
 if nargin<3, curSettings = []; end
 if nargin<4, opts = struct(); end
 
-% ---- gather the recording's accumulated settings fields ---------------------
-[doneFields, storedMap] = gatherSettings(model, opts);
+% ---- gather THIS FILE's accumulated settings fields -------------------------
+[doneFields, storedMap] = gatherSettings(model, reg, opts);
 
 % id -> gating field, for prerequisite testing
 ids   = {reg.id};
@@ -101,8 +120,10 @@ end
 end
 
 % =====================================================================
-function [doneFields, storedMap] = gatherSettings(model, opts)
-%gatherSettings  Union of settings fields across the recording's _s.mat files.
+function [doneFields, storedMap] = gatherSettings(model, reg, opts)
+%gatherSettings  Union of settings fields across THIS FILE's pipeline (D6/D8).
+%   Same recording, and - when the queried file sits on a pipeline of its own -
+%   not on a different one: see samePipeline.
 doneFields = {};
 storedMap  = containers.Map('KeyType','char','ValueType','any');
 
@@ -117,11 +138,13 @@ if isfield(opts,'sData') && ~isempty(opts.sData)
 end
 
 if isempty(model.folder) || ~isfolder(model.folder), return; end
+rawBr = rawBranches(reg);
 d = dir(fullfile(model.folder,'*_s.mat'));
 for i = 1:numel(d)
     cand = wbFileModel(fullfile(d(i).folder, d(i).name));
     if ~strcmp(cand.role,'s'), continue; end
     if ~strcmp(cand.identity, model.identity), continue; end   % same recording only
+    if ~samePipeline(model, cand, rawBr), continue; end        % same pipeline only
     try
         S = load(fullfile(d(i).folder, d(i).name),'settings');
     catch
@@ -129,6 +152,35 @@ for i = 1:numel(d)
     end
     if ~isfield(S,'settings'), continue; end
     [doneFields, storedMap] = absorb(S.settings, doneFields, storedMap);
+end
+end
+
+% =====================================================================
+function tf = samePipeline(model, cand, rawBranchList)
+%samePipeline  Whether a settings file belongs to the queried file's pipeline.
+%   A pipeline is what ONE raw producer started, so the only thing that puts a
+%   settings file out of scope is sitting on a DIFFERENT raw-producer branch.
+%   Everything else - the same branch, a stage the pipeline grew into later (the
+%   external cycle's '_e'), or a flagless settings file - is the same pipeline
+%   and its gating fields count.  A queried file that is itself flagless (a raw
+%   recording) has no pipeline yet and takes them all.
+tf = true;
+if isempty(model.branch), return; end
+if isempty(cand.branch) || strcmp(cand.branch, model.branch), return; end
+tf = ~any(strcmp(cand.branch, rawBranchList));
+end
+
+% =====================================================================
+function brs = rawBranches(reg)
+%rawBranches  The branches that are INDEPENDENT pipelines - one per raw producer.
+%   Read from the registry (wbTypeSelection owns the raw/derived split), so a
+%   third entry step for a new modality is a registry edit and nothing here.
+brs = {};
+try
+    brs = wbTypeSelection('branches', reg);
+catch
+    % a hand-built registry (tests, a trimmed array) may not carry the fields
+    % wbTypeSelection reads; with no raw producers nothing is out of scope.
 end
 end
 

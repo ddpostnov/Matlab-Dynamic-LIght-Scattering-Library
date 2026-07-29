@@ -261,5 +261,8 @@ end
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_e_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
+%INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
+%same routine (pick files / a folder / a workbench session, choose the parameters and
+%the averaging, write one workbook per recording or one merged workbook for statistics)
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 

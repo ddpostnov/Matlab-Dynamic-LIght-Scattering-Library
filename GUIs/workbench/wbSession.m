@@ -1,17 +1,22 @@
-%wbSession - Save / load a Processing-Workbench session sidecar (.mat).
+%wbSession - THE durable, resumable Processing-Workbench session (.mat).
 %
-%   Round-trips the workbench's in-memory session state to a plain .mat file so a
-%   long processing job survives a MATLAB restart AND so the read-only tools can
-%   be handed a curated file set.  The session captures
+%   The session is the CONTRACT between the three programs, not a convenience: the
+%   workbench writes it, and guiExport / guiExplore read it without the workbench
+%   being open (spec §5).  It round-trips to a plain .mat so a long processing job
+%   survives a MATLAB restart - or a crash, or a Stop - and always leaves something
+%   resumable behind.  The session captures
 %     * the SOURCE of the file set - root folder, glob, and the label regexps -
 %       plus the curated path list itself, so a reload reproduces the Files table
 %       with NO mandatory re-scan;
-%     * the CURATION - the per-axis hand overrides (animal / type / index /
-%       experimental group, and the modality correction, all keyed by path so
-%       they survive a re-scan) and one reference RECORDING IDENTITY per animal;
+%     * the CURATION - the RESOLVED per-file labels (animal / type / index /
+%       experimental group / modality / reference), plus the per-axis hand
+%       overrides that produced them (keyed by path, so they survive a re-scan)
+%       and one reference RECORDING IDENTITY per animal;
 %     * the CONFIGURATION - which steps each recording TYPE runs, which per-animal
 %       steps are on, and the per-type settings layers (the Constructor tab's whole
 %       output, spec D4);
+%     * the COMPLETION RECORD - per FILE and per STEP, what ran, when, and with
+%       which settings fingerprint (see 'completed' below);
 %     * the discovery grid + animal rows, the settings model (bag + step/file
 %       overrides), the preset reference, and the per-cell overlay (which cells
 %       the user checked and which an in-session edit pushed stale).
@@ -19,11 +24,21 @@
 %   re-runs wbStateEngine after load to overlay saved state on the fresh disk
 %   picture.
 %
-%   Every containers.Map member is flattened to parallel key/value cell arrays so
-%   the file is Map-free on disk (the trick wbSettingsModel uses for its preset),
-%   and only plain data is written - no handles, no closures.
+%   WHY THE LABELS ARE STORED RESOLVED.  Processing ignores the experimental group
+%   entirely (spec §2), but Export and Explore are built on it, and they must not
+%   have to re-run the regexps - or know the override rules - to get it.  So the
+%   .files list carries the answer, and 'read' is the door they come in through:
+%   neither tool reaches into the file layout, and a schema bump stays a change to
+%   this one function.
 %
-%   SCHEMA.  wbSessionData.schema names the layout version (currently 4; a file
+%   PLAIN DATA ONLY.  Every containers.Map member is flattened to parallel
+%   key/value cell arrays so the file is Map-free on disk (the trick
+%   wbSettingsModel uses for its preset), and the whole payload is swept for
+%   function handles before it is written (stripHandles, mirroring the wrappers'
+%   stripHooks / stripFcnHandles discipline) - a session must never serialise a
+%   closure over a dead figure.
+%
+%   SCHEMA.  wbSessionData.schema names the layout version (currently 5; a file
 %   without the field is the unversioned Phase-3 layout, read as 1).  Loading an
 %   older session is supported: the fields it predates come back at their empty
 %   defaults, so an old sidecar still restores its file set and settings - a
@@ -32,12 +47,16 @@
 %   'type||stepId' to 'type||branch||stepId', because one raw recording can drive
 %   two independent pipelines and each is configured separately; the keys are
 %   written verbatim here and upgraded by wbTypeSelection('fromCells',keys,reg),
-%   which is the only place that knows what a step's branch is.
+%   which is the only place that knows what a step's branch is.  Schema 5 added
+%   the resolved .files list and the .completed record.
 %
 % Syntax:
 %    wbSession('save', path, session)      % write the sidecar
 %    session = wbSession('load', path)     % read it back (Maps rebuilt)
+%    session = wbSession('read', path)     % load + validate (the consumer API)
 %    s0      = wbSession('empty')          % a blank session struct
+%    v       = wbSession('schema')         % the version this code writes
+%    [tf,why]= wbSession('validate', session)
 %
 % Inputs:
 %    path    - full path of the .mat sidecar.
@@ -47,6 +66,21 @@
 %       glob          char, the scan glob ('*.rls', '*_K_d.mat', ...).
 %       patterns      struct of regexps: animal/type/index/expGroup/ref.
 %       paths         cellstr, the curated working set in table order.
+%       files         1xN struct array, ONE ENTRY PER FILE, parallel to .paths:
+%                       .path .name .animal .type .index .expGroup .modality
+%                       .identity .branch .isRef .use
+%                     The labels are RESOLVED (regexp + hand override already
+%                     applied) - this is what guiExport / guiExplore read.  .use
+%                     is always true: Phase 1 dropped the use flag, a file that
+%                     will not be processed is DELETED from the working set, so
+%                     the field survives only because spec §5 names it.
+%       completed     containers.Map 'path||stepId' -> struct with
+%                       .state ('done'|'error'|'skipped'), .when (datestr,
+%                       ISO-ish local time), .fingerprint (char hash of the
+%                       settings the step ran with), .message (error text or '').
+%                     Written per FILE, per STEP, on every state change, so a
+%                     killed run still resumes and a re-run can skip what is
+%                     already done unless the fingerprint moved.
 %       overrides     struct of containers.Map, one per label axis, path->value.
 %       modalityOvr   containers.Map path -> hand-corrected modality.
 %       animalRef     containers.Map animal -> reference recording IDENTITY.
@@ -69,9 +103,11 @@
 %
 % Outputs:
 %    session - the same struct shape, with every Map reconstructed.
+%    tf, why - 'validate': whether the struct is a usable session of a schema
+%              this code understands, and a one-line reason when it is not.
 %
 % See also: wbSettingsModel, wbStateEngine, wbDiscoverFiles, wbTypeModel,
-%           wbTypeSelection, guiWorkbench
+%           wbTypeSelection, guiWorkbench, guiExplore
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -79,18 +115,22 @@
 % Last revision: 28-July-2026
 
 %------------- BEGIN CODE --------------
-function out = wbSession(action, varargin)
+function [out, why] = wbSession(action, varargin)
 
+why = '';
 switch action
-    case 'save',  saveSession(varargin{:}); out = [];
-    case 'load',  out = loadSession(varargin{:});
-    case 'empty', out = emptySession();
-    otherwise,    error('wbSession:badAction','Unknown action "%s".',action);
+    case 'save',     saveSession(varargin{:}); out = [];
+    case 'load',     out = loadSession(varargin{:});
+    case 'read',     out = readSession(varargin{:});
+    case 'empty',    out = emptySession();
+    case 'schema',   out = schemaVersion();
+    case 'validate', [out, why] = validateSession(varargin{:});
+    otherwise,       error('wbSession:badAction','Unknown action "%s".',action);
 end
 end
 
 % =====================================================================
-function v = schemaVersion(), v = 4; end
+function v = schemaVersion(), v = 5; end
 
 % =====================================================================
 function s = emptySession()
@@ -101,6 +141,8 @@ s.root          = '';
 s.glob          = '';
 s.patterns      = refPatterns();
 s.paths         = {};
+s.files         = emptyFileList();
+s.completed     = anyMap();
 s.overrides     = wbTypeModel('emptyOverrides');
 s.modalityOvr   = charMap();
 s.animalRef     = charMap();
@@ -130,6 +172,45 @@ p.ref = '';
 end
 
 % =====================================================================
+function f = emptyFileList()
+%emptyFileList  The 0x0 shape of session.files - THE list the read-only tools
+%   consume.  Declared once so an empty session and a full one have the same
+%   fields and a consumer can index it without a guard.
+f = struct('path',{},'name',{},'animal',{},'type',{},'index',{}, ...
+    'expGroup',{},'modality',{},'identity',{},'branch',{},'isRef',{},'use',{});
+end
+
+% =====================================================================
+function f = fileListFrom(files)
+%fileListFrom  Coerce whatever the caller supplied into the documented shape:
+%   every field present, char-valued, in .paths order.  A caller that fills only
+%   some fields (an older workbench, a hand-built session) still round-trips.
+f = emptyFileList();
+if isempty(files) || ~isstruct(files), return; end
+proto = struct('path','','name','','animal','','type','','index','', ...
+    'expGroup','','modality','','identity','','branch','','isRef',false,'use',true);
+fn = fieldnames(proto);
+for i = 1:numel(files)
+    e = proto;
+    for k = 1:numel(fn)
+        if ~isfield(files(i),fn{k}), continue; end
+        v = files(i).(fn{k});
+        if islogical(proto.(fn{k})), e.(fn{k}) = logical(firstOr(v,false));
+        else,                        e.(fn{k}) = charOf(v);
+        end
+    end
+    f(end+1) = e; %#ok<AGROW>
+end
+end
+function v = firstOr(x, d)
+if isempty(x), v = d; else, v = x(1); end
+end
+function s = charOf(v)
+if ischar(v), s = v; elseif isstring(v), s = char(v);
+elseif isnumeric(v) || islogical(v), s = num2str(v); else, s = ''; end
+end
+
+% =====================================================================
 function saveSession(pth, session)
 %saveSession  Flatten every Map and write a plain struct as 'wbSessionData'.
 session = fillDefaults(session, emptySession());
@@ -140,6 +221,7 @@ wbSessionData.root          = session.root;
 wbSessionData.glob          = session.glob;
 wbSessionData.patterns      = session.patterns;
 wbSessionData.paths         = session.paths;
+wbSessionData.files         = fileListFrom(session.files);
 wbSessionData.fNames        = session.fNames;
 wbSessionData.referenceMode = session.referenceMode;
 wbSessionData.animalNames   = session.animalNames;
@@ -170,7 +252,11 @@ end
 [wbSessionData.aselKeys,   ~]                        = mapToCells(session.animalSel);
 [wbSessionData.chkKeys,    ~]                        = mapToCells(session.checked);
 [wbSessionData.staleKeys,  ~]                        = mapToCells(session.staleOverlay);
+[wbSessionData.doneKeys,   wbSessionData.doneVals]   = mapToCells(session.completed);
 
+% a session is read by two OTHER programs, long after this figure is gone: no
+% closure over it may ever reach the file (spec §5)
+wbSessionData = stripHandles(wbSessionData);
 save(pth,'wbSessionData','-v7.3');
 end
 
@@ -189,6 +275,7 @@ for i = 1:numel(plain)
     if isfield(p,plain{i}), session.(plain{i}) = p.(plain{i}); end
 end
 session.patterns = fillDefaults(session.patterns, refPatterns());
+if isfield(p,'files'), session.files = fileListFrom(p.files); end
 
 if isfield(p,'ovrAxes') && isfield(p,'ovrKeys')
     for i = 1:numel(p.ovrAxes)
@@ -208,6 +295,77 @@ if isfield(p,'tbKeys'),   session.typeBag       = cellsToMap(p.tbKeys, p.tbVals,
 if isfield(p,'toKeys'),   session.typeOverrides = cellsToMap(p.toKeys, p.toVals, 'any'); end
 if isfield(p,'tselKeys'), session.typeSel   = cellsToMap(p.tselKeys, trueVals(p.tselKeys), 'any'); end
 if isfield(p,'aselKeys'), session.animalSel = cellsToMap(p.aselKeys, trueVals(p.aselKeys), 'any'); end
+
+% ---- the completion record (schema 5; older sidecars simply have none) -------
+if isfield(p,'doneKeys'), session.completed = cellsToMap(p.doneKeys, p.doneVals, 'any'); end
+end
+
+% =====================================================================
+function session = readSession(pth)
+%readSession  THE consumer door (spec §5).  guiExport / guiExplore call this, not
+%   load(), so neither of them ever has to know the file layout - and a schema
+%   bump stays a change to this function.  Errors rather than returning half a
+%   session: a tool that got past this call may trust every documented field.
+if isempty(pth) || ~isfile(char(pth))
+    error('wbSession:noFile','No session file at "%s".', char(pth));
+end
+try
+    session = loadSession(char(pth));
+catch ME
+    error('wbSession:unreadable','"%s" is not a workbench session (%s).', ...
+        char(pth), ME.message);
+end
+[ok, why] = validateSession(session);
+if ~ok, error('wbSession:invalid','"%s": %s', char(pth), why); end
+end
+
+% =====================================================================
+function [tf, why] = validateSession(session)
+%validateSession  Is this a usable session of a schema this code understands?
+%   Deliberately shallow - it guards the CONTRACT (the fields a consumer is
+%   promised, and a version it can read), not the contents, which are the user's.
+tf = false; why = '';
+if ~isstruct(session) || ~isscalar(session)
+    why = 'not a scalar session struct'; return
+end
+need = {'schema','root','glob','patterns','paths','files','completed', ...
+        'overrides','animalRef','typeSel','animalSel','bag'};
+miss = need(~isfield(session, need));
+if ~isempty(miss)
+    why = ['missing field(s): ' strjoin(miss,', ')]; return
+end
+if ~isnumeric(session.schema) || ~isscalar(session.schema)
+    why = 'schema is not a version number'; return
+end
+if session.schema > schemaVersion()
+    why = sprintf('schema %g was written by a newer workbench (this one reads %g)', ...
+        session.schema, schemaVersion()); return
+end
+if ~isempty(session.files) && ~isstruct(session.files)
+    why = 'files is not a struct array'; return
+end
+tf = true;
+end
+
+% =====================================================================
+function v = stripHandles(v)
+%stripHandles  Recursively replace every function handle by its char text.
+%   The wrappers already drop their transport hooks before writing a settings
+%   file (stripHooks) and the myograph does the same for its GUI callbacks
+%   (stripFcnHandles); a session is read by other programs entirely, so it gets
+%   the same treatment for the whole payload - one place, no exceptions.  The
+%   text is kept rather than deleted so a stray handle is visible in the file
+%   instead of silently vanishing.
+if isa(v,'function_handle')
+    v = ['<fcn:' func2str(v) '>'];
+elseif iscell(v)
+    for i = 1:numel(v), v{i} = stripHandles(v{i}); end
+elseif isstruct(v)
+    fn = fieldnames(v);
+    for k = 1:numel(v)
+        for i = 1:numel(fn), v(k).(fn{i}) = stripHandles(v(k).(fn{i})); end
+    end
+end
 end
 
 % =====================================================================

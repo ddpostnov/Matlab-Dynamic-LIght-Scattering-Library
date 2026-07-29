@@ -117,7 +117,7 @@ for fidx=1:1:length(fNames)
         end
 
         s.sizeT=s.sizeT-s.framesToAverage+1;
-        data=zeros(floor(s.sizeY/s.decimationSpace),floor(s.sizeX/s.decimationSpace),s.sizeT,'single');
+        data=zeros(numel(1:s.decimationSpace:s.sizeY),numel(1:s.decimationSpace:s.sizeX),s.sizeT,'single');
         meanI=zeros(1,s.sizeT,'single');
         imgI=zeros(s.sizeY,s.sizeX);
         imgK=zeros(s.sizeY,s.sizeX);

@@ -11,8 +11,9 @@
 %     1. looks up the step spec and the recording model,
 %     2. resolves the settings struct s (wbSettingsModel, via ctx.resolve),
 %     3. resolves the concrete input _d.mat (or raw) file(s) the wrapper consumes
-%        for this recording - perAnimal = the animal's files as a column, reference
-%        first; perFile = as many of the recording's co-registered BRANCH products
+%        for this recording - perAnimal = the animal's files as a column, the
+%        reference's declared branch (ctx.refFile) first; perFile = as many of the
+%        recording's co-registered BRANCH products
 %        ('_t_K', '_c_K', '_e_K', ...) as the step's branchScope asks for, so a
 %        workbench row reproduces what the launcher's file list covers,
 %     4. injects the progress/stage/cancel hooks bound to this cell, and - for a
@@ -30,8 +31,13 @@
 %
 % Inputs:
 %    entries - struct array from guiWorkbench>buildRunOrder, already sorted
-%              animal -> reference-first -> row -> registry-step-order.  Each has
-%              at least: stepId, identity, animalIdx, arity, label, animal.
+%              STEP-MAJOR: registry step -> animal -> reference-first -> file.
+%              That is the launcher's order, where one cell hands a single step the
+%              whole fNames list, so every recording reaches a level before
+%              anything moves past it - which is what the cross-file steps
+%              (registration, vessel typing, split regions) rely on.  The executor
+%              does not re-sort: it runs the list as given.  Each entry has at
+%              least: stepId, identity, animalIdx, arity, label, animal.
 %    ctx     - struct of callbacks / handles the host supplies:
 %       .reg              the wbStepRegistry array
 %       .modelOf(id)      -> the wbFileModel for a recording identity
@@ -44,6 +50,14 @@
 %       .isCancelled()    -> tf        cooperative cancel flag
 %       .modalGuard(fcn)               run fcn with the parent window parked
 %       .afterDone(id,step,model)      surface artifacts + invalidate downstream
+%       .refFile(ai,step) -> OPTIONAL.  Which FILE of an animal's pinned
+%                         reference RECORDING this step takes as its template /
+%                         paint target - the registry's refBranch resolved by
+%                         wbRefBranch ('_t'/'_s' for registration, '_c' for
+%                         vessel typing).  The host owns that resolution because
+%                         it owns the pin; supply '' (or omit the field) and the
+%                         reference falls back to whatever branch product of the
+%                         reference recording the step's input glob finds first.
 %
 % Notes:
 %    * Cancel is checked between cells and, via s.cancelFcn, between files inside
@@ -63,7 +77,7 @@
 %      '_t' (dir sorts '_c_K_d.mat' before '_t_K_d.mat').
 %
 % See also: guiWorkbench, wbStepRegistry, wbSettingsModel, wbModalGuard,
-%           wbArtifacts, wbInvalidate, guiMyograph
+%           wbArtifacts, wbInvalidate, wbRefBranch, guiMyograph
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -97,7 +111,8 @@ for i = 1:numel(entries)
     s     = ctx.resolve(step, mHead);
     cstage = ctx.contrastStage(mHead);
 
-    [fNames, rawNames, refName, copyTo, okInput] = buildFNames(step, models, cstage);
+    [fNames, rawNames, refName, copyTo, okInput] = ...
+        buildFNames(step, models, cstage, refFileFor(ctx, e, step));
     if ~okInput
         ctx.setState(e.identity, step.id, 'error', 'input file not found');
         ctx.log(sprintf('skip %s :: %s - input file not found', who, step.label));
@@ -155,11 +170,13 @@ ctx.log('=== RUN complete ===');
 end
 
 % =====================================================================
-function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cstage)
+function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cstage, refPath)
 %buildFNames  Concrete wrapper inputs for a step.
 %   perAnimal: one file per animal member, Nx1 column, reference first (the branch
 %   fan-out below is a perFile concern - an animal row already carries one file
-%   per recording).
+%   per recording).  refPath, when the host supplied one, IS column 1: the branch
+%   of the pinned reference recording the step declared through refBranch, already
+%   resolved by wbRefBranch.  Without it column 1 stays the glob's first match.
 %   perFile:  ONE recording, whose several co-registered branch products ('_t_K',
 %   '_c_K', '_e_K', ...) are resolved according to step.branchScope -
 %     'one'  -> the stage-preferred file alone (1x1),
@@ -169,12 +186,14 @@ function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cst
 %   rawNames parallels fNames for needsRaw steps; refName is the reference file
 %   (perAnimal vesselTypes paint target).
 fNames = {}; rawNames = {}; refName = ''; copyTo = {}; ok = false;
+if nargin<4, refPath = ''; end
 
 if strcmp(step.arity,'perAnimal')
     n = numel(models);
     paths = cell(n,1); raws = cell(n,1);
     for k = 1:n
         p = resolveStepInputs(models(k), step, cstage);
+        if k==1 && ~isempty(refPath) && isfile(refPath), p = {refPath}; end
         if isempty(p), return; end                       % a member has no input -> not ready
         paths{k} = p{1};
         if step.needsRaw, raws{k} = rawPathFor(models(k)); end
@@ -198,6 +217,22 @@ if step.needsRaw
     rawNames = repmat({rawPathFor(models(1))}, size(fNames));
 end
 ok = true;
+end
+
+% =====================================================================
+function p = refFileFor(ctx, e, step)
+%refFileFor  The host's resolved reference FILE for this entry ('' when there is
+%   none).  Only a per-animal step has a reference column, and only the host knows
+%   which recording is pinned, so this is a pure look-up through ctx - the branch
+%   rule itself lives in wbRefBranch and is never re-derived here.
+p = '';
+if ~strcmp(step.arity,'perAnimal'), return; end
+if ~isfield(ctx,'refFile') || ~isa(ctx.refFile,'function_handle'), return; end
+try
+    p = char(ctx.refFile(e.animalIdx, step.id));
+catch
+    p = '';
+end
 end
 
 % =====================================================================

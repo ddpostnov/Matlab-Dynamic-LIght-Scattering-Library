@@ -252,6 +252,9 @@ setVesselTypes(s,fNames);
 files      = dir(fullfile(rootFolder,'**','*_BFI_d.mat')); %<---ALWAYS REFER TO "_BFI_d.mat" files, but you may use regexp to define specific "_BFI_d.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
+%INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
+%same routine (pick files / a folder / a workbench session, choose the parameters and
+%the averaging, write one workbook per recording or one merged workbook for statistics)
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 
 %%

@@ -13,7 +13,7 @@ libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library'
 addpath(genpath(libraryFolder));
 libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
-rootFolder = 'C:\Data\mia'; %root folder for the files lookup
+rootFolder = 'C:\Dropbox\Work\Data\mia'; %root folder for the files lookup
 
 
 %% STEP 1 Process .rls files to get the temporal contrast for segmentation and vasomotion analysis
@@ -24,7 +24,7 @@ s.libraryFolder=libraryFolder;
 s.contrastType='temporal'; %'temporal' or 'spatial'
 s.contrastKernel=25; %typical values: 25 for 'temporal', 5 or 7 for 'spatial'
 s.decimFactor=25; %decimates the contrast. Output framerate = original framerate / s.decimation
-s.decimMethod='sharp'; %or  s.decimationMethod='leaking'; 'sharp' is only for temporal analysis and and s.decimation being a multiple integer of s.contrastKernel
+s.decimMethod='leaking'; %or  s.decimationMethod='leaking'; 'sharp' is only for temporal analysis and and s.decimation being a multiple integer of s.contrastKernel
 
 %ADJUSTED IF NECESSARY - PERFORMANCE ADJUSTEMNTS
 s.procType='gpu'; %use 'gpu' for spatial contrast type if high-end GPU is availible, 'cpu' otherwise
@@ -36,14 +36,14 @@ s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of fr
 s.manualMask=0; %allows manual subselection of the area to mask
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*c2.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
 %fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runContrastFromRLS',false);
 
 
 runContrastFromRLS(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
-
+%%
 % STEP 2 Process .rls files to get the internal cycle data
 clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
@@ -78,7 +78,7 @@ s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*c1.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
 %fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runInternalCycle',false);
@@ -377,5 +377,8 @@ setVascularTree(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
+%INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
+%same routine (pick files / a folder / a workbench session, choose the parameters and
+%the averaging, write one workbook per recording or one merged workbook for statistics)
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 

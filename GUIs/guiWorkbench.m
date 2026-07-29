@@ -1,17 +1,31 @@
-%guiWorkbench - Processing Workbench: a file x step matrix for the LSCI pipeline.
+%guiWorkbench - Processing Workbench: configure per TYPE, run, watch.
 %
-%   A programmatic uifigure that turns the launcher workflow into a spreadsheet:
-%   ROWS are recordings (blocked by ANIMAL, reference first), COLUMNS are the
-%   pipeline steps from wbStepRegistry, and each CELL shows - and lets you queue -
-%   the state of one step for one recording (ready / done / stale / unavailable).
-%   The window is a thin controller: every decision is delegated to the headless
-%   Phase-2 brain (wbStepRegistry, wbDiscoverFiles, wbFileModel, wbStateEngine,
-%   wbSettingsModel, wbInvalidate), to wbExecutor / wbModalGuard / wbArtifacts,
-%   and to wbSession.  Run executes every checked cell in dependency order
-%   through the real wrappers (wbExecutor), streaming per-cell progress and a
-%   command-window mirror into the log, with cooperative Stop and continue-on-
-%   error; Preview order lists the same plan without calling anything.  Finished
-%   cells turn into clickable 'done' buttons that open their report images.
+%   A programmatic uifigure that turns the launcher workflow into three questions:
+%   WHICH files (Files tab), WHAT each recording TYPE runs (Constructor tab), and
+%   then GO (Process tab).  The window is a thin controller: every decision is
+%   delegated to the headless brain (wbStepRegistry, wbDiscoverFiles, wbFileModel,
+%   wbStateEngine, wbPrereqs, wbTypeModel, wbTypeSelection, wbSettingsModel,
+%   wbRefBranch, wbInvalidate), to wbExecutor / wbModalGuard / wbArtifacts, and to
+%   wbSession.
+%
+%   RUN IS AN EXPANSION, NOT A SELECTION.  Pressing Run turns the per-type
+%   configuration into an ordered list of (file, step) work items - each type's
+%   (type, branch) rows x each of its files, plus the two per-animal steps once
+%   per animal - and hands it to wbExecutor, which resolves each step's actual
+%   branch products from disk (branchScope).  Nothing is ticked per file, so a
+%   protocol of 200 recordings is configured in the same handful of clicks as one
+%   of 6.  The list runs STEP-MAJOR, exactly as a launcher does: every recording
+%   is contrasted, then every one segmented, and so on, so the steps that read
+%   across a file set (registration, vessel typing, split regions) always find the
+%   whole set at the same level.  Progress streams back through the hook seam into a READ-ONLY
+%   state table with cooperative Stop and continue-on-error; Preview order lists
+%   the same plan without calling anything.  Report images the run writes collect
+%   in a link list that opens them in the desktop viewer.
+%
+%   THE SESSION IS THE DELIVERABLE.  wbSession is written on every state change
+%   and at the end of every run, so a crash, a Stop or a MATLAB restart always
+%   leaves a resumable project behind - and it is the hand-off to guiExport and
+%   guiExplore, which read it without this window being open.
 %
 %   THREE LABEL AXES.  Every file carries an ANIMAL (the subject - the scope of
 %   registration, vessel typing and the reference recording), a TYPE (its
@@ -51,7 +65,11 @@
 %                    it, one (type, product) row per pipeline below, and the
 %                    per-(step,type) settings on the right; the summary carries the
 %                    resolved reference branches and the warnings) *
-%         3 Process (the matrix + per-step settings + reports + a log pane) *
+%         3 Process (READ-ONLY: one state table, rows = files and columns =
+%                    steps, showing '.'/queued/running NN%/done/error/skipped; the
+%                    selected row's file below it; the run log; and the result
+%                    links on the right.  All selection lives in the Constructor -
+%                    spec D6/D7) *
 %         4 Export  (a sheet/format selection UI over exportToExcel) *
 %         5 Explore (GUIs/workbench/guiExplore hosted in-tab, seeded from the
 %                    loaded files/animals) *
@@ -103,14 +121,20 @@ app.animalRefMan = containers.Map('KeyType','char','ValueType','char'); % animal
 app.animalRef    = containers.Map('KeyType','char','ValueType','char'); % animal -> identity (effective)
 app.modelArr     = wbFileModel('x.rls'); app.modelArr(1) = [];   % 1x0 model array
 app.base         = containers.Map('KeyType','char','ValueType','any');   % identity -> struct(stepId->state)
+app.fileState    = containers.Map('KeyType','char','ValueType','any');   % PATH     -> struct(stepId->state)  (D6)
+app.branchState  = containers.Map('KeyType','char','ValueType','any');   % 'identity||branch' -> struct(...)   (D6)
 app.checked      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> true
 app.stale        = containers.Map('KeyType','char','ValueType','any');   % session edit overlay
 app.runState     = containers.Map('KeyType','char','ValueType','any');   % transient run overlay: 'running'|'done'|'error'
 app.cellMsg      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> error/tooltip text
-app.rendered     = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> last drawn state
-app.cellComp     = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> handle
-app.gridRowOf    = containers.Map('KeyType','char','ValueType','double');% identity -> matrix grid row
-app.selStep      = app.reg(1).id;                  % step shown in the settings panel
+app.cellPct      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> 0..100 while running
+app.completed    = containers.Map('KeyType','char','ValueType','any');   % 'path||stepId' -> completion record (session)
+app.pRows        = emptyProgressRows();            % the monitor's rows: ONE PER FILE
+app.pRowOf       = containers.Map('KeyType','char','ValueType','double');% path -> progress-table row
+app.pSel         = 0;                              % the monitor row whose detail is shown
+app.results      = emptyResults();                 % report images this session produced
+app.sessionPath  = '';                             % where the durable session is autosaved
+app.selStep      = app.reg(1).id;                  % step last selected programmatically
 % ---- the Constructor: configuration per recording TYPE (never per file) ----
 app.typeSel      = wbTypeSelection('new');         % 'type||branch||stepId' -> true
 app.animalSel    = containers.Map('KeyType','char','ValueType','any'); % stepId -> true
@@ -118,7 +142,6 @@ app.selType      = '';                             % type shown in the Construct
 app.selCStep     = '';                             % step shown in the Constructor panel
 app.presetDir    = presetDirDefault();
 app.presetRef    = '';
-app.maxWidgets   = 800;                            % >this many rows -> uitable fallback
 app.running      = false;
 app.cancel       = false;
 app.exportSrcs   = struct('path',{},'rpath',{},'animal',{},'label',{}); % exportable BFI sources
@@ -239,6 +262,16 @@ api = struct( ...
     'dryRun',      @() dryRun(fig), ...
     'run',         @() runChecked(fig), ...
     'log',         @() getLog(fig), ...
+    ... % ---- Process tab: the read-only monitor, its results, the session ----
+    'progressRows',@() {getApp(fig).pRows.path}, ...
+    'progressData',@() getApp(fig).c.process.stateTable.Data, ...
+    'progressCell',@(p,stepId) progressCellOf(fig,p,stepId), ...
+    'fileState',   @(p,stepId) fileStateOf(getApp(fig),p,stepId), ...
+    'plannedSteps',@(p) plannedStepsOf(fig,p), ...
+    'resultLinks', @() resultLinks(fig), ...
+    'sessionPath', @() getApp(fig).sessionPath, ...
+    'autosave',    @() autosaveSession(fig), ...
+    'completed',   @() getApp(fig).completed, ...
     'exportRefresh',@() refreshExportFiles(fig), ...
     'exportSources',@() exportSourcePaths(fig), ...
     'exportAvailableSheets',@(rpaths) availableExportSheets(rpaths), ...
@@ -250,8 +283,7 @@ api = struct( ...
     'exit',        @() onClose(fig));
 setappdata(fig,'workbenchAPI',api);
 
-renderMatrix(fig);
-selectStep(fig,app.selStep);
+renderProgress(fig);
 renderConstructor(fig);
 if nargout>0, h = fig; end
 end
@@ -270,6 +302,15 @@ function f = emptyFiles()
 %emptyFiles  The curated working set: one entry per FILE (see buildFileEntries).
 f = struct('model',{},'path',{},'name',{},'animal',{},'type',{},'index',{}, ...
     'expGroup',{},'modality',{},'isRef',{});
+end
+function r = emptyProgressRows()
+%emptyProgressRows  The Process tab's rows - one per FILE, run-ordered.
+r = struct('path',{},'model',{},'identity',{},'label',{},'animal',{},'type',{}, ...
+    'expGroup',{},'branch',{},'isRef',{},'animalIdx',{},'rowInAnimal',{});
+end
+function r = emptyResults()
+%emptyResults  The result-link list (spec D5): report images, newest first.
+r = struct('path',{},'label',{},'when',{});
 end
 function d = presetDirDefault()
 d = fullfile(prefdir,'guiWorkbenchPresets');
@@ -1430,41 +1471,54 @@ end
 
 %% ===================== PROCESS tab ================================== %%
 function buildProcessTab(fig)
+%buildProcessTab  The MONITOR (spec D6): press Run, watch, open results.  Nothing
+%   here is selectable - what runs was decided per TYPE on the Constructor tab -
+%   so the file x step picture is ONE read-only uitable rather than a live widget
+%   per cell.  200 files x 15 steps is 3000 widgets and was exactly where the old
+%   matrix fell over; a table costs one component whatever the file count.
 app = getApp(fig); t = app.tabs.process;
-gl = uigridlayout(t,[1 2],'ColumnWidth',{'2.4x','1x'},'Padding',[6 6 6 6],'ColumnSpacing',8);
+gl = uigridlayout(t,[1 2],'ColumnWidth',{'2.6x','1x'},'Padding',[6 6 6 6],'ColumnSpacing',8);
 
-% -- LEFT: toolbar + matrix + log --
-left = uigridlayout(gl,[3 1],'RowHeight',{'fit','1x','fit'},'RowSpacing',6);
-tb = uigridlayout(left,[1 9], ...
-    'ColumnWidth',{'fit','fit','fit','fit','fit','1x','fit','fit','fit'},'Padding',[0 0 0 0]);
-uibutton(tb,'Text','Check all','ButtonPushedFcn',@(~,~)checkAll(fig,true));
-uibutton(tb,'Text','Clear checks','ButtonPushedFcn',@(~,~)checkAll(fig,false));
+% -- LEFT: toolbar + the state table + the selected row + the log --
+left = uigridlayout(gl,[4 1],'RowHeight',{'fit','1.8x','fit','1x'},'RowSpacing',6);
+tb = uigridlayout(left,[1 7], ...
+    'ColumnWidth',{'fit','fit','fit','1x','fit','fit','fit'},'Padding',[0 0 0 0]);
+c.previewBtn = uibutton(tb,'Text','Preview order','ButtonPushedFcn',@(~,~)dryRun(fig), ...
+    'Tooltip','list, in execution order, every step the configuration would run (no wrapper is called)');
+c.runBtn = uibutton(tb,'Text','Run','ButtonPushedFcn',@(~,~)runChecked(fig), ...
+    'BackgroundColor',[0.82 0.92 0.82],'Tooltip','run the configured steps, in dependency order');
+c.stopBtn = uibutton(tb,'Text','Stop','Enable','off','ButtonPushedFcn',@(~,~)cancelRun(fig), ...
+    'BackgroundColor',[1 0.86 0.86],'Tooltip','stop after the current step finishes');
+c.progLabel = uilabel(tb,'Text','Ready.','FontAngle','italic');
 c.presetDrop = uidropdown(tb,'Items',{'(launcher defaults)'},'Value','(launcher defaults)', ...
     'ValueChangedFcn',@(s,~)onPresetPick(fig,s.Value),'Tooltip','seed the settings bag from a saved preset');
 uibutton(tb,'Text','Save preset...','ButtonPushedFcn',@(~,~)uiSavePreset(fig));
 uibutton(tb,'Text','Load preset...','ButtonPushedFcn',@(~,~)uiLoadPreset(fig));
-c.progLabel = uilabel(tb,'Text','Ready.','FontAngle','italic');
-c.previewBtn = uibutton(tb,'Text','Preview order','ButtonPushedFcn',@(~,~)dryRun(fig), ...
-    'Tooltip','list, in execution order, every checked cell that would run (no wrapper is called)');
-c.runBtn = uibutton(tb,'Text','Run','ButtonPushedFcn',@(~,~)runChecked(fig), ...
-    'BackgroundColor',[0.82 0.92 0.82],'Tooltip','run every checked cell in dependency order');
-c.stopBtn = uibutton(tb,'Text','Stop','Enable','off','ButtonPushedFcn',@(~,~)cancelRun(fig), ...
-    'BackgroundColor',[1 0.86 0.86],'Tooltip','stop after the current cell finishes');
 
-c.matrixPanel = uipanel(left,'BorderType','none');   % the matrix uigridlayout owns the scroll
+c.stateTable = uitable(left,'Data',{},'ColumnName',{'File'},'RowName',{}, ...
+    'ColumnEditable',false,'CellSelectionCallback',@(~,ev)onProgressSelect(fig,ev), ...
+    'Tooltip',progressLegend());
+c.detail = uilabel(left,'Text','Select a row to see its file.','WordWrap','on','FontAngle','italic');
 c.log = uitextarea(left,'Value',{'Ready.'},'Editable','off');
 
-% -- RIGHT: settings panel for the selected step + a reports panel --
-right = uigridlayout(gl,[4 1],'RowHeight',{'fit','fit','1x','1x'},'RowSpacing',6);
-srow = uigridlayout(right,[1 2],'ColumnWidth',{'fit','1x'},'Padding',[0 0 0 0]);
-uilabel(srow,'Text','Step','FontWeight','bold');
-c.stepDrop = uidropdown(srow,'Items',{app.reg.label},'ItemsData',{app.reg.id}, ...
-    'ValueChangedFcn',@(s,~)selectStep(fig,s.Value),'Tooltip','the step whose settings are shown below');
-c.stepInfo = uilabel(right,'Text','','WordWrap','on','FontAngle','italic');
-c.paramPanel = uipanel(right,'Scrollable','on','Title','Settings','FontWeight','bold');
-c.reportPanel = uipanel(right,'Scrollable','on','Title','Reports (click a done cell)','FontWeight','bold');
+% -- RIGHT: the result links (spec D5) --
+right = uigridlayout(gl,[3 1],'RowHeight',{'fit','1x','fit'},'RowSpacing',6);
+uilabel(right,'Text','Results (newest first)','FontWeight','bold');
+c.resultList = uilistbox(right,'Items',{'(no report images yet)'},'ItemsData',{''}, ...
+    'Tooltip',['every report image the run produced, newest first - double-click to open it ' ...
+               'in the desktop viewer, which stays zoomable while processing continues'], ...
+    'DoubleClickedFcn',@(s,~)openArtifactViewer(s.Value));
+c.openBtn = uibutton(right,'Text','Open selected', ...
+    'ButtonPushedFcn',@(~,~)openArtifactViewer(getApp(fig).c.process.resultList.Value));
 
 app.c.process = c; setApp(fig,app);
+end
+
+function t = progressLegend()
+%progressLegend  What the state words in the table mean, in one tooltip.
+t = ['read-only state of every (file, step): ' char(183) ' = the configuration does not ' ...
+     'run it | queued = it will | running NN% = it is | done = on disk | error = it threw ' ...
+     '| skipped = configured but its input cannot be produced'];
 end
 
 %% ===================== EXPORT tab ================================== %%
@@ -2054,10 +2108,53 @@ end
 setApp(fig,app);
 recomputeBase(fig);
 refreshFileTable(fig);
-refreshStepSelector(fig);
-renderMatrix(fig); selectStep(fig,getApp(fig).selStep);
+renderProgress(fig);
+logPerFileFlips(fig);         % D6: say so when a cell stopped reading as done
 renderConstructor(fig);       % types are data: a label edit adds/removes a row live
 refreshStatus(fig);
+end
+
+function n = logPerFileFlips(fig)
+%logPerFileFlips  Report how many cells the PER-FILE gating re-evaluated (D6/D8).
+%   Existing projects WILL show cells fall back from done: unioning a recording's
+%   settings across its pipelines made a half-processed recording read as finished
+%   (only the cardiac product ever got a BFI, yet BFI showed done for the contrast
+%   file too).  That is the bug surfacing, not a regression - so it is counted and
+%   said out loud on load rather than left to be noticed.  The old answer is
+%   recovered for free by asking about the same FILE with its pipeline flag
+%   cleared, which is exactly the whole-recording union wbStateEngine used to do.
+app = getApp(fig);
+n = 0;
+seen = containers.Map('KeyType','char','ValueType','logical');
+for i = 1:numel(app.files)
+    f = app.files(i);
+    if isempty(f.model.branch) || isKey(seen,f.path), continue; end
+    seen(f.path) = true;
+    was = statesOf(app, wholeRecordingModel(f.model), f.type);
+    now_ = app.fileState(f.path);
+    for k = 1:numel(app.reg)
+        id = app.reg(k).id;
+        if isfield(was,id) && strcmp(was.(id),'done') && ...
+           isfield(now_,id) && ~strcmp(now_.(id),'done')
+            n = n + 1;
+        end
+    end
+end
+if n>0
+    wbLog(fig,sprintf(['%d cell(s) re-evaluated per-file: their step ran on ANOTHER ' ...
+        'product of the same recording, not on this file.'], n));
+end
+end
+
+function m = wholeRecordingModel(model)
+%wholeRecordingModel  The same FILE asked about as the whole recording: identity,
+%   extension and modality intact, pipeline flag cleared.  Clearing the flag is
+%   what re-opens the union across every product (wbStateEngine>samePipeline);
+%   re-parsing the bare identity would not do - it has no extension, so it would
+%   come back with no modality and gate every step off.
+m = model;
+m.stage  = '';
+m.branch = '';
 end
 %% ---- curation actions (table edits, assignment, references) -------- %%
 function setLabel(fig,path,axis,value)
@@ -2426,17 +2523,6 @@ if isempty(c), u = {}; return; end
 [~,ia] = unique(c,'stable'); u = c(sort(ia));
 end
 
-function refreshStepSelector(fig)
-%refreshStepSelector  Keep the settings-panel step dropdown valid for the columns.
-app = getApp(fig); c = app.c.process;
-if isempty(app.reg)
-    c.stepDrop.Items = {'(no steps)'}; c.stepDrop.ItemsData = {''};
-    app.selStep = ''; setApp(fig,app); return
-end
-c.stepDrop.Items = {app.reg.label}; c.stepDrop.ItemsData = {app.reg.id};
-if ~any(strcmp(app.selStep,{app.reg.id})), app.selStep = app.reg(1).id; end
-c.stepDrop.Value = app.selStep; setApp(fig,app);
-end
 
 function [rows, animalNames, modelArr] = flattenDisc(disc)
 %flattenDisc  Discovery grid -> flat rows in animal-major, reference-first order.
@@ -2583,23 +2669,71 @@ end
 
 %% ===================== state derivation ============================ %%
 function recomputeBase(fig)
-%recomputeBase  Disk baseline (+ current-settings fingerprint) for every row.
+%recomputeBase  The disk picture (+ the current-settings fingerprint), at the
+%   three scopes the workbench asks about:
+%     .base        per RECORDING - the legacy row view the look-ahead uses;
+%     .fileState   per FILE       - what the monitor shows (D6: each file is
+%                                   gated on its OWN pipeline, so a recording
+%                                   whose cardiac product alone got a BFI no
+%                                   longer reads as fully done);
+%     .branchState per (recording, PIPELINE) - what the run expansion asks, since
+%                                   a step is only skippable when it is done on
+%                                   every product it would touch (D8).
+%   All three come from the same wbStateEngine call shape; only the model handed
+%   to it differs, which is exactly where the per-file rule lives.
 app = getApp(fig);
-app.base = containers.Map('KeyType','char','ValueType','any');
+app.base        = containers.Map('KeyType','char','ValueType','any');
+app.fileState   = containers.Map('KeyType','char','ValueType','any');
+app.branchState = containers.Map('KeyType','char','ValueType','any');
 for i = 1:numel(app.rows)
     m = app.rows(i).model;
-    cs = curSettingsFor(app,m);
-    st = wbStateEngine(m, app.reg, cs);
-    bs = struct();
-    for k = 1:numel(st), bs.(st(k).id) = st(k).state; end
-    app.base(m.identity) = bs;
+    app.base(m.identity) = statesOf(app, m, modelType(m));
+end
+for i = 1:numel(app.files)
+    f = app.files(i);
+    app.fileState(f.path) = statesOf(app, f.model, f.type);
+end
+brs = wbTypeSelection('branches', app.reg);
+for i = 1:numel(app.rows)
+    id = app.rows(i).identity;
+    ty = typeOfIdentity(app, id);
+    for b = 1:numel(brs)
+        bm = branchModelOf(id, brs{b});
+        if isempty(bm), continue; end                % that pipeline has no file yet
+        app.branchState([id '||' brs{b}]) = statesOf(app, bm, ty);
+    end
 end
 setApp(fig,app);
 end
-function cs = curSettingsFor(app,model)
+
+function bs = statesOf(app, model, type)
+%statesOf  wbStateEngine's answer for one model, folded into a stepId->state struct.
+if nargin<3, type = modelType(model); end
+cs = curSettingsFor(app, model, type);
+st = wbStateEngine(model, app.reg, cs);
+bs = struct();
+for k = 1:numel(st), bs.(st(k).id) = st(k).state; end
+end
+
+function m = branchModelOf(identity, branch)
+%branchModelOf  ANY data file of one recording sitting on one pipeline ([] if the
+%   pipeline has produced nothing yet).  Which file does not matter: wbStateEngine
+%   unions the settings ALONG the pipeline, so '_t_K_d' and '_t_BFI_d' give the
+%   same answer - and asking for a fixed one would break the moment a step deleted
+%   its original (runBFI's deleteOriginal).
+m = [];
+d = dir([identity '*_d.mat']);
+for i = 1:numel(d)
+    cm = wbFileModel(fullfile(d(i).folder, d(i).name));
+    if strcmp(cm.identity, identity) && strcmp(cm.branch, branch), m = cm; return; end
+end
+end
+
+function cs = curSettingsFor(app,model,type)
 %curSettingsFor  The settings a recording would run with - resolved for ITS TYPE,
-%   so the staleness fingerprint follows the type's configuration.
-ty = modelType(model);
+%   so the staleness fingerprint follows the type's configuration.  A bare parsed
+%   model carries no type, so the caller passes the one the Files tab assigned.
+if nargin<3 || isempty(type), ty = modelType(model); else, ty = char(type); end
 cs = struct();
 for k = 1:numel(app.reg)
     cs.(app.reg(k).id) = wbSettingsModel('resolve', app.sm, app.reg(k), model, ty);
@@ -2654,134 +2788,212 @@ if ~wbPrereqs('met', step, have), return; end
 s = 'ready';
 end
 
-%% ===================== the matrix =================================== %%
-function renderMatrix(fig)
-app = getApp(fig);
-c = app.c.process;
-delete(c.matrixPanel.Children);
-app.cellComp  = containers.Map('KeyType','char','ValueType','any');
-app.gridRowOf = containers.Map('KeyType','char','ValueType','double');
-app.rendered  = containers.Map('KeyType','char','ValueType','any');
-setApp(fig,app);
-
-if isempty(app.rows)
-    gl = uigridlayout(c.matrixPanel,[1 1],'Padding',[20 20 20 20]);
-    uilabel(gl,'Text','Load recordings on the Files tab to populate the matrix.', ...
-        'HorizontalAlignment','center','FontAngle','italic');
-    return
-end
-if isempty(app.reg)
-    gl = uigridlayout(c.matrixPanel,[1 1],'Padding',[20 20 20 20]);
-    uilabel(gl,'Text',sprintf('No pipeline steps are defined for modality "%s" yet.',app.modality), ...
-        'HorizontalAlignment','center','FontAngle','italic');
-    return
-end
-if numel(app.rows) > app.maxWidgets
-    renderMatrixTable(fig);
-    return
-end
-renderMatrixWidgets(fig);
-end
-
-function renderMatrixWidgets(fig)
-app = getApp(fig); c = app.c.process; reg = app.reg;
-nSteps = numel(reg);
-nCols  = 1 + nSteps;
-nAnimals = numel(app.animalNames);
-nBody  = numel(app.rows);
-nRows  = 1 + nAnimals + nBody;                      % header + animal headers + files
-
-colW = [{190}, repmat({96},1,nSteps)];
-rowH = [{58}, num2cell(repmat(26,1,nRows-1))];
-grid = uigridlayout(c.matrixPanel,[nRows nCols],'ColumnWidth',colW,'RowHeight',rowH, ...
-    'RowSpacing',2,'ColumnSpacing',2,'Padding',[2 2 2 2],'Scrollable','on');
-
-% ---- header row ----
-hc = uilabel(grid,'Text','Recording  \  Step','FontWeight','bold'); hc.Layout.Row = 1; hc.Layout.Column = 1;
-for s = 1:nSteps
-    hp = uigridlayout(grid,[2 1],'RowHeight',{'1x','fit'},'Padding',[1 1 1 1],'RowSpacing',1);
-    hp.Layout.Row = 1; hp.Layout.Column = s+1;
-    cb = uicheckbox(hp,'Text',reg(s).label,'WordWrap','on','FontSize',10, ...
-        'Tooltip',headerTip(reg(s)),'ValueChangedFcn',@(o,~)checkColumn(fig,reg(s).id,o.Value));
-    gr = uigridlayout(hp,[1 1],'Padding',[0 0 0 0]);
-    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',@(~,~)selectStep(fig,reg(s).id));
-    app.c.process.colCheck.(reg(s).id) = cb;
-end
-setApp(fig,app);
-
-% ---- body: animal header + one row per file ----
-gridRow = 1;
-lastAnimal = -1;
-app = getApp(fig);
-for i = 1:numel(app.rows)
-    r = app.rows(i);
-    if r.animalIdx ~= lastAnimal
-        gridRow = gridRow + 1;
-        gh = uigridlayout(grid,[1 3],'ColumnWidth',{'1x','fit','fit'},'Padding',[0 0 0 0]);
-        gh.Layout.Row = gridRow; gh.Layout.Column = [1 nCols];
-        uilabel(gh,'Text',['  ' r.animal],'FontWeight','bold','BackgroundColor',[0.92 0.92 0.96]);
-        uibutton(gh,'Text','check animal','FontSize',9,'ButtonPushedFcn',@(~,~)checkAnimal(fig,r.animal,true));
-        uibutton(gh,'Text','clear','FontSize',9,'ButtonPushedFcn',@(~,~)checkAnimal(fig,r.animal,false));
-        lastAnimal = r.animalIdx;
+%% ===================== the progress table (read-only) =============== %%
+function rows = progressRows(app)
+%progressRows  The monitor's rows: ONE PER FILE (spec D4/D6), ordered the way the
+%   run goes - animal, reference first, then the file's position in its animal -
+%   so watching the table reads top to bottom.  A recording with two product files
+%   contributes two rows, which is the whole point: each is gated on its OWN
+%   pipeline (D8) and each carries only the steps its branch runs.
+rows = emptyProgressRows();
+for i = 1:numel(app.files)
+    f = app.files(i);
+    k = find(strcmp({app.rows.identity}, f.model.identity),1);
+    if isempty(k), ai = inf; ria = inf; isRef = f.isRef; else
+        ai = app.rows(k).animalIdx; ria = app.rows(k).rowInAnimal; isRef = app.rows(k).isRef;
     end
-    gridRow = gridRow + 1;
-    app.gridRowOf(r.identity) = gridRow;
-    lc = uigridlayout(grid,[1 2],'ColumnWidth',{'1x','fit'},'Padding',[0 0 0 0]);
-    lc.Layout.Row = gridRow; lc.Layout.Column = 1;
-    uilabel(lc,'Text',[r.label ternary(r.isRef,'  (ref)','')],'Tooltip',r.model.path,'FontSize',11);
-    uibutton(lc,'Text','check','FontSize',9,'ButtonPushedFcn',@(~,~)checkRow(fig,r.identity,true));
-    for s = 1:nSteps
-        makeCell(fig,grid,gridRow,s+1,r.identity,reg(s));
+    rows(end+1) = struct('path',f.path,'model',f.model,'identity',f.model.identity, ...
+        'label',f.name,'animal',f.animal,'type',f.type,'expGroup',f.expGroup, ...
+        'branch',f.model.branch,'isRef',logical(isRef),'animalIdx',ai,'rowInAnimal',ria); %#ok<AGROW>
+end
+if isempty(rows), return; end
+[~,ord] = sortrows([[rows.animalIdx]', [rows.rowInAnimal]', (1:numel(rows))']);
+rows = rows(ord);
+end
+
+function renderProgress(fig)
+%renderProgress  (Re)build the state table from scratch: rows, columns, contents.
+app = getApp(fig); c = app.c.process;
+if ~isfield(c,'stateTable') || ~isgraphics(c.stateTable), return; end
+app.pRows  = progressRows(app);
+app.pRowOf = containers.Map('KeyType','char','ValueType','double');
+for i = 1:numel(app.pRows), app.pRowOf(app.pRows(i).path) = i; end
+setApp(fig,app);
+
+c.stateTable.ColumnName = [{'File'}, {app.reg.label}];
+c.stateTable.ColumnWidth = [{230}, repmat({94},1,numel(app.reg))];
+refreshCells(fig,{});
+refreshProgressDetail(fig);
+end
+
+function refreshCells(fig,identities)
+%refreshCells  Repaint the state table.  It writes table DATA, never components:
+%   the whole point of the read-only monitor is that a 200-file project costs one
+%   uitable instead of 3000 live widgets.  'identities' narrows the repaint to the
+%   rows of those recordings ({} = all), which is what keeps a per-cell progress
+%   tick cheap during a run.
+app = getApp(fig); c = app.c.process;
+if ~isfield(c,'stateTable') || ~isgraphics(c.stateTable), return; end
+if isempty(app.pRows)
+    c.stateTable.Data = {};
+    return
+end
+D = c.stateTable.Data;
+nCol = numel(app.reg)+1;
+if ~iscell(D) || size(D,1)~=numel(app.pRows) || size(D,2)~=nCol
+    D = cell(numel(app.pRows), nCol);
+    identities = {};                                   % a fresh grid: fill it all
+end
+if nargin<2 || isempty(identities)
+    which = 1:numel(app.pRows);
+else
+    which = find(ismember({app.pRows.identity}, identities));
+end
+for i = which
+    r = app.pRows(i);
+    D{i,1} = [r.label ternary(r.isRef,'  (ref)','')];
+    planned = plannedStepsFor(app, r);
+    for s = 1:numel(app.reg)
+        D{i,s+1} = progressCellText(app, r, app.reg(s), planned);
     end
 end
-setApp(fig,app);
-syncHeaderChecks(fig);
+c.stateTable.Data = D;
 end
 
-function makeCell(fig,grid,gridRow,gridCol,identity,step)
-%makeCell  Create (or replace) the one component for a (file,step) cell.
+function ids = plannedStepsFor(app, r)
+%plannedStepsFor  Which steps THIS FILE's configuration runs on it, in registry
+%   order.  A file sitting on one of its type's product rows gets that row's
+%   selection - what it runs plus what it inherits from the anchor row - so the
+%   cardiac file of a two-pipeline recording never shows the contrast row's steps.
+%   A file with no stage flag (the raw recording, the usual case) stands for the
+%   whole recording and gets the union.  The per-animal steps are added for the
+%   animal, not the row: they span every type by definition.
+ids = animalStepsOn(app);
+if isempty(r.type), ids = orderIds(app.reg, ids); return; end
+brs = wbTypeSelection('rows', app.typeSel, app.reg, r.type);
+if ~isempty(r.branch) && any(strcmp(r.branch, brs)), brs = {r.branch}; end
+for b = 1:numel(brs)
+    ids = [ids, wbTypeSelection('steps',     app.typeSel, app.reg, r.type, brs{b}), ...
+                wbTypeSelection('inherited', app.typeSel, app.reg, r.type, brs{b})]; %#ok<AGROW>
+end
+ids = orderIds(app.reg, ids);
+end
+
+function out = orderIds(reg, ids)
+%orderIds  Unique step ids in registry (dependency) order.
+out = {reg(ismember({reg.id}, ids)).id};
+end
+
+function txt = progressCellText(app, r, step, planned)
+%progressCellText  ONE cell of the monitor (spec D4).  The words are the states a
+%   watcher cares about, in this order of authority: what the run is doing now,
+%   then what the disk says, then what the configuration intends.
+key = cellKey(r.identity, step.id);
+if isKey(app.runState,key) && stepTouchesFile(step, r.branch)
+    switch app.runState(key)
+        case 'running'
+            pct = 0;
+            if isKey(app.cellPct,key), pct = app.cellPct(key); end
+            txt = sprintf('running %d%%', round(pct)); return
+        case 'done',  txt = 'done';  return
+        case 'error', txt = 'error'; return
+    end
+end
+st = fileStateOf(app, r.path, step.id);
+if strcmp(st,'done'),                        txt = 'done'; return; end
+if ~any(strcmp(step.id, planned)),           txt = char(183); return; end   % not configured
+if any(strcmp(st,{'ready','stale'})),        txt = 'queued'; return; end
+% configured, but blocked: queued only if everything it needs is itself queued
+have = {};
+req = wbPrereqs('all', step);
+for i = 1:numel(req)
+    rs = fileStateOf(app, r.path, req{i});
+    if strcmp(rs,'done') || any(strcmp(req{i}, planned)), have{end+1} = req{i}; end %#ok<AGROW>
+end
+if wbPrereqs('met', step, have), txt = 'queued'; else, txt = 'skipped'; end
+end
+
+function tf = stepTouchesFile(step, fileBranch)
+%stepTouchesFile  Whether a step's work lands on this file.  A file with no stage
+%   flag is the whole recording; a branch-agnostic step covers every product of it
+%   ('all' in one call, 'copy' by propagation); anything else is branch-local.
+tf = isempty(fileBranch) || isempty(step.branch) || strcmp(step.branch, fileBranch);
+end
+
+function s = fileStateOf(app, path, stepId)
+%fileStateOf  The PER-FILE disk state of one (file,step) - D6's whole point.
+s = 'unavailable';
+if ~isKey(app.fileState,path), return; end
+bs = app.fileState(path);
+if isfield(bs,stepId), s = bs.(stepId); end
+if strcmp(s,'done') && isKey(app.stale, cellKey(fileIdentityOf(app,path), stepId))
+    s = 'stale';                                   % an in-session edit pushed it stale
+end
+end
+function id = fileIdentityOf(app, path)
+id = path;
+if isKey(app.pRowOf,path), id = app.pRows(app.pRowOf(path)).identity; end
+end
+
+function onProgressSelect(fig, ev)
+%onProgressSelect  Remember which row the user clicked and describe it below.
+if isempty(ev) || ~isfield(struct(ev),'Indices') || isempty(ev.Indices), return; end
 app = getApp(fig);
-key = cellKey(identity,step.id);
-state = resolveCellState(app,identity,step.id);
-if isKey(app.cellComp,key)
-    old = app.cellComp(key);
-    if isgraphics(old), delete(old); end
-end
-comp = cellComponent(fig,grid,identity,step,state);
-comp.Layout.Row = gridRow; comp.Layout.Column = gridCol;
-app.cellComp(key) = comp;
-app.rendered(key) = state;
+app.pSel = ev.Indices(1,1);
 setApp(fig,app);
+refreshProgressDetail(fig);
 end
 
-function comp = cellComponent(fig,parent,identity,step,state)
-%cellComponent  A compact stateful widget per cell (checkbox / glyph label).
-switch state
-    case {'ready','stale','checked'}
-        isChk = strcmp(state,'checked');
-        txt = ''; fc = [0 0 0]; tip = 'ready - tick to queue';
-        if strcmp(state,'stale'), txt = '!'; fc = [0.75 0.45 0]; tip = 'stale - tick to re-run with the current settings'; end
-        if isChk, tip = 'queued for the next run'; end
-        comp = uicheckbox(parent,'Text',txt,'FontColor',fc,'Value',isChk,'Tooltip',tip, ...
-            'ValueChangedFcn',@(o,~)onCellCheck(fig,identity,step.id,o.Value));
-    case 'done'
-        comp = uibutton(parent,'Text','done','FontColor',[0 0.5 0], ...
-            'Tooltip','done - click to open its report image(s)', ...
-            'ButtonPushedFcn',@(~,~)showReports(fig,identity,step.id));
-    case 'running'
-        comp = uilabel(parent,'Text','...','FontColor',[0.85 0.5 0],'HorizontalAlignment','center','Tooltip','running');
-    case 'error'
-        msg = 'error'; app = getApp(fig); key = cellKey(identity,step.id);
-        if isKey(app.cellMsg,key) && ~isempty(app.cellMsg(key)), msg = ['error: ' app.cellMsg(key)]; end
-        comp = uilabel(parent,'Text','X','FontColor',[0.8 0 0],'HorizontalAlignment','center','Tooltip',msg);
-    otherwise   % unavailable - a disabled (greyed) checkbox reads as "not yet checkable"
-        reason = unavailableReason(getApp(fig),identity,step.id);
-        comp = uicheckbox(parent,'Text','','Value',false,'Enable','off','Tooltip',reason);
+function refreshProgressDetail(fig)
+%refreshProgressDetail  The selected file's identity card: where it is, how it is
+%   labelled, and what went wrong if something did.
+app = getApp(fig); c = app.c.process;
+if ~isfield(c,'detail') || ~isgraphics(c.detail), return; end
+i = 0;
+if isfield(app,'pSel'), i = app.pSel; end
+if i<1 || i>numel(app.pRows)
+    c.detail.Text = 'Select a row to see its file.';
+    return
+end
+r = app.pRows(i);
+bits = {sprintf('%s   animal %s | type %s | group %s', r.path, ...
+    dashIfEmpty(r.animal), dashIfEmpty(r.type), dashIfEmpty(r.expGroup))};
+blocked = firstSkipped(app, r);
+if ~isempty(blocked)
+    bits{end+1} = sprintf('%s skipped - %s', blocked, unavailableReason(app,r.identity,blocked));
+end
+err = lastErrorFor(app, r.identity);
+if ~isempty(err), bits{end+1} = ['last error: ' err]; end
+c.detail.Text = strjoin(bits, '   |   ');
+end
+
+function id = firstSkipped(app, r)
+%firstSkipped  The first configured step this file cannot reach ('' if none) - the
+%   one worth explaining, since everything after it is skipped for the same reason.
+id = '';
+planned = plannedStepsFor(app, r);
+for k = 1:numel(app.reg)
+    if strcmp(progressCellText(app, r, app.reg(k), planned),'skipped')
+        id = app.reg(k).id; return
+    end
+end
+end
+function s = dashIfEmpty(v), s = char(v); if isempty(s), s = '-'; end, end
+
+function msg = lastErrorFor(app, identity)
+%lastErrorFor  The most recent error text recorded against this recording.
+msg = '';
+k = keys(app.cellMsg);
+for i = 1:numel(k)
+    p = strsplit(k{i},'||');
+    if numel(p)>=2 && strcmp(p{1},identity) && ~isempty(app.cellMsg(k{i}))
+        msg = sprintf('%s: %s', p{2}, app.cellMsg(k{i}));
+    end
 end
 end
 
 function s = unavailableReason(app,identity,stepId)
-%unavailableReason  A short tooltip for a greyed cell (modality / prerequisites).
+%unavailableReason  A short line for a step that cannot run (modality / prereqs).
 s = 'not available yet';
 step = stepById(app.reg,stepId);
 if isKey(app.base,identity) && ~any(strcmp(app.modality,step.modalities))
@@ -2791,107 +3003,11 @@ elseif ~isempty(wbPrereqs('all',step))
 end
 end
 
-function renderMatrixTable(fig)
-%renderMatrixTable  Escape hatch for very large sessions: a colored summary table.
-app = getApp(fig); c = app.c.process; reg = app.reg;
-gl = uigridlayout(c.matrixPanel,[2 1],'RowHeight',{'fit','1x'},'Padding',[4 4 4 4]);
-uilabel(gl,'Text',sprintf(['%d files exceed the widget limit (%d): showing a read-only ' ...
-    'state table. Use the toolbar / column / animal checks to queue.'],numel(app.rows),app.maxWidgets), ...
-    'WordWrap','on','FontAngle','italic');
-n = numel(app.rows);
-D = cell(n, numel(reg)+1);
-for i = 1:n
-    r = app.rows(i);
-    D{i,1} = [r.animal ' / ' r.label];
-    for s = 1:numel(reg)
-        D{i,s+1} = stateGlyph(resolveCellState(app,r.identity,reg(s).id));
-    end
-end
-tbl = uitable(gl,'Data',D,'ColumnName',[{'recording'},{reg.id}],'RowName',{});
-% color the done/stale cells
-styGreen = uistyle('FontColor',[0 0.5 0]);
-styAmber = uistyle('FontColor',[0.75 0.45 0]);
-for i = 1:n
-    for s = 1:numel(reg)
-        g = D{i,s+1};
-        if strcmp(g,'done'), addStyle(tbl,styGreen,'cell',[i s+1]);
-        elseif any(strcmp(g,{'stale','[x]'})), addStyle(tbl,styAmber,'cell',[i s+1]); end
-    end
-end
-end
-function g = stateGlyph(state)
-switch state
-    case 'checked', g = '[x]';
-    case 'ready',   g = '[ ]';
-    case 'done',    g = 'done';
-    case 'stale',   g = 'stale';
-    case 'running', g = '...';
-    case 'error',   g = 'X';
-    otherwise,      g = '-';
-end
-end
-
-function refreshCells(fig,identities)
-%refreshCells  Redraw only the cells whose resolved state changed (widget mode).
-app = getApp(fig);
-if isempty(app.rows) || numel(app.rows) > app.maxWidgets
-    renderMatrix(fig); return              % table mode: cheapest to rebuild
-end
-grid = firstMatrixGrid(app.c.process.matrixPanel);
-if isempty(grid), renderMatrix(fig); return; end
-if nargin<2 || isempty(identities), identities = {app.rows.identity}; end
-reg = app.reg;
-for i = 1:numel(identities)
-    id = identities{i};
-    if ~isKey(app.gridRowOf,id), continue; end
-    gridRow = app.gridRowOf(id);
-    for s = 1:numel(reg)
-        key = cellKey(id,reg(s).id);
-        newState = resolveCellState(app,id,reg(s).id);
-        old = ''; if isKey(app.rendered,key), old = app.rendered(key); end
-        if ~strcmp(newState,old)
-            makeCell(fig,grid,gridRow,s+1,id,reg(s));
-            app = getApp(fig);             % makeCell mutated appdata
-        end
-    end
-end
-syncHeaderChecks(fig);
-end
-function grid = firstMatrixGrid(panel)
-grid = [];
-ch = panel.Children;
-for i = 1:numel(ch)
-    if isa(ch(i),'matlab.ui.container.GridLayout'), grid = ch(i); return; end
-end
-end
-
-function syncHeaderChecks(fig)
-%syncHeaderChecks  Tick a column header when every eligible cell in it is checked.
-app = getApp(fig);
-if ~isfield(app.c.process,'colCheck'), return; end
-for s = 1:numel(app.reg)
-    id = app.reg(s).id;
-    if ~isfield(app.c.process.colCheck,id), continue; end
-    cb = app.c.process.colCheck.(id);
-    if ~isgraphics(cb), continue; end
-    [elig,chk] = columnTally(app,id);
-    cb.Value = elig>0 && chk==elig;
-end
-end
-function [elig,chk] = columnTally(app,stepId)
-elig = 0; chk = 0;
-for i = 1:numel(app.rows)
-    st = resolveCellState(app,app.rows(i).identity,stepId);
-    if any(strcmp(st,{'ready','stale','checked'})), elig = elig+1; end
-    if strcmp(st,'checked'), chk = chk+1; end
-end
-end
-
 %% ===================== check / bulk-select ========================= %%
-function onCellCheck(fig,identity,stepId,tf)
-setChecked(fig,identity,stepId,tf);
-refreshCells(fig,{identity});
-end
+% The per-cell queue predates the type model and no longer drives the run - the
+% Constructor's (type,branch) selection does (buildRunOrder).  What survives here
+% is the programmatic surface the API still exposes and the look-ahead it shares
+% with the monitor; Phase 6 retires the map itself along with the old matrix.
 function apiCheck(fig,identity,stepId,tf)
 setChecked(fig,identity,stepId,tf);
 refreshCells(fig,{identity});
@@ -2920,11 +3036,6 @@ for i = 1:numel(app.rows)
     end
 end
 setApp(fig,app); refreshCells(fig,{});
-end
-function checkRow(fig,identity,tf)
-app = getApp(fig);
-for s = 1:numel(app.reg), setCheckedQuiet(app,identity,app.reg(s).id,tf); end
-setApp(fig,app); refreshCells(fig,{identity});
 end
 function checkModality(fig,modality,tf)
 app = getApp(fig);
@@ -2964,14 +3075,12 @@ end
 
 %% ===================== settings panel ============================== %%
 function selectStep(fig,stepId)
+%selectStep  Which step the PROGRAMMATIC settings calls act on.  It no longer
+%   renders anything: settings are a per-TYPE question and live on the Constructor
+%   tab (spec D4), while the Process tab is a read-only monitor (D6).
 app = getApp(fig);
 if ~any(strcmp(stepId,{app.reg.id})), return; end
 app.selStep = stepId; setApp(fig,app);
-c = app.c.process;
-if isprop(c.stepDrop,'Value'), c.stepDrop.Value = stepId; end
-step = stepById(app.reg,stepId);
-c.stepInfo.Text = stepInfoText(step);
-buildSettingsPanel(fig,c.paramPanel,step);
 end
 function s = stepInfoText(step)
 bits = {};
@@ -3120,8 +3229,6 @@ setApp(fig,app);
 recomputeBase(fig);                                % new fingerprint (edited step may go stale)
 applyInvalidation(fig,seed);                       % forward cascade over done cells
 refreshCells(fig,{});
-% refresh the open panel so the control shows the coerced value
-selectStep(fig,app.selStep);
 wbLog(fig,sprintf('edit %s.%s -> %s',stepId,field,val2str(value)));
 end
 
@@ -3203,7 +3310,6 @@ recomputeBase(fig);
 % an edit changes fingerprints everywhere; clearest is to reset the stale overlay
 app = getApp(fig); app.stale = containers.Map('KeyType','char','ValueType','any'); setApp(fig,app);
 refreshCells(fig,{});
-selectStep(fig,getApp(fig).selStep);
 renderConstructor(fig);            % a preset carries the per-type layers too
 refreshPresetDrop(fig);
 wbLog(fig,['loaded preset ' pth]);
@@ -3226,7 +3332,7 @@ if strcmp(name,'(launcher defaults)')
     app = getApp(fig); app.sm = wbSettingsModel('new'); setApp(fig,app);
     recomputeBase(fig);
     app = getApp(fig); app.stale = containers.Map('KeyType','char','ValueType','any'); setApp(fig,app);
-    refreshCells(fig,{}); selectStep(fig,getApp(fig).selStep);
+    refreshCells(fig,{});
     renderConstructor(fig);        % every per-type layer went with the bag
     wbLog(fig,'reset to launcher defaults (global AND per-type settings)');
     return
@@ -3247,18 +3353,116 @@ if isequal(f,0), return; end
 loadSessionFrom(fig,fullfile(p,f));
 end
 function saveSessionTo(fig,pth)
+%saveSessionTo  Write the durable session (spec §5).  Everything the workbench
+%   knows goes in, including the RESOLVED per-file labels and the completion
+%   record - guiExport and guiExplore read this file and never the workbench.
 app = getApp(fig);
-session = wbSession('empty');
-% ---- the curated file set and how it was made ------------------------------
+saveSessionInto(app, wbSession('empty'), pth);
+app.sessionPath = pth; setApp(fig,app);   % later state changes autosave to here
+wbLog(fig,['saved session ' pth]);
+end
+
+function files = sessionFileList(app)
+%sessionFileList  The curated set with its labels RESOLVED, in table order.
+%   THE EXPERIMENTAL GROUP IS CARRIED HERE AND NOWHERE ELSE IN THE RUN: processing
+%   ignores it by design (spec §2), and Export/Explore are its only consumers - so
+%   it has to survive into the session or it is lost.
+files = struct('path',{},'name',{},'animal',{},'type',{},'index',{}, ...
+    'expGroup',{},'modality',{},'identity',{},'branch',{},'isRef',{},'use',{});
+for i = 1:numel(app.files)
+    f = app.files(i);
+    files(end+1) = struct('path',f.path,'name',f.name,'animal',f.animal, ...
+        'type',f.type,'index',f.index,'expGroup',f.expGroup,'modality',f.modality, ...
+        'identity',f.model.identity,'branch',f.model.branch, ...
+        'isRef',logical(f.isRef),'use',true); %#ok<AGROW>
+end
+end
+
+function recordCompletion(fig,identity,stepId,state,msg)
+%recordCompletion  One line of the session's per-FILE, per-STEP completion record.
+%   Keyed by PATH because that is what the read-only tools hold; a step that
+%   covered several branch products of a recording writes one line per file it
+%   touched, which is the only reading that survives D8.
+if ~isvalid(fig), return; end
+app = getApp(fig);
+step = stepById(app.reg,stepId);
+if isempty(step), return; end
+stamp = datestr(now,'yyyy-mm-dd HH:MM:SS'); %#ok<TNOW1,DATST>
+for i = 1:numel(app.pRows)
+    r = app.pRows(i);
+    if ~strcmp(r.identity,identity) || ~stepTouchesFile(step, r.branch), continue; end
+    app.completed([r.path '||' stepId]) = struct('state',char(state), ...
+        'when',stamp,'fingerprint',settingsFingerprint(app,step,r), ...
+        'message',char(msg));
+end
+setApp(fig,app);
+end
+
+function h = settingsFingerprint(app,step,r)
+%settingsFingerprint  A short, stable hash of the settings a step ran with, so a
+%   resumed session can tell "already done" from "done with OTHER parameters".
+%   Field order is normalised and the transport hooks are dropped, so the same
+%   configuration always hashes the same way whatever order it was built in.
+try
+    s = wbSettingsModel('resolve', app.sm, step, r.model, r.type);
+    f = fieldnames(s);
+    bits = {};
+    for i = 1:numel(f)
+        v = s.(f{i});
+        if isa(v,'function_handle'), continue; end     % transport hooks are not settings
+        bits{end+1} = [f{i} '=' val2str(v)]; %#ok<AGROW>
+    end
+    h = shortHash(strjoin(sort(bits),';'));
+catch
+    h = '';                                            % unresolvable = no fingerprint
+end
+end
+
+function h = shortHash(txt)
+%shortHash  A plain 32-bit polynomial hash of a char row - no toolbox, no Java.
+d = double(char(txt));
+acc = 0;
+for i = 1:numel(d), acc = mod(acc*31 + d(i), 4294967296); end
+h = sprintf('%08X', acc);
+end
+
+function autosaveSession(fig)
+%autosaveSession  Keep the durable session current WITHOUT being asked (spec §5).
+%   A run that is killed, cancelled or crashes must still leave something
+%   resumable behind, so the session is rewritten on every state change rather
+%   than only when the user remembers to save.  It goes wherever the session was
+%   last saved or loaded from, or beside the scanned root when there is no such
+%   file yet; with neither, there is nowhere to put it and nothing is written.
+if ~isvalid(fig), return; end
+app = getApp(fig);
+pth = app.sessionPath;
+if isempty(pth)
+    if isempty(app.root) || ~isfolder(app.root), return; end
+    pth = fullfile(app.root,'workbench_session.mat');
+end
+try
+    session = wbSession('empty');
+    saveSessionInto(app, session, pth);
+    app.sessionPath = pth; setApp(fig,app);
+catch ME
+    wbLog(fig,['session autosave failed: ' ME.message]);
+end
+end
+
+function saveSessionInto(app, session, pth)
+%saveSessionInto  Fill a blank session from the app struct and write it.  ONE
+%   definition of what a session contains, used by both the explicit Save and the
+%   autosave, so the two can never drift apart.
 session.root          = app.root;
 session.glob          = app.glob;
 session.patterns      = app.patterns;
 session.paths         = {app.files.path};
+session.files         = sessionFileList(app);
+session.completed     = app.completed;
 session.overrides     = app.overrides;
 session.modalityOvr   = app.modalityOvr;
 session.animalRef     = app.animalRef;
 session.animalRefMan  = app.animalRefMan;
-% ---- the derived grid + the processing state --------------------------------
 session.fNames        = app.disc.fNames;
 session.referenceMode = app.disc.referenceMode;
 session.animalNames   = app.animalNames;
@@ -3267,7 +3471,6 @@ session.rowOrder      = [];
 session.bag           = app.sm.bag;
 session.stepOverrides = app.sm.stepOverrides;
 session.fileOverrides = app.sm.fileOverrides;
-% ---- the Constructor's output: what each TYPE runs, and with what ----------
 session.typeBag       = app.sm.typeBag;
 session.typeOverrides = app.sm.typeOverrides;
 session.typeSel       = app.typeSel;
@@ -3276,7 +3479,6 @@ session.checked       = app.checked;
 session.staleOverlay  = app.stale;
 session.presetRef     = app.presetRef;
 wbSession('save', pth, session);
-wbLog(fig,['saved session ' pth]);
 end
 function loadSessionFrom(fig,pth)
 %loadSessionFrom  Restore a session WITHOUT a re-scan: the curated path list, its
@@ -3313,8 +3515,10 @@ app.typeSel   = wbTypeSelection('fromCells', keys(session.typeSel), app.reg);
 app.animalSel = session.animalSel;
 app.checked   = session.checked;
 app.stale     = session.staleOverlay;
+app.completed = session.completed;                 % what already ran, per file/step
 app.presetRef = session.presetRef;
 app.files     = emptyFiles();
+app.sessionPath = pth;                             % keep autosaving where it came from
 setApp(fig,app);
 syncFilesControls(fig);
 
@@ -3323,49 +3527,132 @@ paths = session.paths;
 if isempty(paths), paths = gridPaths(struct('fNames',{session.fNames})); end
 rebuildWorkingSet(fig, paths, true);
 refreshPresetDrop(fig);
-wbLog(fig,['loaded session ' pth]);
+wbLog(fig,sprintf('loaded session %s (schema %g, %d file(s), %d completed cell(s))', ...
+    pth, session.schema, numel(session.paths), session.completed.Count));
 end
 
-%% ===================== dry-run Run ================================= %%
+%% ===================== the run expansion =========================== %%
 function entries = buildRunOrder(fig)
-%buildRunOrder  Ordered checked cells: animal -> reference-first -> row -> step.
+%buildRunOrder  THE expansion: a per-TYPE configuration becomes an ordered list of
+%   (file, step) work items.  It asks three questions and derives nothing itself.
+%
+%   1. WHICH ROWS DOES THIS FILE'S TYPE HAVE?  wbTypeSelection('rows') - a
+%      (type,branch) row exists exactly while its raw producer is ticked.  Nothing
+%      here enumerates branches, step ids or type names.
+%   2. WHAT DOES EACH ROW RUN?  wbTypeSelection('steps') - the raw producer first,
+%      then the derived steps ticked on that row, already in registry (dependency)
+%      order.  An INHERITED recording-level step ('copy' / 'all') is deliberately
+%      absent from every row but its anchor, which is what queues setRegions,
+%      segmentation and BFI ONCE for a two-pipeline recording instead of once per
+%      pipeline - re-expanding them would split every branch twice and re-open the
+%      ROI editor.
+%   3. WHICH BRANCH PRODUCTS DOES A STEP ACTUALLY TOUCH?  Not asked here at all -
+%      that is branchScope, resolved from disk inside wbExecutor>buildFNames
+%      (spec §6).  This function names files and steps; the executor names files'
+%      products.
+%
+%   The two per-ANIMAL steps are not part of any type: they span the animal's
+%   files whatever their type OR experimental group, so they are emitted once per
+%   animal, and the reference FILE each of them resolves to comes from
+%   animalStepPlan (wbRefBranch), handed to the executor through ctx.refFile.  The
+%   experimental group plays no part in execution at all - it rides in the session
+%   for Export and Explore.
+%
+%   ORDER IS STEP-MAJOR: registry step -> animal -> reference-first -> file.  This
+%   is the LAUNCHER'S order (author, 2026-07-29), and the reason is not cosmetic: a
+%   launcher cell hands ONE step the whole fNames list, so every recording reaches
+%   a given level before anything moves past it.  Steps that read across a file set
+%   depend on that - registration templates the animal's files onto one reference,
+%   vessel typing paints one reference and inherits to the rest, split regions
+%   crops every product - and running a file all the way down before starting the
+%   next one would reach them while the others were still raw.  Within a step the
+%   animal's own order is kept (reference first), so an interactive step still
+%   walks an animal together.  A step already done on every product it would touch
+%   is left out, so a re-run resumes rather than repeats (spec §5).
 app = getApp(fig); reg = app.reg;
-entries = struct('animalIdx',{},'rowInAnimal',{},'stepIdx',{},'stepId',{}, ...
-    'stepLabel',{},'identity',{},'label',{},'animal',{},'isRef',{},'arity',{});
-seenPA = containers.Map('KeyType','char','ValueType','logical');
+entries = emptyEntries();
+seenPA  = containers.Map('KeyType','char','ValueType','logical');
+seen    = containers.Map('KeyType','char','ValueType','logical');
+aIds    = animalStepsOn(app);
 for i = 1:numel(app.rows)
-    r = app.rows(i);
-    for s = 1:numel(reg)
-        step = reg(s);
-        state = resolveCellState(app,r.identity,step.id);
-        if ~strcmp(state,'checked'), continue; end
-        if strcmp(step.arity,'perAnimal')
-            k = [num2str(r.animalIdx) '||' step.id];
-            if isKey(seenPA,k), continue; end       % once per animal, at the reference position
-            seenPA(k) = true;
-            e = mkEntry(r.animalIdx,1,s,step,animalRefIdentity(app,r.animalIdx),r.animal,true);
-        else
-            e = mkEntry(r.animalIdx,r.rowInAnimal,s,step,r.identity,r.animal,r.isRef);
+    r  = app.rows(i);
+    ty = typeOfIdentity(app, r.identity);
+
+    % ---- the per-animal steps: once per animal, at its reference -------------
+    for a = 1:numel(aIds)
+        step = stepById(reg, aIds{a});
+        if isempty(step), continue; end
+        k = [num2str(r.animalIdx) '||' step.id];
+        if isKey(seenPA,k), continue; end
+        seenPA(k) = true;
+        entries(end+1) = mkEntry(r.animalIdx, 1, stepIndexOf(reg,step.id), step, ...
+            animalRefIdentity(app,r.animalIdx), r.animal, true, ty); %#ok<AGROW>
+    end
+
+    % ---- the type's rows, and what each of them runs on this file ------------
+    if isempty(ty), continue; end
+    brs = wbTypeSelection('rows', app.typeSel, reg, ty);
+    for b = 1:numel(brs)
+        ids = wbTypeSelection('steps', app.typeSel, reg, ty, brs{b});
+        for j = 1:numel(ids)
+            step = stepById(reg, ids{j});
+            if isempty(step) || strcmp(step.arity,'perAnimal'), continue; end
+            k = cellKey(r.identity, ids{j});
+            if isKey(seen,k), continue; end             % one work item per (file,step)
+            if stepAlreadyDone(app, r.identity, ty, brs{b}, step), continue; end
+            seen(k) = true;
+            entries(end+1) = mkEntry(r.animalIdx, r.rowInAnimal, stepIndexOf(reg,step.id), ...
+                step, r.identity, r.animal, r.isRef, ty); %#ok<AGROW>
         end
-        entries(end+1) = e; %#ok<AGROW>
     end
 end
 if isempty(entries), return; end
-K = [[entries.animalIdx]', [entries.rowInAnimal]', [entries.stepIdx]'];
-[~,ord] = sortrows(K);
+K = [[entries.stepIdx]', [entries.animalIdx]', [entries.rowInAnimal]'];
+[~,ord] = sortrows(K);                       % step-major: the launcher's order
 entries = entries(ord);
 end
-function e = mkEntry(ai,ria,si,step,identity,animal,isRef)
+
+function e = emptyEntries()
+e = struct('animalIdx',{},'rowInAnimal',{},'stepIdx',{},'stepId',{}, ...
+    'stepLabel',{},'identity',{},'label',{},'animal',{},'isRef',{},'arity',{},'type',{});
+end
+function e = mkEntry(ai,ria,si,step,identity,animal,isRef,type)
 lbl = identity; [~,nm] = fileparts(identity); if ~isempty(nm), lbl = nm; end
 e = struct('animalIdx',ai,'rowInAnimal',ria,'stepIdx',si,'stepId',step.id, ...
     'stepLabel',step.label,'identity',identity,'label',lbl,'animal',animal, ...
-    'isRef',isRef,'arity',step.arity);
+    'isRef',isRef,'arity',step.arity,'type',char(type));
+end
+function k = stepIndexOf(reg,stepId)
+k = find(strcmp({reg.id},stepId),1);
+if isempty(k), k = numel(reg)+1; end
 end
 function id = animalRefIdentity(app,animalIdx)
 id = '';
 for i = 1:numel(app.rows)
     if app.rows(i).animalIdx==animalIdx, id = app.rows(i).identity; return; end
 end
+end
+
+function tf = stepAlreadyDone(app, identity, type, branch, step)
+%stepAlreadyDone  May the expansion leave this step out because the work is there?
+%   Only when it is done on EVERY product it would touch.  A row-local ('one')
+%   step touches its own row's pipeline, so its own pipeline decides; a
+%   recording-level one covers the lot in a single call, so every active row must
+%   already carry it - which is the D8 case again: a recording whose cardiac
+%   product alone got a BFI must still get one on the contrast side.
+brs = {branch};
+if ~strcmp(step.branchScope,'one')
+    brs = wbTypeSelection('rows', app.typeSel, app.reg, type);
+end
+tf = false;
+for b = 1:numel(brs)
+    key = [identity '||' brs{b}];
+    if ~isKey(app.branchState,key), return; end          % nothing produced there yet
+    bs = app.branchState(key);
+    if ~isfield(bs,step.id) || ~strcmp(bs.(step.id),'done'), return; end
+    if isKey(app.stale, cellKey(identity,step.id)), return; end   % an edit re-opened it
+end
+tf = true;
 end
 
 function lines = dryRun(fig)
@@ -3377,30 +3664,52 @@ for i = 1:numel(entries)
     lines{end+1} = sprintf('  %2d. [%s] %-26s :: %s', i, e.animal, who, e.stepLabel); %#ok<AGROW>
 end
 if numel(entries)==0
-    lines{end+1} = '  (nothing checked - tick cells in the matrix first)';
+    lines{end+1} = '  (nothing to do - configure the types on the Constructor tab)';
 end
 setLog(fig,lines);
 end
 
 %% ===================== real Run (executor) ========================= %%
 function runChecked(fig)
-%runChecked  Execute every checked cell in dependency order via wbExecutor.
+%runChecked  Run what the per-type configuration says, through wbExecutor.
 app = getApp(fig);
 if isfield(app,'running') && app.running, return; end       % already running
 entries = buildRunOrder(fig);
 if isempty(entries)
-    setLog(fig,{'Nothing checked - tick cells in the matrix first.'});
+    setLog(fig,{'Nothing to do - configure the types on the Constructor tab.'});
     return
 end
+if ~confirmRun(fig, entries), return; end
 % a fresh run starts with a clean transient overlay
 app.runState = containers.Map('KeyType','char','ValueType','any');
 app.cellMsg  = containers.Map('KeyType','char','ValueType','any');
+app.cellPct  = containers.Map('KeyType','char','ValueType','any');
 app.running  = true;  app.cancel = false;
 setApp(fig,app);
 setRunningUI(fig,true);
+autosaveSession(fig);                    % a run that never returns still leaves a session
 cleaner = onCleanup(@() finishRun(fig)); % restore UI + fold results even on error
 ctx = buildExecContext(fig);
 wbExecutor(entries, ctx);
+end
+
+function ok = confirmRun(fig, entries)
+%confirmRun  The pre-run summary.  A type-level tick can expand into hundreds of
+%   file-steps, and the number is the only honest warning about how long this will
+%   take - so it is shown before anything runs, not discovered afterwards.
+ok = true;
+n  = numel(entries);
+tys = unique({entries.type},'stable');
+tys = tys(~cellfun(@isempty,tys));
+sts = unique({entries.stepId},'stable');
+msg = sprintf('About to run %s across %s = %d file-step(s).  Continue?', ...
+    plural(numel(sts),'step'), plural(numel(tys),'type'), n);
+wbLog(fig,msg);
+if ~isvalid(fig) || strcmp(fig.Visible,'off'), return; end   % headless: never block
+sel = uiconfirm(fig, msg, 'Run', 'Options',{'Run','Cancel'}, ...
+    'DefaultOption',1, 'CancelOption',2, 'Icon','question');
+ok = strcmp(sel,'Run');
+if ~ok, wbLog(fig,'Run cancelled at the summary.'); end
 end
 
 function ctx = buildExecContext(fig)
@@ -3413,6 +3722,11 @@ ctx.animalModels   = @(gi) animalModelArr(fig,gi);
 % (curSettingsFor), or a cell would read stale the moment it finished
 ctx.resolve       = @(step,mdl) wbSettingsModel('resolve', getApp(fig).sm, step, mdl, modelType(mdl));
 ctx.contrastStage = @(mdl) contrastStageOf(fig,mdl);
+% which FILE of an animal's pinned reference recording a reference-taking step
+% templates on: the Constructor already resolves it (animalStepPlan > wbRefBranch)
+% and shows it in the summary, so the executor consumes that answer rather than
+% re-deriving one that could disagree with what the user was shown
+ctx.refFile       = @(ai,sid) animalRefFile(fig,ai,sid);
 ctx.setState      = @(id,sid,state,msg) execSetState(fig,id,sid,state,msg);
 ctx.progress      = @(id,sid,f,l) execProgress(fig,id,sid,f,l);
 ctx.log           = @(msg) wbLog(fig,msg);
@@ -3421,8 +3735,25 @@ ctx.modalGuard    = @(fcn) wbModalGuard(fig,fcn);
 ctx.afterDone     = @(id,sid,mdl) execAfterDone(fig,id,sid,mdl);
 end
 
+function p = animalRefFile(fig,animalIdx,stepId)
+%animalRefFile  The resolved reference FILE for one (animal, step), '' if none.
+p = '';
+app = getApp(fig);
+an = '';
+for i = 1:numel(app.rows)
+    if app.rows(i).animalIdx==animalIdx, an = app.rows(i).animal; break; end
+end
+if isempty(an), return; end
+plan = animalStepPlan(app);
+k = find(strcmp({plan.animal},an) & strcmp({plan.stepId},stepId),1);
+if ~isempty(k), p = plan(k).path; end
+end
+
 function execSetState(fig,identity,stepId,state,msg)
-%execSetState  Set a cell's transient run overlay ('' clears it) and redraw it.
+%execSetState  Set a cell's transient run overlay ('' clears it), repaint the
+%   table DATA (never a per-cell component - that is what the read-only monitor
+%   buys) and fold the change into the durable session, so a crash or a Stop still
+%   leaves a resumable record behind.
 if ~isvalid(fig), return; end
 if nargin<5, msg = ''; end
 app = getApp(fig);
@@ -3430,26 +3761,29 @@ key = cellKey(identity,stepId);
 if isempty(state)
     if isKey(app.runState,key), remove(app.runState,key); end
     if isKey(app.cellMsg,key),  remove(app.cellMsg,key);  end
+    if isKey(app.cellPct,key),  remove(app.cellPct,key);  end
 else
     app.runState(key) = state;
     if ~isempty(msg), app.cellMsg(key) = msg; end
 end
 setApp(fig,app);
+if any(strcmp(state,{'done','error'})), recordCompletion(fig,identity,stepId,state,msg); end
 refreshCells(fig,{identity});
+refreshProgressDetail(fig);
 drawnow limitrate;
 end
 
 function execProgress(fig,identity,stepId,frac,label)
 %execProgress  Update the running cell's percent + the global progress label.
+%   The drawnow yields are what keep the window alive through a long wrapper.
 if ~isvalid(fig), return; end
 if nargin<5 || ~ischar(label), label = ''; end
 app = getApp(fig);
 pct = max(0,min(100,round(100*frac)));
 key = cellKey(identity,stepId);
-if isKey(app.cellComp,key)
-    comp = app.cellComp(key);
-    if isgraphics(comp) && isprop(comp,'Text'), comp.Text = sprintf('%d%%',pct); end
-end
+app.cellPct(key) = pct;
+setApp(fig,app);
+refreshCells(fig,{identity});
 if isfield(app.c.process,'progLabel') && isgraphics(app.c.process.progLabel)
     app.c.process.progLabel.Text = sprintf('%s  %s (%d%%)', shortId(identity), label, pct);
 end
@@ -3470,7 +3804,8 @@ end
 
 function execAfterDone(fig,identity,stepId,model)
 %execAfterDone  A cell finished: clear its own staleness, push this recording's
-%   downstream done cells to stale, drop it from the queue, and show its reports.
+%   downstream done cells to stale, drop it from the queue, and add whatever
+%   report images it wrote to the result list.
 if ~isvalid(fig), return; end
 app = getApp(fig);
 selfKey = cellKey(identity,stepId);
@@ -3486,7 +3821,8 @@ for i = 1:size(cells,1)
 end
 if isKey(app.checked,selfKey), remove(app.checked,selfKey); end
 setApp(fig,app);
-showReports(fig,identity,stepId);
+addResults(fig,identity,stepId,model);
+autosaveSession(fig);
 end
 
 function finishRun(fig)
@@ -3511,7 +3847,9 @@ for i = 1:numel(ck)
 end
 setApp(fig,app);
 setRunningUI(fig,false);
-refreshCells(fig,{});
+renderProgress(fig);
+refreshResultList(fig);
+autosaveSession(fig);            % a Stop or a crash still leaves a resumable session
 c = getApp(fig).c.process;
 if isfield(c,'progLabel') && isgraphics(c.progLabel)
     c.progLabel.Text = ternary(wasCancel,'Stopped.','Done.');
@@ -3576,42 +3914,82 @@ s = wbSettingsModel('resolve', app.sm, stepById(app.reg,pid), model, modelType(m
 if isfield(s,'contrastType'), st = stageOfContrastType(s.contrastType); end
 end
 
-%% ===================== reports (artifacts) ========================= %%
-function showReports(fig,identity,stepId)
-%showReports  Populate the Reports panel with a done cell's artifact images.
+%% ===================== results (artifact links) ==================== %%
+function addResults(fig,identity,stepId,model)
+%addResults  Fold a finished step's report images into the result list (spec D5).
+%   A LIST, NOT THUMBNAILS.  The old panel drew a live uiimage per report of the
+%   cell you happened to click; across a 200-file run that is both unaffordable
+%   and useless - you want the last thing that finished, and you want it in a real
+%   viewer.  So the run accumulates links, newest first, and a double-click hands
+%   the file to the desktop (openArtifactViewer), which keeps it zoomable while
+%   the next step is already running.
 if ~isvalid(fig), return; end
 app = getApp(fig);
-if ~isfield(app.c.process,'reportPanel') || ~isgraphics(app.c.process.reportPanel), return; end
-panel = app.c.process.reportPanel;
-delete(panel.Children);
-model = modelByIdentity(fig,identity);
-step  = stepById(app.reg,stepId);
-if isempty(model) || isempty(step)
-    uilabel(uigridlayout(panel,[1 1],'Padding',[8 8 8 8]),'Text','No reports.','FontAngle','italic');
-    return
-end
+step = stepById(app.reg,stepId);
+if nargin<4 || isempty(model), model = modelByIdentity(fig,identity); end
+if isempty(model) || isempty(step), return; end
 files = wbArtifacts(model,step);
-if isempty(files)
-    gl = uigridlayout(panel,[1 1],'Padding',[8 8 8 8]);
-    uilabel(gl,'Text',sprintf('%s: no report image on disk yet.',step.label),'WordWrap','on','FontAngle','italic');
-    return
+have  = {};
+if ~isempty(app.results), have = {app.results.path}; end
+added = false;
+stamp = datetime('now');
+for i = 1:numel(files)
+    if any(strcmp(files{i},have)), continue; end
+    app.results(end+1) = struct('path',files{i}, ...
+        'label',sprintf('%s - %s - %s', shortId(identity), step.label, shortName(files{i})), ...
+        'when',stamp);
+    added = true;
 end
-n = numel(files);
-gl = uigridlayout(panel,[n+1 1],'RowHeight',[{'fit'}, repmat({150},1,n)], ...
-    'RowSpacing',6,'Padding',[6 6 6 6],'Scrollable','on');
-uilabel(gl,'Text',sprintf('%s - %s (click to open full size)',shortId(identity),step.label), ...
-    'FontWeight','bold','WordWrap','on');
-for i = 1:n, addArtifactThumb(gl,files{i}); end
+if ~added, return; end
+setApp(fig,app);
+refreshResultList(fig);
 end
 
-function addArtifactThumb(parent,pth)
-%addArtifactThumb  One clickable image thumbnail (falls back to a link button).
-try
-    uiimage(parent,'ImageSource',pth,'ScaleMethod','fit','Tooltip',pth, ...
-        'ImageClickedFcn',@(~,~)openArtifactViewer(pth));
-catch
-    uibutton(parent,'Text',shortName(pth),'ButtonPushedFcn',@(~,~)openArtifactViewer(pth));
+function refreshResultList(fig)
+%refreshResultList  Repaint the link list, newest first.
+if ~isvalid(fig), return; end
+app = getApp(fig); c = app.c.process;
+if ~isfield(c,'resultList') || ~isgraphics(c.resultList), return; end
+if isempty(app.results)
+    c.resultList.Items = {'(no report images yet)'};
+    c.resultList.ItemsData = {''};
+    return
 end
+[~,ord] = sort([app.results.when],'descend');
+r = app.results(ord);
+c.resultList.Items     = {r.label};
+c.resultList.ItemsData = {r.path};
+c.resultList.Value     = r(1).path;
+end
+
+function txt = progressCellOf(fig,path,stepId)
+%progressCellOf  The monitor's word for one (file,step) - the headless view of
+%   the table, so a test can assert what a watcher would read.
+txt = '';
+app = getApp(fig);
+if ~isKey(app.pRowOf,path), return; end
+r = app.pRows(app.pRowOf(path));
+step = stepById(app.reg,stepId);
+if isempty(step), return; end
+txt = progressCellText(app, r, step, plannedStepsFor(app,r));
+end
+
+function ids = plannedStepsOf(fig,path)
+%plannedStepsOf  Which steps the configuration runs on one file (headless view).
+ids = {};
+app = getApp(fig);
+if ~isKey(app.pRowOf,path), return; end
+ids = plannedStepsFor(app, app.pRows(app.pRowOf(path)));
+end
+
+function L = resultLinks(fig)
+%resultLinks  The result list as {label, path} - the programmatic view of D5.
+app = getApp(fig);
+L = cell(0,2);
+if isempty(app.results), return; end
+[~,ord] = sort([app.results.when],'descend');
+r = app.results(ord);
+L = [{r.label}', {r.path}'];
 end
 
 function openArtifactViewer(pth)

@@ -57,9 +57,9 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 | `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`) |
 | `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → regions → segmentation → BFI → cycles / pulsatility / vasomotion; segmentation is `setRegions` (interactive multi-ROI editor → `results.regionsMask`) → `runSegmentation` (fully automatic categorize + label + per-segment traces; `s.fNamesCopyTo` copies the segmentation onto co-registered siblings, replacing the old `assignCategories`) → optional `runDynamicSegmentation` (per-frame vessel diameter / flow) — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, and the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) |
 | `Launchers` | Ready-to-edit example pipelines — the scripted way to drive the same steps |
-| `GUIs` | Interactive apps — `guiWorkbench` (**the Processing Workbench: start here**; the file × step matrix that runs the LSCI pipeline, with Export and Explore tabs) and `guiMyograph` (myograph workbench for `.avi` diameter / vasomotion / propagation; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
+| `GUIs` | Interactive apps — `guiWorkbench` (**the Processing Workbench: start here**; the file × step matrix that runs the LSCI pipeline, with Export and Explore tabs), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiMyograph` (myograph workbench for `.avi` diameter / vasomotion / propagation; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
 | `GUIs/workbench` | The workbench's own components — the headless brain (`wbStepRegistry` the step specs, `wbDiscoverFiles`, `wbFileModel`, `wbStateEngine`, `wbSettingsModel`, `wbInvalidate`, `wbExecutor`, `wbArtifacts`, `wbModalGuard`, `wbSession`) plus `guiExplore`, the results explorer hosted in the Explore tab (still openable standalone, or embeddable elsewhere with `guiExplore('Parent',container)`) |
-| `Utilities` | Terminal consumers of finished results — `exportToExcel` (`exportToExcel(fNames)` writes the full workbook; the optional `exportToExcel(fNames,opts)` selects `opts.sheets` / `opts.format`) |
+| `Utilities` | Terminal consumers of finished results — `exportToExcel` (`exportToExcel(fNames)` writes the full workbook; the optional `exportToExcel(fNames,opts)` selects `opts.sheets` / `opts.format`, averages over labels or vessel type with `opts.groupBy` / `opts.weightByArea`, subsets `opts.columns`, and merges every file into one labelled workbook with `opts.merge` / `opts.labels` / `opts.outFile`. `GUIs/guiExport` is the interactive front-end for exactly these options) |
 | `Simulation` | Synthetic dynamic-speckle generation (`getDynamicSpeckles`, `Launcher_speckleSimulation`) — self-contained |
 | `3rd party` | External libraries (Bio-Formats, superlets, …) — unmodified |
 
@@ -249,7 +249,11 @@ guiWorkbench
 3. **3 - Export** — pick which of the loaded recordings to export, tick the sheets you
    want (**All** / **None**), choose the format, and press **Export selected**. This is a
    selection UI over `exportToExcel`, which remains callable directly as
-   `exportToExcel(fNames)` or `exportToExcel(fNames,opts)`.
+   `exportToExcel(fNames)` or `exportToExcel(fNames,opts)`. For the full export —
+   choosing parameters, averaging over labels or vessel type, and merging every file into
+   one workbook whose rows carry animal / type / experimental group — run the standalone
+   **`guiExport`** (`GUIs/guiExport.m`), which needs no workbench: point it at files, at a
+   folder, or at a saved workbench session.
 4. **4 - Explore** — the results explorer (`GUIs/workbench/guiExplore`) hosted in-tab.
    Press **Load workbench files & animals** to seed it with the `_r.mat` results of the
    files you loaded, one explorer group per animal, then plot single recordings or group
