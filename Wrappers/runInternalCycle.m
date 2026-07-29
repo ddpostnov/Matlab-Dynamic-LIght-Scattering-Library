@@ -12,8 +12,8 @@
 %                                 its time vector in seconds
 %       *_c_K_r.mat   RESULTS – masks, cycle metrics, timestamps
 %       *_c_K_s.mat   SETTINGS – copy of the parameter structure *s*
-%       *_ic1.jpg     – cycle-rejection overview
-%       *_ic2.jpg     – mean-period BFI image + time-course
+%       *_rep_cycle-detect.jpg   – cycle-rejection overview
+%       *_rep_cycle-average.jpg  – mean-period BFI image + time-course
 %
 %   INPUTS
 %     s        parameter structure (fields include sizeT, framesToAverage,
@@ -85,8 +85,11 @@ rep=reportOpen(s,'Internal cycle',fNames);
 for fidx=1:1:numel(fNames)
     if reportCancelled(rep), break; end         % cooperative cancel between files
     if ~isempty(fNames{fidx})
+        % The blanket close-every-figure call that used to start each iteration is
+        % gone.  It existed only to mop up the report figures this wrapper leaked, and
+        % it closed UIFIGURES too - it could take the Processing Workbench window down
+        % mid-run.  reportSave deletes its own figure on every path.
         clearvars results source settings
-        close all
         s.fName=char(fNames{fidx});
         reportFile(rep,fidx,s.fName);
 
@@ -174,24 +177,8 @@ for fidx=1:1:numel(fNames)
         s.meanPointsPerCycle=floor(s.fps/s.centralFrq);
 
         tsBFIF=smooth(tsBFI,max(floor(s.meanPointsPerCycle.*s.smoothCoef1),1),'loess');
-        h=figure;
-        h.WindowState='Maximize';
-        subplot(2,2,1)
-        plot(time(1:s.meanPointsPerCycle*2),tsBFIF(1:s.meanPointsPerCycle*2))
-        hold on
-        plot(time(1:s.meanPointsPerCycle*2),1./(tsK(1:s.meanPointsPerCycle*2).*tsK(1:s.meanPointsPerCycle*2)))
-        hold off
-        xlabel('Time, s')
-        ylabel('BFI')
         s.minProm=s.minPromCoef.*std(tsBFIF);
-        subplot(2,2,3)
-        plot(f,fftPow)
-        hold on
-        plot(f(idx),fftPow(idx),'or')
-        hold off
-        xlabel('Frq, Hz')
-        ylabel('Amplitude')
-        title(['Central frq=',num2str(s.centralFrq)]);
+        idxPeak=idx;                            % the spectral peak; idx is a loop temp below
 
         [~,locsMin]=findpeaks(-tsBFIF,'MinPeakDistance',floor(s.fps/s.maxFrq),'MinPeakProminence',s.minProm);
         locsMax=zeros(length(locsMin)-1,1);
@@ -250,9 +237,6 @@ for fidx=1:1:numel(fNames)
         a=movmean(a,[s.coeffsAbs(1),s.coeffsAbs(1)]);
         pulsesToReject(14,:)=round(a);
 
-        subplot(2,2,[2,4])
-        plot(time,1./(tsK.*tsK));
-
         % hold on
         % for i=1:1:size(pulsesList,1)
         %     plot([time(pulsesList(i,1)),time(pulsesList(i,3))],[tsBFIF(pulsesList(i,1)),tsBFIF(pulsesList(i,3))],'ok')
@@ -279,11 +263,33 @@ for fidx=1:1:numel(fNames)
             end
         end
 
-        xlabel('Time,s')
-        ylabel('BFI')
-        title(['acceptance rate=',num2str(size(pulsesListFinal,1)./size(pulsesList,1))]);
-        drawnow
-        print(h,strrep(s.fName,'.rls','_ic1.jpg'), '-djpeg', '-r300');
+        % --- report page: what the cycle detection saw and what it kept ---------
+        % Drawn here rather than while the pulses are being sorted, so nothing in
+        % the loop above has to hold a figure open across a hundred lines of
+        % arithmetic.  Same three panels as before.
+        fh=reportFigure(rep,'cycle-detect');
+        tl=tiledlayout(fh,2,2,'TileSpacing','compact','Padding','compact');
+        ax=nexttile(tl,1);
+        plot(ax,time(1:s.meanPointsPerCycle*2),tsBFIF(1:s.meanPointsPerCycle*2))
+        hold(ax,'on')
+        plot(ax,time(1:s.meanPointsPerCycle*2),1./(tsK(1:s.meanPointsPerCycle*2).*tsK(1:s.meanPointsPerCycle*2)))
+        hold(ax,'off')
+        xlabel(ax,'Time, s')
+        ylabel(ax,'BFI')
+        ax=nexttile(tl,3);
+        plot(ax,f,fftPow)
+        hold(ax,'on')
+        plot(ax,f(idxPeak),fftPow(idxPeak),'or')
+        hold(ax,'off')
+        xlabel(ax,'Frq, Hz')
+        ylabel(ax,'Amplitude')
+        title(ax,['Central frq=',num2str(s.centralFrq)]);
+        ax=nexttile(tl,2,[2,1]);
+        plot(ax,time,1./(tsK.*tsK));
+        xlabel(ax,'Time,s')
+        ylabel(ax,'BFI')
+        title(ax,['acceptance rate=',num2str(size(pulsesListFinal,1)./size(pulsesList,1))]);
+        reportSave(rep,fh,'cycle-detect');
         clearvars data;
 
         reportStage(rep,'Averaging the cardiac cycle');
@@ -376,20 +382,19 @@ for fidx=1:1:numel(fNames)
 
         [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
         tmp={[fStem fExt]};
-        h=figure;
-        h.WindowState='Maximize';
-        subplot(2,1,1)
+        fh=reportFigure(rep,'cycle-average');
+        tl=tiledlayout(fh,2,1,'TileSpacing','compact','Padding','compact');
+        ax=nexttile(tl);
         img=squeeze(mean(source.data,3));
-        imagesc(img);
-        clim([prctile(img(:),5),prctile(img(:),99)]);
-        axis image
-        subplot(2,1,2)
-        plot(source.time,1./(squeeze(mean(source.data,[1,2]))).^2);
-        xlabel('Time,s')
-        ylabel('BFI')
-        sgtitle(['sLSCIMMM ',strrep(tmp{end},'_',' ')]);
-        drawnow
-        print(h,strrep(s.fName,'.rls','_ic2.jpg'), '-djpeg', '-r300');
+        imagesc(ax,img);
+        clim(ax,[prctile(img(:),5),prctile(img(:),99)]);
+        axis(ax,'image')
+        ax=nexttile(tl);
+        plot(ax,source.time,1./(squeeze(mean(source.data,[1,2]))).^2);
+        xlabel(ax,'Time,s')
+        ylabel(ax,'BFI')
+        sgtitle(fh,['sLSCIMMM ',strrep(tmp{end},'_',' ')]);
+        reportSave(rep,fh,'cycle-average');
 
         reportStage(rep,'Saving');
         settings.runInternalCycle=reportSettings(s);

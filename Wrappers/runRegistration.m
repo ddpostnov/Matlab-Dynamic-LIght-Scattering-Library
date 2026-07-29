@@ -31,8 +31,8 @@
 %         *_K_d.mat   SOURCE   – warped
 %         *_K_r.mat   RESULTS  – warped + consensus masks
 %         *_K_s.mat   SETTINGS – field settings.registration added
-%       plus *_vs.jpg previews already present in the workflow
-%       In silent mode also *_registration.png - overlay of the warped image on
+%       plus the segments report pages already present in the workflow
+%       In silent mode also *_rep_registration.jpg - overlay of the warped image on
 %       the reference, annotated with the chosen method and the Delta values
 %
 %   EXAMPLE
@@ -86,7 +86,7 @@ if reportCancelled(rep), return; end
 % When s.silent==true the best registration is chosen automatically instead of
 % asking the user.  Files that are the same acquisition but a different LSCI
 % product (differ only in the _c_K_ / _t_K_ / _s_K_ token) reuse the same
-% transform, and a *_registration.png overlay report is written for each file.
+% transform, and a *_rep_registration overlay report is written for each file.
 silentMode = isfield(s,'silent') && isscalar(s.silent) && s.silent==true;
 normNames  = cell(size(fNames));
 for i=1:numel(fNames)
@@ -230,8 +230,8 @@ for fidx=1:numel(fNames)                     % siblings inherit the representati
 end
 
 % ---- per-file registration report overlays (silent mode only) --------------
-% Unchanged *_registration.png: the file's warped proxy over the reference proxy,
-% titled with the chosen method and the Delta(s).  Representatives report the
+% The file's warped proxy over the reference proxy, titled with the chosen method
+% and the Delta(s) - same content, now on the shared canvas.  Representatives report the
 % engine's choice (from diag); reused siblings report "reused from file N".
 if silentMode
     nameLong={'original','intensity registration','correlation registration'};
@@ -258,15 +258,17 @@ if silentMode
                 round(d.delta(1)),round(d.delta(2)),r2,round(d.delta(3)),r3);
         end
 
-        % reporting overlay: warped image on the reference + chosen method/Delta
-        fRep=figure('Visible','off');
+        % reporting overlay: warped image on the reference + chosen method/Delta.
+        % This loop runs before the per-file save loop that arms the banner, so the
+        % page is named from ITS file explicitly.
+        fRep=reportFigure(rep,'registration','single');
+        tlR=tiledlayout(fRep,1,1,'TileSpacing','compact','Padding','compact');
+        axR=nexttile(tlR);
         imshowpair(rot90(imgRefIni , size(imgRefIni,2) > size(imgRefIni,1)), ...
-            rot90(warped , size(warped,2) > size(warped,1)))
-        axis image
-        title({['Silent registration: ',methodStr],deltaStr})
-        [rPth,rNm]=fileparts(fNames{fidx});
-        exportgraphics(fRep,fullfile(rPth,[rNm,'_registration.png']));
-        close(fRep);
+            rot90(warped , size(warped,2) > size(warped,1)),'Parent',axR)
+        axis(axR,'image')
+        title(axR,{['Silent registration: ',methodStr],deltaStr})
+        reportSave(rep,fRep,'registration',fNames{fidx});
     end
 end
 

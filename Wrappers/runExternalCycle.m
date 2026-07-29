@@ -16,8 +16,8 @@
 %            *_e_K_d.mat   SOURCE   – averaged contrast cube (s,results.time)
 %            *_e_K_r.mat   RESULTS  – masks, epoch metrics, timestamps
 %            *_e_K_s.mat   SETTINGS – copy of parameter struct *s*
-%            *_ec.jpg      – epoch-rejection overview
-%            *_ec2.jpg     – averaged BFI time-series
+%            *_rep_epochs.jpg        – epoch-rejection overview
+%            *_rep_epoch-average.jpg – averaged BFI time-series
 %
 %   INPUTS
 %     s        parameter structure (fields: stimStartType, stimOffset,
@@ -161,6 +161,7 @@ for fidx=1:1:numel(fNames)
                 prctile(img,[5,99])
                 mask=roipoly;
                 mask=mask.*results.mask;
+                delete(f);      % the picker is done with; it used to be left open
             otherwise
                 error('Unrecognized maskType')
         end
@@ -235,52 +236,29 @@ for fidx=1:1:numel(fNames)
         end
 
         %visualize accepted and rejected epochs
-        h=figure;
-        yyaxis left
-        plot(time,tsBFI)
-        hold on
-        for i=1:1:s.epochsN
-            plot([epochStartSec(i),epochStartSec(i)],[min(tsBFI),max(tsBFI)],'--k')
-
-            for ii=1:1:size(epochsToReject,1)
-                if epochsToReject(ii,i)==0
-                    plot([epochStartSec(i),epochEndSec(i)],[(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI),(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI)],'-g','LineWidth',1.5)
-                else
-                    plot([epochStartSec(i),epochEndSec(i)],[(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI),(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI)],'-r','LineWidth',1.5)
-                end
-            end
-        end
-        plot([epochEndSec(end),epochEndSec(end)],[min(tsBFI),max(tsBFI)],'--r')
-        ylabel('BFI')
-        hold off
-        yyaxis right
-        plot(time,timeLoss)
-        xlabel('Time, s')
-        ylabel('Time loss, s')
+        % The picker is a VISIBLE figure the operator clicks on; the report page
+        % below is drawn fresh from the FINAL decisions on the canonical canvas.
+        % They used to be one figure, which is why the page's size depended on the
+        % monitor and why the window was still open when the next file started.
         if s.enablelRejectionModification==1
-            title('Epochs (green - accepted, red - rejected). Click on the epoch to change decision. Enter to accept')
+            hInt=figure('Name','runExternalCycle - accept or reject epochs','NumberTitle','off');
+            axInt=axes('Parent',hInt);
+            drawEpochs(axInt,time,tsBFI,timeLoss,epochStartSec,epochEndSec,epochsToReject,s);
+            title(axInt,'Epochs (green - accepted, red - rejected). Click on the epoch to change decision. Enter to accept')
             %plot required timeseries, without timevector
             [x,~]=ginput();
             for i=1:1:length(x)
                 epochsToReject(:,x(i)>=epochStartSec & x(i)<epochEndSec)=1-max(epochsToReject(:,x(i)>=epochStartSec & x(i)<epochEndSec));
             end
-            yyaxis left
-            plot(time,tsBFI)
-            hold on
-            for i=1:1:s.epochsN
-                plot([epochStartSec(i),epochStartSec(i)],[min(tsBFI),max(tsBFI)],'--r')
-                for ii=1:1:size(epochsToReject,1)
-                    if epochsToReject(ii,i)==0
-                        plot([epochStartSec(i),epochEndSec(i)],[(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI),(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI)],'-g','LineWidth',1.5)
-                    else
-                        plot([epochStartSec(i),epochEndSec(i)],[(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI),(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI)],'-r','LineWidth',1.5)
-                    end
-                end
-            end
-            plot([epochEndSec(end),epochEndSec(end)],[min(tsBFI),max(tsBFI)],'--r')
+            delete(hInt);
         end
-        title('Epochs (green - accepted, red - rejected)')
-        print(h,strrep(s.fName,'.mat','_ec.jpg'), '-djpeg', '-r300');
+
+        fh=reportFigure(rep,'epochs','single');
+        tl=tiledlayout(fh,1,1,'TileSpacing','compact','Padding','compact');
+        ax=nexttile(tl);
+        drawEpochs(ax,time,tsBFI,timeLoss,epochStartSec,epochEndSec,epochsToReject,s);
+        title(ax,'Epochs (green - accepted, red - rejected)')
+        reportSave(rep,fh,'epochs');
 
         %calculate average epoch images
         source.data=zeros(size(data,1),size(data,2),max(epochEndFrame-epochStartFrame));
@@ -302,15 +280,15 @@ for fidx=1:1:numel(fNames)
         % Simplified conversion to blood flow index
         epochTsBFI=1./(epochTsK.^2);
 
-        h=figure;
-        plot(results.time,epochTsBFI)
-        xlabel('Time, s')
-        ylabel('BFI')
-        axis tight
-        grid on
-        set(gcf,'Color','w')
-        drawnow
-        print(h,strrep(s.fName,'.mat','_ec2.jpg'), '-djpeg', '-r300');
+        fh=reportFigure(rep,'epoch-average','single');
+        tl=tiledlayout(fh,1,1,'TileSpacing','compact','Padding','compact');
+        ax=nexttile(tl);
+        plot(ax,results.time,epochTsBFI)
+        xlabel(ax,'Time, s')
+        ylabel(ax,'BFI')
+        axis(ax,'tight')
+        grid(ax,'on')
+        reportSave(rep,fh,'epoch-average');
 
         % Save the settings and results
         reportStage(rep,'Saving');
@@ -324,4 +302,33 @@ for fidx=1:1:numel(fNames)
 end
 reportClose(rep);
 
+end
+
+% =====================================================================
+function drawEpochs(ax,time,tsBFI,timeLoss,epochStartSec,epochEndSec,epochsToReject,s)
+%drawEpochs  The epoch overview: BFI trace with one accept/reject bar per rejection
+%   rule under each epoch, and the time loss on the right axis.  One function so the
+%   interactive picker and the report page cannot drift apart - the old code drew it
+%   twice, differing only in the colour of the epoch-start lines.
+yyaxis(ax,'left')
+plot(ax,time,tsBFI)
+hold(ax,'on')
+for i=1:1:s.epochsN
+    plot(ax,[epochStartSec(i),epochStartSec(i)],[min(tsBFI),max(tsBFI)],'--k')
+    for ii=1:1:size(epochsToReject,1)
+        y=(1+ii*.015)*min(tsBFI)-ii*0.015*max(tsBFI);
+        if epochsToReject(ii,i)==0
+            plot(ax,[epochStartSec(i),epochEndSec(i)],[y,y],'-g','LineWidth',1.5)
+        else
+            plot(ax,[epochStartSec(i),epochEndSec(i)],[y,y],'-r','LineWidth',1.5)
+        end
+    end
+end
+plot(ax,[epochEndSec(end),epochEndSec(end)],[min(tsBFI),max(tsBFI)],'--r')
+ylabel(ax,'BFI')
+hold(ax,'off')
+yyaxis(ax,'right')
+plot(ax,time,timeLoss)
+xlabel(ax,'Time, s')
+ylabel(ax,'Time loss, s')
 end

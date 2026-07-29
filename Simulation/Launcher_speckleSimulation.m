@@ -23,6 +23,7 @@
 % Library path is auto-detected (this launcher lives in <library>/Simulation).
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
+setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
 % Where the generated .mat datasets are written (edit if desired):
 outputFolder = fullfile(libraryFolder,'Simulation','SimulatedData');
 if ~exist(outputFolder,'dir'); mkdir(outputFolder); end

@@ -30,10 +30,10 @@
 %   OUTPUT SIDE-EFFECTS (per file)
 %     <name>_r.mat   results.{dvsMap,dvsMetrics,dvsDiameter,dvsData}
 %     <name>_s.mat   settings.runDynamicSegmentation = s
-%     <name>_vs.jpg  segments preview, RE-EMITTED with the accepted dynamic segments
-%                    (visboundaries(dvsMap>0)) overlaid on the enhanced mean image -
-%                    overwrites the static _vs.jpg runSegmentation wrote, so the final
-%                    artifact matches the pre-refactor attmemptDS preview.
+%     <name>_rep_segments.jpg  segments page, RE-EMITTED with the accepted dynamic
+%                    segments (visboundaries(dvsMap>0)) overlaid on the enhanced mean
+%                    image - overwrites the static page runSegmentation wrote, so the
+%                    final artifact matches the pre-refactor attmemptDS preview.
 %
 %   EXAMPLE
 %     runSegmentation(s,fNames);
@@ -361,11 +361,11 @@ for fidx=1:1:numel(fNames)
     results.dvsDiameter=dvsDiameter;
     results.dvsData=dvsData;
 
-    % --- segments preview: re-emit _vs.jpg with the accepted dynamic segments overlaid ---
-    % (overwrites the static _vs.jpg runSegmentation wrote, matching the old attmemptDS
+    % --- segments preview: re-emit the page with the accepted dynamic segments overlaid ---
+    % (overwrites the static one runSegmentation wrote, matching the old attmemptDS
     %  artifact) using the merged cMask (recomputed above) and the persisted results.sMap.
     isK=contains(s.fName,'_K_d.mat');
-    showSegmentsPreview(s.fName,source.data,cMask,results.sMap,isK,dvsMap);
+    showSegmentsPreview(rep,s.fName,source.data,cMask,results.sMap,isK,dvsMap);
 
     %Save the data
     settings.runDynamicSegmentation=reportSettings(s);

@@ -67,6 +67,11 @@
 %     <name>_r.mat   results.regionsMask added/overwritten when >=1 ROI is drawn, or
 %                    REMOVED when none is drawn (double, 0 = excluded, 1..N = labels)
 %     <name>_s.mat   settings.setRegions = s
+%     <name>_rep_regions.jpg  the record of what was drawn: the displayed image with
+%                    the region boundaries outlined and numbered by label index.
+%                    Written for EVERY file that receives a mask, drawn or copied,
+%                    and also when nothing was drawn ("the whole window is used" is
+%                    a decision worth recording).
 %
 %   EXAMPLE
 %     % draw on the temporal contrast, inherit onto the paired internal-cycle files
@@ -141,6 +146,11 @@ for g=1:1:nGroups
         else
             results.regionsMask=regionsMask;
         end
+        % The record of what was drawn and confirmed - written for EVERY file,
+        % including the ones where nothing was drawn: "the whole window was used"
+        % is as much a decision as any ROI.
+        writeRegionsReport(rep,fName,imgIni,regionsMask);
+
         settings.setRegions=reportSettings(s);
         reportStage(rep,'Saving');
         save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
@@ -196,10 +206,83 @@ else
     results.regionsMask=regionsMask;
 end
 
+% The sibling gets the mask verbatim, but it is a DIFFERENT recording: its own
+% report page is the only way to see whether the mask still fits its field of view.
+% The background is the target's own mean image, built exactly as the editor built
+% the source's.
+writeRegionsReport(rep,targetName,targetImage(targetName,results),regionsMask);
+
 sT=s; sT.fName=targetName;
 settings.setRegions=reportSettings(sT);
 save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
 save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
+end
+
+% =====================================================================
+function imgIni=targetImage(targetName,results)
+%targetImage  The copy target's own mean image - results.imgK / results.imgI when
+%   they are there, the source cube's time-mean when they are not.  Same rule the
+%   main loop uses for the file being edited.
+if contains(targetName,'_K_d.mat')
+    if isfield(results,'imgK')
+        imgIni=results.imgK;
+    else
+        src=load(targetName,'source');
+        imgIni=mean(src.source.data,3,'omitmissing');
+    end
+else
+    imgIni=results.imgI;
+end
+end
+
+% =====================================================================
+function writeRegionsReport(rep,fName,imgIni,regionsMask)
+%writeRegionsReport  Save <name>_rep_regions.jpg: the displayed image with the drawn
+%   regions outlined and numbered by label index.
+%
+%   BOUNDARIES, NOT A FILLED OVERLAY, so the image underneath stays readable - the
+%   point of the page is to check that the region sits where the operator meant it
+%   to, which needs the vessels under it to be visible.  The number is the label
+%   index, so the page and results.regionsMask can be compared directly.
+%   A FAILURE HERE COSTS A LINE, NOT THE RUN.  This page is new: before it existed
+%   setRegions saved its mask and moved on, and it must still do that if the drawing
+%   goes wrong on some image nobody anticipated.
+f=reportFigure(rep,'regions','single');
+try
+    t=tiledlayout(f,1,1,'TileSpacing','compact','Padding','compact');
+    ax=nexttile(t);
+    imagesc(ax,imgIni); axis(ax,'image'); colormap(ax,'gray')
+    setClim(ax,prctile(imgIni(:),[1,99]))
+    if isempty(regionsMask)
+        title(ax,'No regions drawn - the whole window is used')
+    else
+        hold(ax,'on')
+        for k=1:1:max(regionsMask(:))
+            bw=(regionsMask==k);
+            if ~any(bw(:)), continue; end
+            visboundaries(ax,bw,'Color','r','LineWidth',1);
+            [y,x]=find(bw);
+            text(ax,mean(x),mean(y),num2str(k),'Color','y','FontWeight','bold', ...
+                'HorizontalAlignment','center','VerticalAlignment','middle');
+        end
+        hold(ax,'off')
+        title(ax,[num2str(max(regionsMask(:))) ' region(s)'])
+    end
+catch ME
+    delete(f);
+    reportWarn(rep,['  regions report page not drawn (' ME.message ')']);
+    return
+end
+reportSave(rep,f,'regions',fName);
+end
+
+% =====================================================================
+function setClim(ax,lims)
+%setClim  clim() with the degenerate case handled: a flat image gives equal
+%   percentiles, and clim rejects a non-increasing pair.
+lims=double(lims);
+if any(~isfinite(lims)) || lims(2)<=lims(1), return; end
+clim(ax,lims);
 end
 
 % =====================================================================

@@ -11,7 +11,7 @@
 %                     in **seconds** (T × 1)
 %       *_K_r.mat  –  RESULTS struct (BFI image, masks, timestamp, etc.)
 %       *_K_s.mat  –  SETTINGS struct (exact copy of input parameter set *s*)
-%       *_c.jpg    –  two-panel preview (BFI & final mask)
+%       *_rep_contrast.jpg  –  report page: BFI & final mask
 %
 %   These outputs form the foundation for all downstream LSCI analyses.
 %
@@ -98,29 +98,45 @@ for fidx=1:1:numel(fNames)
             & squeeze(s.trustMatrix(:,:,1))>s.minTrust(1)...
             & squeeze(s.trustMatrix(:,:,2))>s.minTrust(2);
 
-        h=figure;
-        h.WindowState='Maximize';
-        subplot(1,2,1)
-        imagesc(imgBFI)
-        clim([prctile(imgBFI(:),1),prctile(imgBFI(:),99)])
-        axis image
-        subplot(1,2,2)
-        imagesc(results.mask)
-        axis image
         [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
         fNameshort=[fStem fExt];
+
+        % --- optional manual mask refinement, on the INTERACTIVE figure ---------
+        % Shown, maximised, sized for whoever is drawing on it - and closed the
+        % moment the ROI is in.  The report page below is a different object drawn
+        % on a fixed canvas, which is what stops a JPEG's size being a property of
+        % the operator's monitor.
         if s.manualMask==1
+            hInt=figure('Name','runContrastFromRLS - refine the mask','NumberTitle','off');
+            hInt.WindowState='Maximize';
             subplot(1,2,1)
-            results.mask=results.mask & roipoly;
-            hold on
-            visboundaries(results.mask)
-            hold off
+            imagesc(imgBFI)
+            clim([prctile(imgBFI(:),1),prctile(imgBFI(:),99)])
+            axis image
             subplot(1,2,2)
             imagesc(results.mask)
+            axis image
+            sgtitle(strrep(fNameshort,'_',' '));
+            subplot(1,2,1)
+            results.mask=results.mask & roipoly;
+            delete(hInt);
         end
-        sgtitle(strrep(fNameshort,'_',' '));
-        drawnow
-        print(h,strrep(s.fName,'.rls','_c.jpg'), '-djpeg', '-r300');
+
+        % --- the report page: BFI + the final mask -----------------------------
+        fh=reportFigure(rep,'contrast');
+        tl=tiledlayout(fh,1,2,'TileSpacing','compact','Padding','compact');
+        axL=nexttile(tl);
+        imagesc(axL,imgBFI)
+        clim(axL,[prctile(imgBFI(:),1),prctile(imgBFI(:),99)])
+        axis(axL,'image')
+        if s.manualMask==1
+            hold(axL,'on'); visboundaries(axL,results.mask); hold(axL,'off')
+        end
+        axR=nexttile(tl);
+        imagesc(axR,results.mask)
+        axis(axR,'image')
+        sgtitle(fh,strrep(fNameshort,'_',' '));
+        reportSave(rep,fh,'contrast');
 
         % Save the settings and results
         reportStage(rep,'Saving');

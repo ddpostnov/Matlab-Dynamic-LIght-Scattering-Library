@@ -28,6 +28,11 @@
 %   SIDE-EFFECTS
 %       *_BFI_r.mat   RESULTS  – fields mapType, .type, .label, etc.
 %       *_BFI_s.mat   SETTINGS – sub-field settings.setVesselTypes added
+%       *_rep_vesseltypes.jpg  the record of the labelling: the artery/vein map over
+%                     the BFI image with the NAMED vessels outlined and annotated.
+%                     Written for EVERY file - under s.useReference only the first
+%                     opens the GUI, and confirming that the inherited labelling
+%                     landed correctly on the rest is what the page is for.
 %
 %   EXAMPLE
 %     p.useReference = false;
@@ -200,10 +205,7 @@ for fidx=1:1:numel(fNames)
             map=[0;guess];
             map=map(results.sMap+1);
             map(cMask<4)=NaN;
-            cmap=zeros(11,3);
-            cmap(1:5,3)=(1:5)./10+0.5;
-            cmap(6,2)=1;
-            cmap(7:11,1)=(5:-1:1)./10+0.5;
+            cmap=vesselTypeColormap();   % blue (vein) -> green (0) -> red (artery)
             img=sqrt(results.imgBFI);
             img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
             fSize=floor((min(size(img))./20))*2+1;
@@ -396,6 +398,12 @@ for fidx=1:1:numel(fNames)
 
             end
         end
+
+        % The record of the labelling, for EVERY file.  Under s.useReference only
+        % the first file opens the GUI and the rest inherit the labels - and
+        % checking that an inherited labelling landed correctly on file 7 is
+        % precisely what this page is for.
+        writeVesselTypesReport(rep,s.fName,results);
 
         settings.setVesselTypes=reportSettings(s);
         reportStage(rep,'Saving');
@@ -994,4 +1002,95 @@ reportClose(rep);
         [S.rng, S.lo, S.hi] = thumbsAtValue(sv, m5, medv);
     end
 
+end
+
+% =====================================================================
+% Local functions, OUTSIDE the main function so they do not share its workspace -
+% everything above this line is a nested callback that does.
+% =====================================================================
+
+function cmap=vesselTypeColormap()
+%vesselTypeColormap  The one artery/vein colour convention: blue for vein, green
+%   for undecided, red for artery.  Used by the labelling GUI and by the report
+%   page, so the page a reviewer looks at is the map the operator worked on.
+cmap=zeros(11,3);
+cmap(1:5,3)=(1:5)./10+0.5;
+cmap(6,2)=1;
+cmap(7:11,1)=(5:-1:1)./10+0.5;
+end
+
+% =====================================================================
+function writeVesselTypesReport(rep,fName,results)
+%writeVesselTypesReport  Save <name>_rep_vesseltypes.jpg: the artery/vein map over
+%   the BFI image, with the NAMED vessels outlined and annotated.
+%
+%   Only the non-empty labels count as "labelled vessels" - the ones somebody typed
+%   a name for.  Everything else is left to the colour map, which already says
+%   artery or vein.  The page is a record, so it is written even when nothing was
+%   named: an unlabelled map is still the map that was accepted.
+%
+%   A FAILURE HERE COSTS A LINE, NOT THE RUN.  This page is new: before it existed
+%   setVesselTypes saved its labelling and moved on, and it must still do that.
+if ~isfield(results,'mapType') || ~isfield(results,'sMap') || ~isfield(results,'imgBFI')
+    return
+end
+
+cMask=results.cMask;
+img=sqrt(results.imgBFI);
+img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
+fSize=floor((min(size(img))./20))*2+1;
+img=enhanceForDisplay(img,fSize).*(cMask>0);
+
+map=results.mapType;
+L=max(abs(map(:)),[],'omitnan');
+if ~isfinite(L) || L==0, L=1; end
+
+% the named vessels: non-empty labels, mapped back onto sMap through their idx
+labelled=false(0,1); idxs=[];
+if istable(results.sMetrics) && ismember('label',results.sMetrics.Properties.VariableNames)
+    idxs=results.sMetrics.idx;
+    labelled=strlength(strtrim(string(results.sMetrics.label)))>0 & ~isnan(idxs);
+end
+
+f=reportFigure(rep,'vesseltypes','single');
+try
+    t=tiledlayout(f,1,1,'TileSpacing','compact','Padding','compact');
+    ax=nexttile(t);
+    imagesc(ax,img); axis(ax,'image','off'); colormap(ax,'gray')
+    setClim(ax,prctile(img(cMask(:)>0),[1,99]));
+    hold(ax,'on')
+    % the type map on top, transparent outside the vessels, on ITS own colour scale
+    axMap=axes(f,'Units',ax.Units,'Position',ax.Position,'Color','none');
+    imagesc(axMap,map,'AlphaData',~isnan(map));
+    axis(axMap,'image','off'); colormap(axMap,vesselTypeColormap()); clim(axMap,[-L L]);
+    hold(axMap,'on')
+    nNamed=0;
+    for i=1:1:numel(labelled)
+        if ~labelled(i), continue; end
+        bw=(results.sMap==idxs(i));
+        if ~any(bw(:)), continue; end
+        nNamed=nNamed+1;
+        visboundaries(axMap,bw,'Color','w','LineWidth',1);
+        [y,x]=find(bw);
+        text(axMap,mean(x),mean(y),char(strtrim(string(results.sMetrics.label(i)))), ...
+            'Color','w','FontWeight','bold','HorizontalAlignment','center', ...
+            'VerticalAlignment','middle','Interpreter','none');
+    end
+    hold(axMap,'off'); hold(ax,'off')
+    title(axMap,sprintf('Vessel types (blue vein / red artery), %d named',nNamed))
+catch ME
+    delete(f);
+    reportWarn(rep,['  vessel types report page not drawn (' ME.message ')']);
+    return
+end
+reportSave(rep,f,'vesseltypes',fName);
+end
+
+% =====================================================================
+function setClim(ax,lims)
+%setClim  clim() with the degenerate case handled: a flat image gives equal
+%   percentiles, and clim rejects a non-increasing pair.
+lims=double(lims);
+if any(~isfinite(lims)) || lims(2)<=lims(1), return; end
+clim(ax,lims);
 end

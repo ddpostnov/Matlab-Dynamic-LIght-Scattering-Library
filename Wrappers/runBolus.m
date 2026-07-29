@@ -26,7 +26,7 @@
 %     <name>_b_I_d.mat   SOURCE  – bolus cube (source.data) + time (source.time, s)
 %     <name>_b_I_r.mat   RESULTS – angiogram (imgI), time, timeStamp
 %     <name>_b_I_s.mat   SETTINGS – copy of the parameter structure s
-%     <name>_b_I.jpg     preview: angiogram + intensity trace (300 dpi)
+%     <name>_rep_bolus.jpg  report page: angiogram + intensity trace
 %
 %   EXAMPLE
 %     s.libraryFolder = libraryFolder;
@@ -64,7 +64,11 @@ rep=reportOpen(s,'Bolus',fNames);
 for fidx=1:1:numel(fNames)
      if reportCancelled(rep), break; end        % cooperative cancel between files
      if ~isempty(fNames{fidx})
-    close all
+    % The blanket close-every-figure call that used to start each iteration is gone.
+    % It existed only to mop up the report figure this wrapper leaked, and it closed
+    % UIFIGURES too - it could take the Processing Workbench window down mid-run.  The
+    % span picker below is closed explicitly and reportSave deletes the report page on
+    % every path, so there is nothing left to sweep up.
     s.fName=char(fNames{fidx});
     reportFile(rep,fidx,s.fName);
     clearvars results source settings
@@ -192,27 +196,26 @@ for fidx=1:1:numel(fNames)
     results.imgI=imgI;
     settings.runBolus=reportSettings(s);
 
-    h=figure;
-    h.WindowState='Maximize';
-    subplot(1,2,1)
-    imagesc(results.imgI)
-    colorbar
-    axis image
-    subplot(1,2,2)
-    semilogy(time,squeeze(mean(data,[1,2])));
-    hold on
-    semilogy(time,squeeze(min(data,[],[1,2])));
-    semilogy(time,squeeze(max(data,[],[1,2])));
-    hold off
-    legend({'Mean','Min','Max'})
-    ylabel('Intensity')
-    xlabel('Time, s')
-    xlim([time(1),time(end)]);
-    ylim([double(min(data(:))),double(max(data(:)))])
+    fh=reportFigure(rep,'bolus');
+    tl=tiledlayout(fh,1,2,'TileSpacing','compact','Padding','compact');
+    ax=nexttile(tl);
+    imagesc(ax,results.imgI)
+    colorbar(ax)
+    axis(ax,'image')
+    ax=nexttile(tl);
+    semilogy(ax,time,squeeze(mean(data,[1,2])));
+    hold(ax,'on')
+    semilogy(ax,time,squeeze(min(data,[],[1,2])));
+    semilogy(ax,time,squeeze(max(data,[],[1,2])));
+    hold(ax,'off')
+    legend(ax,{'Mean','Min','Max'})
+    ylabel(ax,'Intensity')
+    xlabel(ax,'Time, s')
+    xlim(ax,[time(1),time(end)]);
+    ylim(ax,[double(min(data(:))),double(max(data(:)))])
     [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
-    sgtitle(strrep([fStem fExt],'_',' '));
-    drawnow
-    print(h,strrep(s.fName,'.cxd','_b_I.jpg'),'-djpeg','-r300');
+    sgtitle(fh,strrep([fStem fExt],'_',' '));
+    reportSave(rep,fh,'bolus');
 
     %save the settings and results
     reportStage(rep,'Saving');

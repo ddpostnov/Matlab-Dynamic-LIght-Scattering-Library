@@ -17,6 +17,12 @@
 %   picked up by a stray gcf, cannot be closed by close all in some other code,
 %   and costs nothing to create.  reportSave deletes it.
 %
+%   FILL THE CANVAS, OR AT LEAST DO NOT FIGHT IT.  exportgraphics trims the white
+%   margin around the content, so reportSave draws a hairline frame at the page
+%   edge just before exporting and every page then comes out at exactly the size
+%   below.  Nothing is asked of the drawing code beyond parenting its axes to fh -
+%   a tiledlayout with compact padding is the house pattern.
+%
 % Syntax:
 %    fh = reportFigure(rep, tag)
 %    fh = reportFigure(rep, tag, layout)

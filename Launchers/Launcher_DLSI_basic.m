@@ -21,6 +21,7 @@
 %LIBRARY PATH - add YOUR path manually here:
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
+setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
 rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the raw .mraw files lookup
 
 

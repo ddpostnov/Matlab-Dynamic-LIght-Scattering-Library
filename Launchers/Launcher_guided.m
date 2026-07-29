@@ -23,6 +23,7 @@
 % <library>\Launchers).  Replace with your own path if you prefer.
 libraryFolder = fileparts(fileparts(mfilename('fullpath')));
 addpath(genpath(libraryFolder));
+setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
 
 % The demo runs on the bundled test recording.  Point rawName at your own .rls
 % (or .cxd) file to use the guided step on your data.

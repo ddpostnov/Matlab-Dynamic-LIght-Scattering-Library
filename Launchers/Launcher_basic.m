@@ -12,6 +12,7 @@
 %LIBRARY PATH - add YOUR path manually here:
 libraryFolder = 'C:\Data\Martin\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
+setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
 
 
 %% STEP 1 Process .rls files to get the contrast

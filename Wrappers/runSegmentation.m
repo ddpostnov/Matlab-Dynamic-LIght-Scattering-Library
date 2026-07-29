@@ -4,7 +4,7 @@
 %   every *_K_d.mat / *_I_d.mat file it builds the five-level categorical mask, turns
 %   it into an indexed vessel/parenchyma label map, extracts per-structure scalar
 %   metrics and mean/median time-series, saves the updated *_r.mat / *_s.mat, and
-%   writes two JPEG previews (_cm.jpg categories, _vs.jpg segments).  It takes NO
+%   writes two report pages (_rep_categories, _rep_segments).  It takes NO
 %   user input: the interactive region selection now lives in setRegions (which
 %   writes results.regionsMask), and the automatic dynamic-segmentation loop lives
 %   in runDynamicSegmentation.  runSegmentation replaces the retired runCategories
@@ -14,10 +14,10 @@
 %   PER-FILE PIPELINE
 %     read results.regionsMask (from setRegions; whole window if absent)
 %       -> getPixelCategories  (edge size + enhancement + trust mask + 5-level cMask)
-%       -> _cm.jpg preview
+%       -> _rep_categories page
 %       -> getSegmentationLabels (centerlines -> sMap/pMap; merges inner walls)
 %       -> single cube pass -> sMetrics (geometry) + sData (traces)
-%       -> _vs.jpg preview -> save
+%       -> _rep_segments page -> save
 %
 %   INPUTS
 %     s        parameter structure.
@@ -48,8 +48,8 @@
 %   OUTPUT SIDE-EFFECTS (per file, and per copy target)
 %     <name>_r.mat   results.{cMask,regionsMask,mask,sMap,pMap,sMetrics,sData}
 %     <name>_s.mat   settings.runSegmentation = s (now carrying edgeSize and sStat)
-%     <name>_cm.jpg  categories preview (300 dpi)
-%     <name>_vs.jpg  segments preview   (300 dpi)
+%     <name>_rep_categories.jpg  categories report page
+%     <name>_rep_segments.jpg    segments report page
 %
 %   EXAMPLE
 %     fNames = getFileNamesList(root,'*_t_K_d.mat');           % flat column list
@@ -140,7 +140,7 @@ for fidx=1:1:numel(fNames)
     results.regionsMask=regionsMask;
     results.mask=(maskOut==(regionsMask>0));
     results.cMask=cMask;                          % store the 5-level (un-merged) mask
-    writeCategoriesPreview(s.fName,imgVis,cMask);
+    writeCategoriesPreview(rep,s.fName,imgVis,cMask);
 
     % --- indexed label maps (mask algebra; merges inner walls into outer) ---
     edgeSize=s.edgeSize;
@@ -221,7 +221,6 @@ for fidx=1:1:numel(fNames)
             sMetrics(i,:)={NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN};
         end
     end
-    toc
     source.data=reshape(source.data,dataSize);
 
     results.sMap=sMap;
@@ -229,7 +228,7 @@ for fidx=1:1:numel(fNames)
     results.sData=sData;
 
     % --- segments preview ---
-    showSegmentsPreview(s.fName,source.data,cMask,sMap,isK);
+    showSegmentsPreview(rep,s.fName,source.data,cMask,sMap,isK);
 
     %Save the data
     settings.runSegmentation=reportSettings(s);
@@ -295,8 +294,8 @@ results.sData=extractTraces(source.data,shared.sMap,sT.sStat);
 
 % previews from the target's own image with the copied overlays
 imgVis=categoryPreviewBackground(imgIni,isK);
-writeCategoriesPreview(targetName,imgVis,shared.cMask);
-showSegmentsPreview(targetName,source.data,shared.cMask,shared.sMap,isK);
+writeCategoriesPreview(rep,targetName,imgVis,shared.cMask);
+showSegmentsPreview(rep,targetName,source.data,shared.cMask,shared.sMap,isK);
 
 settings.runSegmentation=reportSettings(sT);  % carry edgeSize / sStat onto the sibling
 reportStage(rep,'Saving');
@@ -328,8 +327,8 @@ end
 
 % =====================================================================
 function imgVis=categoryPreviewBackground(imgIni,isK)
-%categoryPreviewBackground  Enhanced background for the _cm.jpg preview.
-%   Mirrors getPixelCategories' internal imgVis prep so a copied file's _cm.jpg
+%categoryPreviewBackground  Enhanced background for the _rep_categories page.
+%   Mirrors getPixelCategories' internal imgVis prep so a copied file's page
 %   matches a directly-segmented one (keep in sync with getPixelCategories).
 if isK
     img=imgIni;
@@ -345,25 +344,25 @@ imgVis=enhanceForDisplay(img,fSize,min(15,fSize));
 end
 
 % =====================================================================
-function writeCategoriesPreview(fName,imgVis,cMask)
-%writeCategoriesPreview  Save <name>_cm.jpg: enhanced image + category boundaries.
-f=figure('Visible','off','Color','w');
+function writeCategoriesPreview(rep,fName,imgVis,cMask)
+%writeCategoriesPreview  Save <name>_rep_categories.jpg: enhanced image + category
+%   boundaries.  fName is passed explicitly so a copy target gets its own page.
+f=reportFigure(rep,'categories');
 try
-    tiledlayout(f,1,2,'TileSpacing','compact','Padding','compact');
-    nexttile
-    imagesc(rot90(imgVis, size(imgVis,2) > size(imgVis,1)))
-    hold on
-    visboundaries(rot90(cMask>4, size(cMask,2) > size(cMask,1)),'Color','m')
-    visboundaries(rot90(cMask>2, size(cMask,2) > size(cMask,1)),'Color','w')
-    hold off
-    clim(prctile(imgVis(:),[10,99]))
-    axis image
-    nexttile
-    imagesc(rot90(cMask, size(cMask,2) > size(cMask,1)))
-    axis image
-    print(f,strrep(fName,'.mat','_cm.jpg'), '-djpeg', '-r300');
+    t=tiledlayout(f,1,2,'TileSpacing','compact','Padding','compact');
+    ax=nexttile(t);
+    imagesc(ax,rot90(imgVis, size(imgVis,2) > size(imgVis,1)))
+    hold(ax,'on')
+    visboundaries(ax,rot90(cMask>4, size(cMask,2) > size(cMask,1)),'Color','m')
+    visboundaries(ax,rot90(cMask>2, size(cMask,2) > size(cMask,1)),'Color','w')
+    hold(ax,'off')
+    clim(ax,prctile(imgVis(:),[10,99]))
+    axis(ax,'image')
+    ax=nexttile(t);
+    imagesc(ax,rot90(cMask, size(cMask,2) > size(cMask,1)))
+    axis(ax,'image')
 catch ME
-    delete(f); rethrow(ME);
+    delete(f); rethrow(ME);      % reportSave never runs, so the figure goes here
 end
-delete(f);
+reportSave(rep,f,'categories',fName);
 end

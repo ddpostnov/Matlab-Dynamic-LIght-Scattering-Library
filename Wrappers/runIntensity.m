@@ -18,7 +18,7 @@
 %
 % Outputs:
 %    (none) - writes <file>_I_d.mat (source), _I_r.mat (results), _I_s.mat
-%             (settings) and <file>_I.jpg next to each input.
+%             (settings) and <file>_rep_intensity.jpg next to each input.
 %
 % Dependencies: the Bio-Formats MATLAB library (bfGetReader, bfGetPlane).
 % See also: runContrastFromRLS, readCXD, readDV
@@ -91,28 +91,27 @@ for fidx=1:1:numel(fNames)
         results.imgI=mean(data,3);
         settings.runIntensity=reportSettings(s);
 
-        h=figure;
-        h.WindowState='Maximize';
-        subplot(1,2,1)
-        imagesc(results.imgI)
-        clim([prctile(results.imgI(:),1),prctile(results.imgI(:),99)])
-        colorbar
-        axis image
-        subplot(1,2,2)
-        semilogy(time,squeeze(mean(data,[1,2])));
-        hold on
-        semilogy(time,squeeze(min(data,[],[1,2])));
-        semilogy(time,squeeze(max(data,[],[1,2])));
-        hold off
-        legend({'Mean','Min','Max'})
-        ylabel('Intensity')
-        xlabel('Time, s')
-        xlim([time(1),time(end)]);
-        ylim([min(data(:)),max(data(:))])
+        fh=reportFigure(rep,'intensity');
+        tl=tiledlayout(fh,1,2,'TileSpacing','compact','Padding','compact');
+        ax=nexttile(tl);
+        imagesc(ax,results.imgI)
+        clim(ax,[prctile(results.imgI(:),1),prctile(results.imgI(:),99)])
+        colorbar(ax)
+        axis(ax,'image')
+        ax=nexttile(tl);
+        semilogy(ax,time,squeeze(mean(data,[1,2])));
+        hold(ax,'on')
+        semilogy(ax,time,squeeze(min(data,[],[1,2])));
+        semilogy(ax,time,squeeze(max(data,[],[1,2])));
+        hold(ax,'off')
+        legend(ax,{'Mean','Min','Max'})
+        ylabel(ax,'Intensity')
+        xlabel(ax,'Time, s')
+        xlim(ax,[time(1),time(end)]);
+        ylim(ax,[min(data(:)),max(data(:))])
         [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
-        sgtitle(strrep([fStem fExt],'_',' '));
-        drawnow
-        print(h,strrep(s.fName,'.cxd','_I.jpg'), '-djpeg', '-r300');
+        sgtitle(fh,strrep([fStem fExt],'_',' '));
+        reportSave(rep,fh,'intensity');
 
         % Save the settings and results
         reportStage(rep,'Saving');
