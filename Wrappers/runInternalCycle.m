@@ -77,19 +77,18 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.rls'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".rls".');
 end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.
+rep=reportOpen(s,'Internal cycle',fNames);
 
 for fidx=1:1:numel(fNames)
-    if cancelFcn(), break; end                  % cooperative cancel between files
+    if reportCancelled(rep), break; end         % cooperative cancel between files
     if ~isempty(fNames{fidx})
-        tic
         clearvars results source settings
         close all
         s.fName=char(fNames{fidx});
-        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-        stageFcn('runInternalCycle',msg);       % file boundary (this wrapper has no per-file disp)
+        reportFile(rep,fidx,s.fName);
 
         %read the raw file meta data
         fid = fopen(s.fName, 'r');
@@ -128,8 +127,10 @@ for fidx=1:1:numel(fNames)
         fseek(fid,firstByte,-1 );
 
         %perform data pre-processing, store spacially decimated information
+        reportStage(rep,'Reading and pre-processing');
         kernel=gpuArray(ones(s.contrastKernelPreproc,s.contrastKernelPreproc,1,'single'));
         for i=1:1:size(data,3)
+            reportProgress(rep,i/size(data,3),'Reading and pre-processing');
             timeStamps(i)=fread(fid,1,'*uint64');
             tmp=gpuArray(fread(fid,s.sizeX*s.sizeY*s.framesToAverage,s.dataType));
             meanI(i)=mean(tmp(:));
@@ -282,10 +283,10 @@ for fidx=1:1:numel(fNames)
         ylabel('BFI')
         title(['acceptance rate=',num2str(size(pulsesListFinal,1)./size(pulsesList,1))]);
         drawnow
-        toc
         print(h,strrep(s.fName,'.rls','_ic1.jpg'), '-djpeg', '-r300');
         clearvars data;
 
+        reportStage(rep,'Averaging the cardiac cycle');
         s.descendTimePts=round(median(pulsesListFinal(:,3)-pulsesListFinal(:,2)));
         s.ascendTimePts=round(median(pulsesListFinal(:,2)-pulsesListFinal(:,1)));
         s.cycleTimePts=s.ascendTimePts+s.descendTimePts-1;
@@ -373,7 +374,8 @@ for fidx=1:1:numel(fNames)
             error('Unknown processing method requested');
         end
 
-        tmp=strsplit(s.fName,'\');
+        [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
+        tmp={[fStem fExt]};
         h=figure;
         h.WindowState='Maximize';
         subplot(2,1,1)
@@ -389,36 +391,16 @@ for fidx=1:1:numel(fNames)
         drawnow
         print(h,strrep(s.fName,'.rls','_ic2.jpg'), '-djpeg', '-r300');
 
-        disp('Saving the results'); stageFcn('runInternalCycle','Saving the results');
-        settings.runInternalCycle=stripHooks(s);
+        reportStage(rep,'Saving');
+        settings.runInternalCycle=reportSettings(s);
         results.imgK=squeeze(mean(source.data,3,'omitmissing'));
         results.time=source.time;
         save(strrep(s.fName,'.rls','_c_K_d.mat'),'source','-v7.3');
         save(strrep(s.fName,'.rls','_c_K_r.mat'),'results','-v7.3');
         save(strrep(s.fName,'.rls','_c_K_s.mat'),'settings','-v7.3');
-        disp('Saving complete'); stageFcn('runInternalCycle','Saving complete');
-        progressFcn(fidx/numel(fNames),msg);    % coarse per-file progress
-        toc
+        reportSaved(rep,3);
     end
 end
+reportClose(rep);
 
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

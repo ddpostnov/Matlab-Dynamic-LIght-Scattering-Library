@@ -19,6 +19,10 @@
 %    'decimFactor' - frames averaged and kept during decimation (default 1).
 %    'decimMethod' - 'leaking' (overlapping, default) or 'sharp' (temporal only).
 %    'memoryCoef'  - fraction of free RAM used for batching (default 0.8).
+%    'progressFcn' - progress sink, progressFcn(frac,label).  Absent (the default)
+%                    the per-batch line is printed to the command window exactly as
+%                    it always has been, so every existing caller is unaffected; a
+%                    wrapper passes reportProgress's handle to route it instead.
 %
 % Outputs:
 %    data             - contrast data, 3-D [y x t] single.
@@ -50,6 +54,7 @@ addParameter(p, 'procType', 'gpu', @(x) any(validatestring(x, {'cpu', 'gpu'})));
 addParameter(p, 'decimFactor', 1, @isnumeric);
 addParameter(p, 'decimMethod', 'leaking', @(x) any(validatestring(x, {'leaking', 'sharp'})));
 addParameter(p, 'memoryCoef', 0.8, @(x) isnumeric(x) && isscalar(x) && x > 0 && x <= 1);
+addParameter(p, 'progressFcn', [], @(x) isempty(x) || isa(x,'function_handle'));
 parse(p, rlsFileName, contrastType, varargin{:});
 
 kernelSize  = p.Results.kernelSize;
@@ -57,6 +62,7 @@ procType    = p.Results.procType;
 decimFactor = p.Results.decimFactor;
 decimMethod = p.Results.decimMethod;
 memoryCoef  = p.Results.memoryCoef;
+progressFcn = p.Results.progressFcn;
 
 if isempty(kernelSize)
     if strcmpi(contrastType, 'temporal')
@@ -168,7 +174,11 @@ for i=1:batchNum
         time(curSize : curSize+numToSave-1) = tmp2(startIdx:endIdx);
         curSize = curSize + numToSave;
     end
-    fprintf('Batch %d/%d processed. Elapsed: %.2fs\n', i, batchNum, toc);
+    if isempty(progressFcn)
+        fprintf('Batch %d/%d processed. Elapsed: %.2fs\n', i, batchNum, toc);
+    else
+        progressFcn(i/batchNum, 'Speckle contrast');
+    end
 end
 time=(time-time(1))./1000; %conversion to seconds
 fclose(stream.fId);

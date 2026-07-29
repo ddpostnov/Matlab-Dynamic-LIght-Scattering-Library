@@ -71,17 +71,16 @@ if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.ma
     error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
 end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.
+rep=reportOpen(s,'Dynamic segmentation',fNames);
 
 for fidx=1:1:numel(fNames)
-     if cancelFcn(), break; end                 % cooperative cancel between files
+     if reportCancelled(rep), break; end        % cooperative cancel between files
      if ~isempty(fNames{fidx})
-    tic
-    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msg); stageFcn('runDynamicSegmentation',msg);
     s.fName=fNames{fidx};
+    reportFile(rep,fidx,s.fName);
     clearvars results source settings
     load(s.fName,'source')
     load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
@@ -89,6 +88,7 @@ for fidx=1:1:numel(fNames)
 
     % --- re-derive the labelling transients from the persisted seam (option a) ---
     edgeSize = settings.runSegmentation.edgeSize;
+    reportStage(rep,'Vessel segments');
     [~,~,sLines,cMask,vsMap,dMask,nodes] = getSegmentationLabels(results.cMask,edgeSize,s);
 
     % --- dynamic segmentation (verbatim from the old runSegmentation attmemptDS loop) ---
@@ -122,9 +122,16 @@ for fidx=1:1:numel(fNames)
     dvsMap=zeros(size(cMask),'int32');
 
 
+    % One bar for the whole segment sweep.  Announcing each segment, and again
+    % when it is fitted, put hundreds of lines per file in the log and said less
+    % than a percentage does.
+    reportStage(rep,'Dynamic vessel diameters');
+    segIdxs=unique(sLines(sLines(:)>0))';
+    nSeg=numel(segIdxs);
     counter=1;
-    for lineIdx=unique(sLines(sLines(:)>0))'
-        disp(['Checking segment ',num2str(lineIdx),' out of possible ',num2str(max(sLines(:)))])
+    for segNo=1:nSeg
+        lineIdx=segIdxs(segNo);
+        reportProgress(rep,segNo/max(nSeg,1),'Dynamic vessel diameters');
         [y,x]=find(sLines==lineIdx);
         if (max(x)-min(x))>=(max(y)-min(y))
             sLines(d2MY(sub2ind(size(sLines),y,x)))=lineIdx;
@@ -169,8 +176,6 @@ for fidx=1:1:numel(fNames)
             end
 
             if sL>=s.sMinL && sR2>=s.sMinP2R2 && sCLR<=s.sMaxCLR && sD(2)/sD(1)<=s.sMaxKK && limX(1)>edgeSize && limY(1)>edgeSize && limX(2)<size(cMask,2)-edgeSize && limY(2)<size(cMask,1)-edgeSize
-                disp('Fitting a segment')
-
                 sD=sD.*s.pInterpF;
                 xx = round( (xx - limX(1)) * s.pInterpF ) + 1;
                 yy = round( (yy - limY(1)) * s.pInterpF ) + 1;
@@ -215,7 +220,7 @@ for fidx=1:1:numel(fNames)
                     try
                         dataProfile=nan(numel(xx),sum(sD)*2+1,size(dataROI,3));
                     catch
-                        warning('Segment is too large - skipping due to memory limitaion')
+                        reportWarn(rep,sprintf('segment %d is too large to fit in memory - skipped',lineIdx));
                         continue;
                     end
 
@@ -224,14 +229,14 @@ for fidx=1:1:numel(fNames)
                             dataProfile(i,:,:)=dataROI(yy(i)-sum(sD):yy(i)+sum(sD),xx(i),:);
                         end
                     else
-                        disp('Segmentation failed - out of bounds')
+                        reportWarn(rep,sprintf('segment %d reaches outside the image - skipped',lineIdx));
                         continue;
                     end
                 else
                     try
                         dataProfile=nan(numel(yy),sum(sD)*2+1,size(dataROI,3));
                     catch
-                        warning('Segment is too large - skipping due to memory limitaion')
+                        reportWarn(rep,sprintf('segment %d is too large to fit in memory - skipped',lineIdx));
                         continue;
                     end
                     if (min(xx)-sum(sD))>0 && (max(xx)+sum(sD))<size(dataROI,2)
@@ -240,7 +245,7 @@ for fidx=1:1:numel(fNames)
                         end
 
                     else
-                        disp('Segmentation failed - out of bounds')
+                        reportWarn(rep,sprintf('segment %d reaches outside the image - skipped',lineIdx));
                         continue;
                     end
                 end
@@ -342,7 +347,7 @@ for fidx=1:1:numel(fNames)
                     end
                     counter=counter+1;
                 else
-                    disp('Segmentation failed - bad quality')
+                    reportWarn(rep,sprintf('segment %d did not fit well enough - skipped',lineIdx));
                 end
             end
         end
@@ -363,33 +368,13 @@ for fidx=1:1:numel(fNames)
     showSegmentsPreview(s.fName,source.data,cMask,results.sMap,isK,dvsMap);
 
     %Save the data
-    settings.runDynamicSegmentation=stripHooks(s);
-    msgSave=['Saving the results. Elapsed time ',num2str(round(toc)),'s'];
-    disp(msgSave); stageFcn('runDynamicSegmentation',msgSave);
+    settings.runDynamicSegmentation=reportSettings(s);
+    reportStage(rep,'Saving');
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
-    disp('Saving complete');
-    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
+    reportSaved(rep,2);
      end
 end
+reportClose(rep);
 
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

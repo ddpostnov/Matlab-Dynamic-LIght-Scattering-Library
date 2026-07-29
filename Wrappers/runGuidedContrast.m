@@ -68,18 +68,17 @@ if nargin<3 || isempty(fNamesRaw)
 end
 if ~isfield(s,'memoryCoef') || isempty(s.memoryCoef), s.memoryCoef=0.25; end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.
+rep=reportOpen(s,'Guided',fNames);
 
 for fidx=1:1:numel(fNames)
-    if cancelFcn(), break; end                  % cooperative cancel between files
+    if reportCancelled(rep), break; end         % cooperative cancel between files
     if ~isempty(fNames{fidx})
-        tic
         s.fName=char(fNames{fidx});
         s.fNameRaw=char(fNamesRaw{fidx});
-        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-        disp(msg); stageFcn('runGuidedContrast',msg);
+        reportFile(rep,fidx,s.fName);
         clearvars results settings
 
         load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
@@ -120,6 +119,7 @@ for fidx=1:1:numel(fNames)
         nT=cfg.sizeT;
         batchSize=getBatchSize(numel(pixIdx),cfg.sizeY*cfg.sizeX,nT,s.memoryCoef);
 
+        reportStage(rep,'Guided speckle contrast');
         gsData=nan(nT,nRegions);
         timeStamps=zeros(nT,1);
         done=0;
@@ -135,8 +135,7 @@ for fidx=1:1:numel(fNames)
             gsData(done+1:done+b,:)=(sqrt(varX)./meanX)';
             timeStamps(done+1:done+b)=tsB;
             done=done+b;
-            disp(['   frames ',num2str(done),'/',num2str(nT),', elapsed ',num2str(round(toc)),'s'])
-            progressFcn(done/nT,'guided contrast frames');   % route the existing batch progress
+            reportProgress(rep,done/nT,'Guided speckle contrast');
         end
         closeRawStream(st,cfg);
 
@@ -146,15 +145,14 @@ for fidx=1:1:numel(fNames)
 
         % Save the settings and results
         s.rawFrameRate=1./median(diff(results.gsTime));
-        settings.runGuidedContrast=stripHooks(s);
-        msgSave=['Saving the results. Elapsed time ',num2str(round(toc)),'s'];
-        disp(msgSave); stageFcn('runGuidedContrast',msgSave);
+        settings.runGuidedContrast=reportSettings(s);
+        reportStage(rep,'Saving');
         save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
         save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
-        disp('Saving complete');
-        progressFcn(fidx/numel(fNames),msg);    % coarse per-file progress
+        reportSaved(rep,2);
     end
 end
+reportClose(rep);
 end
 
 %------------- LOCAL FUNCTIONS --------------
@@ -235,24 +233,5 @@ else
     time=timeStamps-timeStamps(1);                        % .cxd stamps already in s
 end
 time=time(:);
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end
 %------------- END OF CODE --------------

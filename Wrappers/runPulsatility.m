@@ -113,17 +113,17 @@ if ~isfield(s,'ppxPulsReturn')
     s.ppxPulsReturn={'markers'};
 end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.  Cancel is only
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.  Cancel is only
 % checked between files (a hook inside the per-pixel parfor would broadcast oddly).
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+rep=reportOpen(s,'Pulsatility',fNames);
 
 for fidx=1:1:numel(fNames)
-    if cancelFcn(), break; end                  % cooperative cancel between files
+    if reportCancelled(rep), break; end         % cooperative cancel between files
     if ~isempty(fNames{fidx})
-        msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-        disp(msg); stageFcn('runPulsatility',msg);
         s.fName=fNames{fidx};
+        reportFile(rep,fidx,s.fName);
         clearvars results source settings
         %SOURCE is read only for the per-pixel path (and never written back).
         if ~isempty(s.ppxPulsReturn)
@@ -150,6 +150,7 @@ for fidx=1:1:numel(fNames)
         % =============================================================
         % Per-segment analysis: sData/dvsData (ps prefix), dvsDiameter (pd prefix).
         % =============================================================
+        reportStage(rep,'Pulsatility per segment');
         sigNames={'sData','dvsData','dvsDiameter'};
         for kSig=1:numel(sigNames)
             sigName=sigNames{kSig};
@@ -272,8 +273,12 @@ for fidx=1:1:numel(fNames)
                 %(the old fit overwrote only masked pixels); masked pixels overwritten below.
                 fDataAcc=single(Dpix);
 
-                tic
+                reportStage(rep,'Pulsatility per pixel');
+                %Throttled AT THE SEND: one send per pixel would cost ~10^5-10^6
+                %client-side callbacks; sendEvery makes it about two hundred.
+                [dqPix,sendEvery]=reportProgress(rep,'queue',npx,'Pulsatility per pixel');
                 parfor p=1:npx
+                    if mod(p,sendEvery)==0, send(dqPix,sendEvery); end
                     if sMapLin(p)==0, continue; end          %background: model 0, fData raw
                     mp=getPulsatilityMetrics(Dpix(p,:).',layoutFit,sFit);
                     if mp.valid
@@ -286,7 +291,7 @@ for fidx=1:1:numel(fNames)
                         hAmpAcc(p,:)=NaN; hPhaseAcc(p,:)=NaN; r2Acc(p)=NaN;
                     end
                 end
-                fprintf('Per-pixel pulsatility fit: %d masked pixels in %.2fs\n',nnz(sMapLin>0),toc);
+                reportProgress(rep,1,'Pulsatility per pixel');   %forced final tick
 
                 fDataCube=reshape(fDataAcc,Y,X,nTp);
                 W=fDataCube;                                 %markers on the fitted cube
@@ -338,33 +343,14 @@ for fidx=1:1:numel(fNames)
             results.pulsatility.ppx=ppx;
         end
 
-        settings.runPulsatility=stripHooks(s);
-        msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-        disp(msgSave); stageFcn('runPulsatility',msgSave);
+        settings.runPulsatility=reportSettings(s);
+        reportStage(rep,'Saving');
         %NON-DESTRUCTIVE: SOURCE (_d) is never re-saved - only RESULTS and SETTINGS.
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-        progressFcn(fidx/numel(fNames),msg);    % coarse per-file progress
+        reportSaved(rep,2);
     end
 end
+reportClose(rep);
 
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

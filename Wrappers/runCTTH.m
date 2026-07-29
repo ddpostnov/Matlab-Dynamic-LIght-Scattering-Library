@@ -93,18 +93,18 @@ if ~isfield(s,'minStep');  s.minStep =1;  end          % min detectable change (
 s.sgFrame=s.sgFrame+1-mod(s.sgFrame,2);                % force odd
 s.sgFrame=max(s.sgFrame,s.sgOrder+3-mod(s.sgOrder,2)); % keep frame > order, odd
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.  Cancel is only
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.  Cancel is only
 % checked between files (a hook inside the per-pixel parfor would broadcast oddly).
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+rep=reportOpen(s,'CTTH',fNames);
 
 for fidx=1:numel(fNames)
-     if cancelFcn(), break; end                 % cooperative cancel between files
+     if reportCancelled(rep), break; end        % cooperative cancel between files
      if ~isempty(fNames{fidx})
 
-    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msg); stageFcn('runCTTH',msg);
     s.fName=fNames{fidx};
+    reportFile(rep,fidx,s.fName);
     clearvars results source settings
     load(s.fName)
     load(strrep(fNames{fidx},'_d.mat','_s.mat'));
@@ -118,6 +118,7 @@ for fidx=1:numel(fNames)
     end
 
     % ----------------------------- regions -----------------------------
+    reportStage(rep,'Bolus transit metrics');
     results.sMetrics=appendBolusMetrics(results.sMetrics,results.sData,results.time,s,bw,dt);
 
     % ------------------------- vessel segments -------------------------
@@ -127,6 +128,7 @@ for fidx=1:numel(fNames)
 
     % --------------------------- pixels (opt) --------------------------
     if strcmp(s.calcData,"all")
+        reportStage(rep,'Per-pixel bolus landmarks');
         data=single(source.data);
         for k=1:size(data,3)                         % 2-D median across frames
             data(:,:,k)=medfilt2(data(:,:,k),[s.medSpace s.medSpace],'symmetric');
@@ -151,13 +153,9 @@ for fidx=1:numel(fNames)
             end
             imgT(i,:,:)=reshape(rowT,1,C,4);
             imgV(i,:,:)=reshape(rowV,1,C,4);
-            if any(i==round(linspace(1,R,11)))
-                fprintf('\rMapping bolus landmarks %3d%%',round(100*i/R));
-                progressFcn(i/R,'CTTH bolus landmarks');   % route the existing per-row %
-                drawnow limitrate
-            end
+            reportProgress(rep,i/R,'Per-pixel bolus landmarks');
         end
-        fprintf('\n');
+        reportProgress(rep,1,'Per-pixel bolus landmarks');   % forced final tick
         results.imgT0B       =imgT(:,:,1);  results.imgV0B       =imgV(:,:,1);
         results.imgTUpslopeB =imgT(:,:,2);  results.imgVUpslopeB =imgV(:,:,2);
         results.imgTPeakB    =imgT(:,:,3);  results.imgVPeakB    =imgV(:,:,3);
@@ -165,14 +163,14 @@ for fidx=1:numel(fNames)
         results.imgTBaselineB=min(imgT(:,:,1),[],'all','omitnan')-dt;
     end
 
-    settings.ctthCalculation=stripHooks(s);
-    msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msgSave); stageFcn('runCTTH',msgSave);
+    settings.ctthCalculation=reportSettings(s);
+    reportStage(rep,'Saving');
     save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
     save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
+    reportSaved(rep,2);
 end
 end
+reportClose(rep);
 end
 
 
@@ -263,24 +261,4 @@ if ~isempty(iDec); iDec=iDec+iPk; end
 iRc=min([iMin,iDec,T]);
 
 idx=[i0,iUp,iPk,iRc];
-end
-
-
-% ====================================================================== %
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% ====================================================================== %
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

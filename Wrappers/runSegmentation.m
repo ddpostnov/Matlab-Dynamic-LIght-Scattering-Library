@@ -98,17 +98,16 @@ if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.ma
 end
 if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.
+rep=reportOpen(s,'Segmentation',fNames);
 
 for fidx=1:1:numel(fNames)
-     if cancelFcn(), break; end                 % cooperative cancel between files
+     if reportCancelled(rep), break; end        % cooperative cancel between files
      if ~isempty(fNames{fidx})
-    tic
-    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msg); stageFcn('runSegmentation',msg);
     s.fName=fNames{fidx};
+    reportFile(rep,fidx,s.fName);
     clearvars results source settings
     load(s.fName,'source')
     load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
@@ -136,6 +135,7 @@ for fidx=1:1:numel(fNames)
 
     % --- categorize (automatic core: edge size + enhancement + trust mask + cMask) ---
     if isfield(results,'mask'), existingMask=results.mask; else, existingMask=[]; end
+    reportStage(rep,'Pixel categories');
     [cMask,s.edgeSize,maskOut,imgVis]=getPixelCategories(imgIni,regionsMask,existingMask,isK,s);
     results.regionsMask=regionsMask;
     results.mask=(maskOut==(regionsMask>0));
@@ -144,6 +144,7 @@ for fidx=1:1:numel(fNames)
 
     % --- indexed label maps (mask algebra; merges inner walls into outer) ---
     edgeSize=s.edgeSize;
+    reportStage(rep,'Vessel segments');
     [sMap,pMap,sLines,cMask,~,dMask,~]=getSegmentationLabels(cMask,edgeSize,s); % cMask now merged
     results.pMap=pMap;
 
@@ -231,12 +232,11 @@ for fidx=1:1:numel(fNames)
     showSegmentsPreview(s.fName,source.data,cMask,sMap,isK);
 
     %Save the data
-    settings.runSegmentation=stripHooks(s);
-    msgSave=['Saving the results. Elapsed time ',num2str(round(toc)),'s'];
-    disp(msgSave); stageFcn('runSegmentation',msgSave);
+    settings.runSegmentation=reportSettings(s);
+    reportStage(rep,'Saving');
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
-    disp('Saving complete');
+    reportSaved(rep,2);
 
     % --- assign the segmentation to co-registered siblings (s.fNamesCopyTo) ---
     shared=struct('cMask',results.cMask,'regionsMask',regionsMask,'mask',results.mask, ...
@@ -244,12 +244,12 @@ for fidx=1:1:numel(fNames)
     tgts=copyTargets(s,fidx);
     for t=1:1:numel(tgts)
         if ~isempty(tgts{t})
-            copySegmentationOnto(s,tgts{t},shared);
+            copySegmentationOnto(s,tgts{t},shared,rep);
         end
     end
-    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
      end
 end
+reportClose(rep);
 end
 
 % =====================================================================
@@ -262,11 +262,13 @@ end
 end
 
 % =====================================================================
-function copySegmentationOnto(s,targetName,shared)
+function copySegmentationOnto(s,targetName,shared,rep)
 %copySegmentationOnto  Copy the shared spatial products onto a co-registered sibling
 %   and RE-EXTRACT the target's own sData from its own cube (replaces assignCategories).
-tic
-disp(['Copying segmentation onto ',targetName])
+%   The sibling is a different recording from the one the banner named, so this is
+%   the one place the stage line still has to carry a file name.
+[~,tgtStem]=fileparts(targetName);
+reportStage(rep,['Copying segmentation onto ',tgtStem]);
 sT=s; sT.fName=targetName;
 clearvars results source settings
 load(targetName,'source')
@@ -296,11 +298,11 @@ imgVis=categoryPreviewBackground(imgIni,isK);
 writeCategoriesPreview(targetName,imgVis,shared.cMask);
 showSegmentsPreview(targetName,source.data,shared.cMask,shared.sMap,isK);
 
-settings.runSegmentation=stripHooks(sT);      % carry edgeSize / sStat onto the sibling
-disp(['Saving the copied results. Elapsed time ',num2str(round(toc)),'s']);
+settings.runSegmentation=reportSettings(sT);  % carry edgeSize / sStat onto the sibling
+reportStage(rep,'Saving');
 save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
 save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
-disp('Saving complete');
+reportSaved(rep,2);
 end
 
 % =====================================================================
@@ -364,23 +366,4 @@ catch ME
     delete(f); rethrow(ME);
 end
 delete(f);
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

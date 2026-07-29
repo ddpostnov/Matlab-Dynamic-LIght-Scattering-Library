@@ -94,21 +94,23 @@ if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.ma
 end
 if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.  This step is
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.  This step is
 % fully interactive, so only stageFcn (file boundaries) and cancelFcn (between files)
 % are wired - progress is not threaded through the ROI editor.
-[~,stageFcn,cancelFcn]=resolveHooks(s);
+rep=reportOpen(s,'Regions',fNames(~cellfun(@isempty,fNames(:))));
 
 nGroups=size(fNames,1);
+fIdx=0;
 for g=1:1:nGroups
     carried=emptyROISpec();          % ROI geometry carried within this group (reset per group)
     for c=1:1:size(fNames,2)
-        if cancelFcn(), return; end  % cooperative cancel between files (across groups)
+        if reportCancelled(rep), return; end  % cooperative cancel between files (across groups)
         fName=fNames{g,c};
         if isempty(fName), continue; end
-        msg=['setRegions: group ',num2str(g),'/',num2str(nGroups),', file ',fName];
-        disp(msg); stageFcn('setRegions',msg);
+        fIdx=fIdx+1;
+        reportFile(rep,fIdx,fName);
         s.fName=fName;
         clearvars results settings source
         load(strrep(fName,'_d.mat','_s.mat'),'settings');
@@ -129,7 +131,8 @@ for g=1:1:nGroups
         end
 
         % --- interactive ROI editor (always opens); empty mask => whole window ---
-        [regionsMask,carried]=editRegions(imgIni,isK,carried);
+        reportStage(rep,'Drawing the regions');
+        [regionsMask,carried]=editRegions(imgIni,isK,carried,rep);
 
         if isempty(regionsMask)
             % no regions drawn: whole window - remove any stale mask, write none, so
@@ -138,19 +141,22 @@ for g=1:1:nGroups
         else
             results.regionsMask=regionsMask;
         end
-        settings.setRegions=stripHooks(s);
+        settings.setRegions=reportSettings(s);
+        reportStage(rep,'Saving');
         save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
         save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
+        reportSaved(rep,2);
 
         % --- inherit the same regions on the co-registered siblings (s.fNamesCopyTo) ---
         tgts=copyTargets(s,fNames,g,c);
         for t=1:1:numel(tgts)
             if ~isempty(tgts{t})
-                copyRegionsOnto(s,tgts{t},regionsMask,stageFcn);
+                copyRegionsOnto(s,tgts{t},regionsMask,rep);
             end
         end
     end
 end
+reportClose(rep);
 end
 
 % =====================================================================
@@ -174,12 +180,12 @@ end
 end
 
 % =====================================================================
-function copyRegionsOnto(s,targetName,regionsMask,stageFcn)
+function copyRegionsOnto(s,targetName,regionsMask,rep)
 %copyRegionsOnto  Give a co-registered sibling the SAME regions (verbatim mask, or the
 %   removal of a stale one when nothing was drawn) plus the settings stamp.  Nothing
 %   else on the target is touched - it is a different recording of the same FOV.
-msg=['setRegions: copying regions onto ',targetName];
-disp(msg); stageFcn('setRegions',msg);
+[~,tgtStem]=fileparts(targetName);
+reportStage(rep,['Copying regions onto ',tgtStem]);
 clearvars results settings
 load(strrep(targetName,'_d.mat','_s.mat'),'settings');
 load(strrep(targetName,'_d.mat','_r.mat'),'results');
@@ -191,13 +197,13 @@ else
 end
 
 sT=s; sT.fName=targetName;
-settings.setRegions=stripHooks(sT);
+settings.setRegions=reportSettings(sT);
 save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
 save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
 end
 
 % =====================================================================
-function [regionsMask,carried]=editRegions(imgIni,isK,carried)
+function [regionsMask,carried]=editRegions(imgIni,isK,carried,rep)
 %editRegions  ROI editor for one file: draw/edit labelled regions on the enhanced
 %   image, return the labelled mask (EMPTY when no ROI is drawn = whole window) plus
 %   the ROI geometry to carry to the next file.
@@ -250,7 +256,7 @@ hint=uicontrol(fig,'Style','text','Units','normalized','Position',[0.04 0.02 0.6
 % Files within a group need not share a field of view, so an ROI drawn on a larger
 % image can fall (partly) outside a smaller one; such an ROI is dropped rather than
 % recreated off-image, where it would silently mask nothing and break downstream use.
-carried=dropOutsideFOV(carried,size(imgIni));
+carried=dropOutsideFOV(carried,size(imgIni),rep);
 for i=1:1:numel(carried)
     rois{end+1}=recreateROI(axDraw,carried(i)); %#ok<AGROW>
 end
@@ -360,7 +366,7 @@ switch shape
         r=drawellipse(ax,'Color','w','FaceAlpha',0);
     case 'circle'
         r=drawcircle(ax,'Color','w','FaceAlpha',0);
-    otherwise   % polygon (default)
+    otherwise                                      % polygon (default)
         r=drawpolygon(ax,'Color','w','FaceAlpha',0);
 end
 end
@@ -377,7 +383,7 @@ switch class(r)
         spec.type='ellipse'; spec.a=r.Center; spec.b=r.SemiAxes; spec.c=r.RotationAngle;
     case 'images.roi.Circle'
         spec.type='circle';  spec.a=r.Center; spec.b=r.Radius;
-    otherwise                                  % images.roi.Polygon (default)
+    otherwise                                      % images.roi.Polygon (default)
         spec.type='polygon'; spec.a=r.Position;
 end
 end
@@ -396,13 +402,13 @@ switch spec.type
             'Color','w','StripeColor','b','FaceAlpha',0);
     case 'circle'
         r=drawcircle(ax,'Center',spec.a,'Radius',spec.b,'Color','w','StripeColor','b','FaceAlpha',0);
-    otherwise   % polygon
+    otherwise                                      % polygon
         r=drawpolygon(ax,'Position',spec.a,'Color','w','StripeColor','b','FaceAlpha',0);
 end
 end
 
 % =====================================================================
-function carried=dropOutsideFOV(carried,sz)
+function carried=dropOutsideFOV(carried,sz,rep)
 %dropOutsideFOV  Keep only the carried ROI specs that fit entirely inside an sz =
 %   [rows cols] field of view, discarding (with a note) the ones that do not.  ROIs are
 %   carried across files of a group, which may differ in size; an ROI that does not fit
@@ -413,8 +419,8 @@ for i=1:1:numel(carried)
     keep(i)= xLim(1)>=0.5 && xLim(2)<=sz(2)+0.5 && yLim(1)>=0.5 && yLim(2)<=sz(1)+0.5;
 end
 if any(~keep)
-    disp(['setRegions: ',num2str(sum(~keep)),' carried ROI(s) do not fit in this ', ...
-          'file''s ',num2str(sz(2)),'x',num2str(sz(1)),' field of view - dropped.']);
+    reportWarn(rep,[num2str(sum(~keep)),' carried region(s) do not fit in this ', ...
+          num2str(sz(2)),'x',num2str(sz(1)),' field of view - dropped.']);
     carried=carried(keep);
 end
 end
@@ -444,23 +450,4 @@ end
 function spec=emptyROISpec()
 %emptyROISpec  0x0 struct array with the ROI-spec fields (type + geometry a/b/c).
 spec=struct('type',{},'a',{},'b',{},'c',{});
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

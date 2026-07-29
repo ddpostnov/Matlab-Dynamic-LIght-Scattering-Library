@@ -9,6 +9,7 @@
 %    [dataLSCI,time,timeStamp,trustMatrix,settings] = getContrastFromMRAW( ...
 %        mrawFileName, contrastType, contrastKernel, rawBatchSize, procType, ...
 %        decimation, saveContrast, selectROI, rawAveraging)
+%    [...] = getContrastFromMRAW(..., rawAveraging, progressFcn)
 %
 % Inputs:
 %    mrawFileName   - path to the .mraw file (.cihx must sit next to it).
@@ -20,6 +21,11 @@
 %    saveContrast   - logical; save the result next to the .mraw as a .mat.
 %    selectROI      - logical; interactively pick an ROI to process.
 %    rawAveraging   - raw frames averaged before contrast (1 = none).
+%    progressFcn    - (optional) progress sink, progressFcn(frac,label).  Absent,
+%                     the per-batch line is printed to the command window exactly
+%                     as it always has been, so every existing nine-argument
+%                     caller is unaffected; a wrapper passes reportProgress's
+%                     handle to route it instead.
 %
 % Outputs:
 %    dataLSCI    - contrast data, 3-D [y x t] single.
@@ -41,7 +47,13 @@
 % Last revision: 07-July-2026
 
 %------------- BEGIN CODE --------------
-function [dataLSCI,time,timeStamp,trustMatrix,settings]=getContrastFromMRAW(mrawFileName,contrastType,contrastKernel,rawBatchSize,procType,decimation,saveContrast,selectROI,rawAveraging)
+function [dataLSCI,time,timeStamp,trustMatrix,settings]=getContrastFromMRAW(mrawFileName,contrastType,contrastKernel,rawBatchSize,procType,decimation,saveContrast,selectROI,rawAveraging,progressFcn)
+
+% Trailing and optional, so every existing nine-argument caller is unaffected:
+% with no sink the per-batch lines print exactly as they always have.
+if nargin<10, progressFcn=[]; end
+toWindow=isempty(progressFcn);
+
 timeStamp=0;
 procType=erase(lower(procType),'fast');       % accept legacy 'fastcpu'/'fastgpu' -> 'cpu'/'gpu'
 %read metadata
@@ -101,7 +113,11 @@ switch contrastType
             trustMatrix(:,:,3)=trustMatrix(:,:,3)-sum(subdata==0,3);
             subdata=movmean(subdata,[0,decimation-1],3);
             dataLSCI(:,:,(i-1)*outBatchSize+1:1:(i-1)*outBatchSize+floor(framesToRead/decimation))= subdata(:,:,1:decimation:floor(end./decimation)*decimation);
-            disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
+            if toWindow
+                disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
+            else
+                progressFcn(i/batchesN,'Speckle contrast');
+            end
         end
     case 'temporal'
         procFramesN=floor((rawFramesN-contrastKernel+1)/decimation);
@@ -121,7 +137,11 @@ switch contrastType
             subdata=subdata(:,:,1:end-contrastKernel+1);
             dataLSCI(:,:,((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/decimation)))= subdata(:,:,1:decimation:floor(end./decimation)*decimation);
             
-            disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
+            if toWindow
+                disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
+            else
+                progressFcn(i/batchesN,'Speckle contrast');
+            end
         end
 end
 time=((1:1:size(dataLSCI,3))-1).*decimation./fps; %convert time to seconds

@@ -51,22 +51,24 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_K_d.mat".');
 end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.
+rep=reportOpen(s,'BFI',fNames);
 
 for fidx=1:1:numel(fNames)
-     if cancelFcn(), break; end                 % cooperative cancel between files
+     if reportCancelled(rep), break; end        % cooperative cancel between files
      if ~isempty(fNames{fidx})
-    tic
-    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msg); stageFcn('runBFI',msg);
     s.fName=fNames{fidx};
+    reportFile(rep,fidx,s.fName);
     clearvars results source settings
     load(s.fName,'source')
     load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
     load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
 
+    % One line for the conversion, not one per converted field: which internal
+    % struct fields carried data is not something the operator reads output for.
+    reportStage(rep,'Blood flow index');
     fn = fieldnames(source);
     for k=1:numel(fn)
         if contains(fn{k}, 'data', 'IgnoreCase', true )
@@ -76,7 +78,6 @@ for fidx=1:1:numel(fNames)
                 results.extendedMetrics.imgStdBFI=std(source.data,0,3,'omitnan');
 
             end
-            disp(['Variable source.',(fn{k}),' has been converted'])
         end
     end
 
@@ -91,13 +92,11 @@ for fidx=1:1:numel(fNames)
                 results.dvsMetrics.('BFI')=mean(results.dvsData,1,'omitnan')';
                 results.dvsMetrics.('std(BFI)')=std(results.dvsData,0,1,'omitnan')';
             end
-            disp(['Variable results.',(fn{k}),' has been converted'])
         end
     end
 
-    msgSave=['Saving file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msgSave); stageFcn('runBFI',msgSave);
-    settings.calculateBFI=stripHooks(s);
+    reportStage(rep,'Saving');
+    settings.calculateBFI=reportSettings(s);
     save(strrep(fNames{fidx},'_K_d.mat','_BFI_d.mat'),'source','-v7.3');
     save(strrep(fNames{fidx},'_K_d.mat','_BFI_r.mat'),'results','-v7.3');
     save(strrep(fNames{fidx},'_K_d.mat','_BFI_s.mat'),'settings','-v7.3');
@@ -107,27 +106,9 @@ for fidx=1:1:numel(fNames)
         delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
         delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
     end
-    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
+    reportSaved(rep,3);
      end
 end
+reportClose(rep);
 
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

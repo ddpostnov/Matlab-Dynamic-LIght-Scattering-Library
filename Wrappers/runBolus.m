@@ -55,20 +55,21 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'.cxd'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".cxd".');
 end
 
-% Optional workbench hooks resolved to no-ops when absent (see header); s is never
-% mutated and the hooks are stripped from the settings before saving.  This step can
+% reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
+% are resolved to no-ops when absent and ride in rep.  s is never mutated, and
+% reportSettings strips the hooks from the settings before saving.  This step can
 % block on interactive span selection, so cancel is only checked between files.
-[progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
+rep=reportOpen(s,'Bolus',fNames);
 
 for fidx=1:1:numel(fNames)
-     if cancelFcn(), break; end                 % cooperative cancel between files
+     if reportCancelled(rep), break; end        % cooperative cancel between files
      if ~isempty(fNames{fidx})
-    tic
     close all
-    msg=['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))];
-    disp(msg); stageFcn('runBolus',msg);
     s.fName=char(fNames{fidx});
+    reportFile(rep,fidx,s.fName);
     clearvars results source settings
+
+    reportStage(rep,'Reading the recording');
 
     %read the file meta data
     reader    = bfGetReader(s.fName);
@@ -189,7 +190,7 @@ for fidx=1:1:numel(fNames)
     results.time=time;
     results.timeStamp=timeStamp;
     results.imgI=imgI;
-    settings.runBolus=stripHooks(s);
+    settings.runBolus=reportSettings(s);
 
     h=figure;
     h.WindowState='Maximize';
@@ -208,41 +209,21 @@ for fidx=1:1:numel(fNames)
     xlabel('Time, s')
     xlim([time(1),time(end)]);
     ylim([double(min(data(:))),double(max(data(:)))])
-    tmp=strsplit(s.fName,'\');
-    sgtitle(strrep(tmp{end},'_',' '));
+    [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
+    sgtitle(strrep([fStem fExt],'_',' '));
     drawnow
     print(h,strrep(s.fName,'.cxd','_b_I.jpg'),'-djpeg','-r300');
 
     %save the settings and results
-    msgSave=['Saving the results. Elapsed time ',num2str(round(toc)),'s'];
-    disp(msgSave); stageFcn('runBolus',msgSave);
+    reportStage(rep,'Saving');
     source.data=data;
     source.time=time;
     save(strrep(s.fName,'.cxd','_b_I_d.mat'),'source','-v7.3');
     save(strrep(s.fName,'.cxd','_b_I_r.mat'),'results','-v7.3');
     save(strrep(s.fName,'.cxd','_b_I_s.mat'),'settings','-v7.3');
-    disp('Saving complete'); stageFcn('runBolus','Saving complete');
-    progressFcn(fidx/numel(fNames),msg);        % coarse per-file progress
+    reportSaved(rep,3);
      end
 end
+reportClose(rep);
 
-end
-
-% =====================================================================
-function [progressFcn,stageFcn,cancelFcn]=resolveHooks(s)
-%resolveHooks  Optional workbench callbacks, defaulted to no-ops when absent (progress/
-%   stage take any args and do nothing; cancel returns false).  See the header.
-progressFcn=@(varargin)[]; stageFcn=@(varargin)[]; cancelFcn=@()false;
-if isfield(s,'progressFcn')&&~isempty(s.progressFcn), progressFcn=s.progressFcn; end
-if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
-if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
-end
-
-% =====================================================================
-function s=stripHooks(s)
-%stripHooks  Drop the transport callbacks before s is written to a settings file
-%   (no-op when absent, so a hook-free call saves a byte-identical settings struct).
-for h={'progressFcn','stageFcn','cancelFcn'}
-    if isfield(s,h{1}), s=rmfield(s,h{1}); end
-end
 end

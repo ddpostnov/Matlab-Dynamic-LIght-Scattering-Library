@@ -57,6 +57,11 @@
 %    'mask'       - (Logical/Numeric) Pixels to fit, [Y, X]. Default: [] (all).
 %    'isAdaptive' - (Logical) Adapt beta/p bounds during fitting.
 %                   Default: true.
+%    'progressFcn'- (Function handle) Progress sink, progressFcn(frac,label).
+%                   Default: [] - the per-batch percentage is printed to the
+%                   command window exactly as it always has been, so every
+%                   existing caller is unaffected.  Supplied, one bar spans all
+%                   the coherence-loss passes instead.
 %
 % Outputs:
 %    model - Lightweight fit struct (does NOT store g2) with fields:
@@ -103,7 +108,12 @@ addParameter(p, 'betaMax', [], @(x) isempty(x) || isnumeric(x));
 addParameter(p, 'bs', 1, @(x) isnumeric(x) && isscalar(x) && x>0);
 addParameter(p, 'mask', [], @(x) isempty(x) || isnumeric(x) || islogical(x));
 addParameter(p, 'isAdaptive', true, @(x) islogical(x) || ismember(x,[0 1]));
+addParameter(p, 'progressFcn', [], @(x) isempty(x) || isa(x,'function_handle'));
 parse(p, g2, lags, iniTau, varargin{:});
+
+% Absent (the default) the per-batch percentage is printed exactly as it always
+% has been, so the DLSI launchers and everything in Drafts/ are unaffected.
+progressFcn = p.Results.progressFcn;
 
 type       = validatestring(p.Results.type, {'MDSN','DSN','DN','D'});
 pointsMin  = p.Results.pointsMin;
@@ -263,10 +273,15 @@ for fi=1:nForms
     fSse=zeros(size(iniTau));  fD=zeros(size(iniTau));   fC=zeros(size(iniTau));
     fP=ones(size(iniTau));
     for ii=0:poolSize:size(g2,1)-1
-        if nForms>1
-            disp([cc,': ',num2str(round(ii/size(g2,1)*100)),'%'])
+        if isempty(progressFcn)
+            if nForms>1
+                disp([cc,': ',num2str(round(ii/size(g2,1)*100)),'%'])
+            else
+                disp([num2str(round(ii/size(g2,1)*100)),'%'])
+            end
         else
-            disp([num2str(round(ii/size(g2,1)*100)),'%'])
+            % One bar across all the coherence-loss passes, not one per pass.
+            progressFcn((fi-1+ii/size(g2,1))/nForms, 'DLSI fit');
         end
         iEnd=min(ii+poolSize,size(g2,1));           % last batch covers the remainder
         if isAdaptive && ii>updStep
