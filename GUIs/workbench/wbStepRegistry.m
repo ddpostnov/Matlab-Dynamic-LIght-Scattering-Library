@@ -96,9 +96,21 @@
 %                and it mirrors launcher STEPs 3+5.  wbExecutor derives the target
 %                list from the recording's own siblings, so the field never has to be
 %                typed by hand.
-%     Steps left at 'one' whose launcher cell IS branch-wide: registration and
-%     vesselTypes (both perAnimal - fan-out there would multiply the animal-row columns and
-%     needs its own design pass).
+%     branchScope applies to a perAnimal step too, where it fans out WITHIN each
+%     member of the animal rather than across rows: 'one' gives the animal one file
+%     per recording, 'all' gives it every branch product of every recording, still
+%     as a single Nx1 column with the reference first.  It never multiplies the
+%     animal's columns - a perAnimal step is one work item however many files it
+%     hands the wrapper.
+%     RESOLVED (Phase 6, 2026-07-29): registration and vesselTypes are 'all'.
+%     Their launcher cells are branch-wide ('Roi*_K_d.mat' and 'Roi*_BFI_d.mat',
+%     both of which match _t AND _c), and leaving them at 'one' did not just under-
+%     cover - it silently picked the WRONG file, because resolveStepInputs falls
+%     back to the first dir() match when the step declares no branch, and
+%     '_c_K_d.mat' sorts before '_t_K_d.mat'.  A two-pipeline recording was
+%     therefore registered on its cardiac product only, and never got vessel types
+%     onto '_t_BFI' - which is exactly where vasomotion's per-segment table lives.
+%     This is the same trap the 'copy' note above records for setRegions.
 %   * RAW PRODUCER vs DERIVED CONSUMER (author, 2026-07-28).  A step whose inGlob
 %     is NOT a '*.mat' glob reads the raw recording and writes a NEW, independent
 %     triplet: contrast writes '_t_K' (or '_s_K' when the type's contrastType is
@@ -147,7 +159,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 29-July-2026
 
 %------------- BEGIN CODE --------------
 function reg = wbStepRegistry(modality)
@@ -333,6 +345,7 @@ s.gatingField='runRegistration';                      % code writes runRegistrat
 s.requires={}; s.requiresAny={'contrast','internalCycle'}; s.produces={'registered'};
 s.interactive=@(ss) ~(isfield(ss,'silent') && isscalar(ss.silent) && isequal(ss.silent,true));
 s.artifacts={'_registration.png'}; s.branch=''; s.refBranch='contrast';   % template = the reference's _t|_s
+s.branchScope='all';                                   % EVERY product of every member (launcher: 'Roi*_K_d.mat')
 s.settingGroups={ 'Registration',{'tFormType','matchSegmentation','prchNSize','silent','forceMethod','rotationLimit'} };
 s.basicFields={'tFormType','silent','forceMethod'};
 s.sharedKeys={'prchNSize','libraryFolder'};
@@ -412,6 +425,7 @@ s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVesselTypes'; s.requires={'BFI','segmentation'}; s.produces={'vesselTypes'};
 s.interactive=true;                                   % paint GUI (per-file skipped under useReference)
 s.branch=''; s.refBranch='cardiac';                   % paint target = the reference's _c
+s.branchScope='all';                                  % EVERY product of every member (launcher: 'Roi*_BFI_d.mat')
 s.settingGroups={ 'Reference',{'useReference'} };
 s.basicFields={'useReference'};
 s.sharedKeys={'libraryFolder'};

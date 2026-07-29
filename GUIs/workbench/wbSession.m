@@ -18,8 +18,8 @@
 %     * the COMPLETION RECORD - per FILE and per STEP, what ran, when, and with
 %       which settings fingerprint (see 'completed' below);
 %     * the discovery grid + animal rows, the settings model (bag + step/file
-%       overrides), the preset reference, and the per-cell overlay (which cells
-%       the user checked and which an in-session edit pushed stale).
+%       overrides), the preset reference, and the INVALIDATION overlay (which
+%       done cells an in-session settings edit pushed stale).
 %   Nothing on disk is re-derived here - wbSession only (de)serialises; the caller
 %   re-runs wbStateEngine after load to overlay saved state on the fresh disk
 %   picture.
@@ -38,7 +38,7 @@
 %   stripHooks / stripFcnHandles discipline) - a session must never serialise a
 %   closure over a dead figure.
 %
-%   SCHEMA.  wbSessionData.schema names the layout version (currently 5; a file
+%   SCHEMA.  wbSessionData.schema names the layout version (currently 6; a file
 %   without the field is the unversioned Phase-3 layout, read as 1).  Loading an
 %   older session is supported: the fields it predates come back at their empty
 %   defaults, so an old sidecar still restores its file set and settings - a
@@ -48,7 +48,11 @@
 %   two independent pipelines and each is configured separately; the keys are
 %   written verbatim here and upgraded by wbTypeSelection('fromCells',keys,reg),
 %   which is the only place that knows what a step's branch is.  Schema 5 added
-%   the resolved .files list and the .completed record.
+%   the resolved .files list and the .completed record.  Schema 6 DROPPED the
+%   'checked' set: the per-cell run queue was retired with the per-file matrix
+%   (Phase 6) and selection is now wholly the Constructor's typeSel/animalSel, so
+%   the field is neither written nor read - a schema-5 sidecar's chkKeys are simply
+%   ignored, and everything else about it still loads.
 %
 % Syntax:
 %    wbSession('save', path, session)      % write the sidecar
@@ -97,8 +101,8 @@
 %       typeOverrides containers.Map 'type||stepId' -> struct (per-type settings).
 %       typeSel       containers.Map 'type||branch||stepId' -> true (the row set).
 %       animalSel     containers.Map stepId -> true (the per-animal steps that are on).
-%       checked       containers.Map 'identity||stepId' -> logical true.
-%       staleOverlay  containers.Map 'identity||stepId' -> logical true.
+%       staleOverlay  containers.Map 'identity||stepId' -> logical true (the done
+%                     cells an in-session settings edit re-opened).
 %       presetRef     char, path of the last-used preset ('' if none).
 %
 % Outputs:
@@ -112,7 +116,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 29-July-2026
 
 %------------- BEGIN CODE --------------
 function [out, why] = wbSession(action, varargin)
@@ -130,7 +134,7 @@ end
 end
 
 % =====================================================================
-function v = schemaVersion(), v = 5; end
+function v = schemaVersion(), v = 6; end
 
 % =====================================================================
 function s = emptySession()
@@ -159,7 +163,6 @@ s.typeBag       = anyMap();
 s.typeOverrides = anyMap();
 s.typeSel       = anyMap();
 s.animalSel     = anyMap();
-s.checked       = anyMap();
 s.staleOverlay  = anyMap();
 s.presetRef     = '';
 end
@@ -250,7 +253,6 @@ end
 [wbSessionData.toKeys,     wbSessionData.toVals]     = mapToCells(session.typeOverrides);
 [wbSessionData.tselKeys,   ~]                        = mapToCells(session.typeSel);
 [wbSessionData.aselKeys,   ~]                        = mapToCells(session.animalSel);
-[wbSessionData.chkKeys,    ~]                        = mapToCells(session.checked);
 [wbSessionData.staleKeys,  ~]                        = mapToCells(session.staleOverlay);
 [wbSessionData.doneKeys,   wbSessionData.doneVals]   = mapToCells(session.completed);
 
@@ -286,9 +288,10 @@ if isfield(p,'modKeys'),    session.modalityOvr  = cellsToMap(p.modKeys,    p.mo
 if isfield(p,'refKeys'),    session.animalRef    = cellsToMap(p.refKeys,    p.refVals,    'char'); end
 if isfield(p,'refManKeys'), session.animalRefMan = cellsToMap(p.refManKeys, p.refManVals, 'char'); end
 
-session.fileOverrides = cellsToMap(p.foKeys,    p.foVals,              'any');
-session.checked       = cellsToMap(p.chkKeys,   trueVals(p.chkKeys),   'any');
-session.staleOverlay  = cellsToMap(p.staleKeys, trueVals(p.staleKeys), 'any');
+% (schema 5 and older also carried p.chkKeys, the retired per-cell run queue: it is
+% read by nothing now, so it is simply left in the file and not mapped back)
+if isfield(p,'foKeys'),    session.fileOverrides = cellsToMap(p.foKeys,    p.foVals,              'any'); end
+if isfield(p,'staleKeys'), session.staleOverlay  = cellsToMap(p.staleKeys, trueVals(p.staleKeys), 'any'); end
 
 % ---- the Constructor's output (schema 3; a schema-2 file simply has none) ----
 if isfield(p,'tbKeys'),   session.typeBag       = cellsToMap(p.tbKeys, p.tbVals, 'any'); end
@@ -406,6 +409,6 @@ end
 
 % =====================================================================
 function v = trueVals(k)
-%trueVals  A logical-true value for each key (checked/stale are boolean sets).
+%trueVals  A logical-true value for each key (the overlays are boolean sets).
 v = num2cell(true(1,numel(k)));
 end

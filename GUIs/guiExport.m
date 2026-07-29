@@ -56,6 +56,7 @@
 %
 % Syntax:
 %    guiExport                        % open the tool
+%    guiExport(sessionPath)           % open it ON a workbench session
 %    h = guiExport('Visible','off')   % headless (programmatic drive / tests)
 %
 % See also: exportToExcel, wbSession, guiExplore, guiWorkbench, getFileNamesList
@@ -68,10 +69,7 @@
 %------------- BEGIN CODE --------------
 function h = guiExport(varargin)
 
-vis = 'on';
-for ai = 1:2:numel(varargin)
-    if strcmpi(varargin{ai},'Visible'), vis = varargin{ai+1}; end
-end
+[sessionArg, vis] = parseArgs(varargin);
 
 % ---- shared application state (seen by every nested function) --------------
 app = struct();
@@ -248,6 +246,16 @@ setappdata(fig,'exportAPI',struct( ...
     'status',      @() c.status.Text, ...
     'log',         @() c.log.Value, ...
     'getApp',      @apiApp));
+
+% ---- a leading argument is a SESSION: the hand-off from the workbench ------
+if ~isempty(sessionArg)
+    try
+        loadSessionFile(sessionArg);
+    catch ME
+        setStatus(['Session could not be read: ' ME.message]);
+        logLine(['SESSION ERROR ' ME.message]);
+    end
+end
 
 if nargout>0, h = fig; end
 
@@ -822,6 +830,24 @@ if nargout>0, h = fig; end
 end
 
 %% ========================= LOCAL HELPERS ================================ %%
+function [sess, vis] = parseArgs(args)
+%parseArgs  guiExport(sessionPath) / guiExport('Visible',v) / both.  A LEADING char
+%   that is not an option name is the session path - the shape guiWorkbench hands
+%   over, and the same shape guiExplore takes.
+sess = ''; vis = 'on'; first = 1;
+if ~isempty(args) && (ischar(args{1}) || isstring(args{1})) && ~isOptionName(args{1})
+    sess = char(args{1}); first = 2;
+end
+for i = first:2:numel(args)-1
+    if (ischar(args{i}) || isstring(args{i})) && strcmpi(args{i},'Visible')
+        vis = char(string(args{i+1}));
+    end
+end
+end
+function tf = isOptionName(x)
+tf = any(strcmpi(char(string(x)), {'Visible'}));
+end
+
 function it = emptyItems()
 %emptyItems  The 0x0 shape of the file list (one entry per exportable product).
 it = struct('path',{},'rpath',{},'name',{},'animal',{},'type',{},'group',{}, ...

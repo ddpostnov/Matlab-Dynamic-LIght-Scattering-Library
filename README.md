@@ -17,7 +17,7 @@ The library takes raw speckle recordings (`.rls`, `.mraw`, `.cxd`, `.dv`) and tu
 - **Pulsatility**, **vasomotion**, **neurovascular-coupling** and **bolus / CTTH** metrics — `runPulsatility`, `runVasomotion`, `runInternalCycle`, `runExternalCycle`, `runCTTH`;
 - optional **registration** across recordings (`runRegistration`, `registerRetinaLSCI`) and **Excel export** (`exportToExcel`).
 
-You drive that pipeline in one of two ways: from the **Processing Workbench** (`GUIs/guiWorkbench`) — an interactive file × step matrix that ticks, parametrises and runs the steps for you, and is the recommended starting point — or from a **launcher script** (`Launchers/`), the scripted alternative for reproducible, batch, or headless work. Both call exactly the same `run…` / `set…` steps.
+You drive that pipeline in one of two ways: from the **Processing Workbench** (`GUIs/guiWorkbench`) — curate your recordings, configure the pipeline once per recording **type**, press Run, and it orders, parametrises and calls the steps for you; the recommended starting point — or from a **launcher script** (`Launchers/`), the scripted alternative for reproducible, batch, or headless work. Both call exactly the same `run…` / `set…` steps.
 
 A **myograph** toolset — the headless `Core/Myograph/` functions plus the `GUIs/guiMyograph` app — measures vessel diameter from myograph videos and runs the same vasomotion analysis per user-defined interval.
 
@@ -57,8 +57,8 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 | `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`) |
 | `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → regions → segmentation → BFI → cycles / pulsatility / vasomotion; segmentation is `setRegions` (interactive multi-ROI editor → `results.regionsMask`) → `runSegmentation` (fully automatic categorize + label + per-segment traces; `s.fNamesCopyTo` copies the segmentation onto co-registered siblings, replacing the old `assignCategories`) → optional `runDynamicSegmentation` (per-frame vessel diameter / flow) — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, and the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) |
 | `Launchers` | Ready-to-edit example pipelines — the scripted way to drive the same steps |
-| `GUIs` | Interactive apps — `guiWorkbench` (**the Processing Workbench: start here**; the file × step matrix that runs the LSCI pipeline, with Export and Explore tabs), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiMyograph` (myograph workbench for `.avi` diameter / vasomotion / propagation; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
-| `GUIs/workbench` | The workbench's own components — the headless brain (`wbStepRegistry` the step specs, `wbDiscoverFiles`, `wbFileModel`, `wbStateEngine`, `wbSettingsModel`, `wbInvalidate`, `wbExecutor`, `wbArtifacts`, `wbModalGuard`, `wbSession`) plus `guiExplore`, the results explorer hosted in the Explore tab (still openable standalone, or embeddable elsewhere with `guiExplore('Parent',container)`) |
+| `GUIs` | Interactive apps — **three programs that share one session file**: `guiWorkbench` (**the Processing Workbench: start here**; it runs the LSCI pipeline and writes the session), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiExplore` (the **standalone** results explorer: pick files, scan a folder or load a session, then plot and compare by experimental group / recording index / animal / recording type and export publication figures). Plus `guiMyograph` (myograph workbench for `.avi` diameter / vasomotion / propagation; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
+| `GUIs/workbench` | The workbench's own components — the headless brain: `wbStepRegistry` (the step specs — **the linchpin**; adding a step or a modality is a data edit here), `wbDiscoverFiles`, `wbFileModel`, `wbTypeModel` (the animal / type / group label axes), `wbTypeSelection` (which steps each (type, product) row runs), `wbTypePresets` (the standard protocols), `wbPrereqs`, `wbStateEngine`, `wbSettingsModel`, `wbInvalidate`, `wbRefBranch` (which branch of an animal's reference a step takes), `wbRunRange` (the From/To rule), `wbExecutor` (the run loop — and the only place a step's actual branch products are resolved), `wbArtifacts`, `wbReportPdf`, `wbModalGuard` — plus `wbSession`, the versioned session file that is the **only** coupling between the three programs above |
 | `Utilities` | Terminal consumers of finished results — `exportToExcel` (`exportToExcel(fNames)` writes the full workbook; the optional `exportToExcel(fNames,opts)` selects `opts.sheets` / `opts.format`, averages over labels or vessel type with `opts.groupBy` / `opts.weightByArea`, subsets `opts.columns`, and merges every file into one labelled workbook with `opts.merge` / `opts.labels` / `opts.outFile`. `GUIs/guiExport` is the interactive front-end for exactly these options) |
 | `Simulation` | Synthetic dynamic-speckle generation (`getDynamicSpeckles`, `Launcher_speckleSimulation`) — self-contained |
 | `3rd party` | External libraries (Bio-Formats, superlets, …) — unmodified |
@@ -134,7 +134,7 @@ sub-tree as `intervals(iv).vasomotion` (single signal; no `ppx` / `ppxs`).
 
 1. Clone the repository and keep **only one copy** on your machine — MATLAB caches paths and multiple versions cause conflicts.
 2. Put the library on the path: `addpath(genpath('<path to this repository>'))`.
-3. Run `guiWorkbench` — the [Processing Workbench](#processing-workbench). Load your recordings, tick the steps your protocol needs, press **Run**, then use its **Export** and **Explore** tabs.
+3. Run `guiWorkbench` — the [Processing Workbench](#processing-workbench). Scan and label your recordings (**Files**), tick the steps each recording **type** runs (**Constructor**), press **Run** (**Process**), then press **Export…** or **Explore…** to open `guiExport` / `guiExplore` on the session it just saved.
 4. Prefer a script? Copy a launcher from `Launchers/` to your own working location (**leave the originals unchanged**), set `libraryFolder` in your copy, and run the `%% STEP` cells in order (`STEP 0` once per MATLAB session). See [Launchers](#launchers).
 5. Either way, read the header (comments at the top) and inline comments of each function you use — do not run steps blindly.
 
@@ -180,13 +180,17 @@ Plan your file/folder naming in advance — it saves a lot of time later.
 
 ## Processing Workbench
 
-`guiWorkbench` is the primary entry point: one window that turns the launcher workflow
-into a spreadsheet. **Rows are recordings** (blocked by animal, reference first),
-**columns are pipeline steps**, and each **cell** is the state of one step for one
-recording — *ready* (tick it to queue), *checked*, *running*, *done*, *stale* (a setting
-or an upstream re-run invalidated it) or *unavailable* (its prerequisites are not met).
-State is read from the files on disk, so a session you closed last week comes back with
-everything already done still marked done.
+`guiWorkbench` is the primary entry point: one window, three tabs, three questions —
+**scan and curate the files**, **configure each recording type**, then **run and watch**.
+
+Nothing is ticked per file. Processing choices are a property of the recording **type**,
+not of the individual recording: you configure `BV` once and every `BV` in the project is
+processed alike. Pressing **Run** *expands* that configuration into the ordered list of
+(file, step) work items a launcher would have run, so a protocol of 200 recordings takes
+the same handful of clicks as one of 6. State is read from the files on disk — *done*,
+*stale* (a setting or an upstream re-run invalidated it), *queued*, *running*, *error*,
+*skipped* — so a project you closed last week comes back with everything already done
+still marked done, and **Run** resumes rather than repeats.
 
 Every file carries three **independent labels**, each a regexp match over its name that
 you can override by hand:
@@ -231,37 +235,107 @@ guiWorkbench
    other tabs stay out of reach. An animal with no reference only warns — registration
    and vessel typing are the steps that need one.
    **Save session… / Load session…** store the curated list, its labels, the references,
-   the settings and the cell states in a versioned `.mat` sidecar, so a reload
+   the configuration and the completion record in a versioned `.mat` sidecar, so a reload
    reproduces the table with no re-scan and long analyses survive a MATLAB restart.
-2. **2 - Process** — tick the cells you want (**Check all** / **Clear checks** queue or
-   clear every runnable cell at once). Pick a step in the **Step** dropdown on the right
-   to open its **settings panel**; values shared between steps propagate automatically,
-   and editing a setting marks that step and everything downstream *stale* so you cannot
-   silently mix parameters. The preset dropdown seeds the whole parameter set, and
-   **Save preset… / Load preset…** store your own — the modern replacement for keeping an
-   edited copy of a launcher. **Preview order** lists
-   exactly what would run, in dependency order, without calling anything; **Run**
-   executes it, streaming per-cell progress and the command-window messages into the log
-   pane. **Stop** cancels cooperatively between files. A failed step marks its cell as an
-   error and the batch continues. Finished cells with a report image become clickable and
-   open it in the reports panel. Interactive steps (region drawing, vessel typing) open
-   their own editor and grey the workbench out until you finish.
-3. **3 - Export** — pick which of the loaded recordings to export, tick the sheets you
-   want (**All** / **None**), choose the format, and press **Export selected**. This is a
-   selection UI over `exportToExcel`, which remains callable directly as
-   `exportToExcel(fNames)` or `exportToExcel(fNames,opts)`. For the full export —
-   choosing parameters, averaging over labels or vessel type, and merging every file into
-   one workbook whose rows carry animal / type / experimental group — run the standalone
-   **`guiExport`** (`GUIs/guiExport.m`), which needs no workbench: point it at files, at a
-   folder, or at a saved workbench session.
-4. **4 - Explore** — the results explorer (`GUIs/workbench/guiExplore`) hosted in-tab.
-   Press **Load workbench files & animals** to seed it with the `_r.mat` results of the
-   files you loaded, one explorer group per animal, then plot single recordings or group
-   comparisons and export publication figures. See
-   [Exploring processed results](#exploring-processed-results).
+   Beside them, **Export…** and **Explore…** make that session current and open
+   `guiExport` / `guiExplore` **on it** — see [Three programs, one
+   session](#three-programs-one-session).
+2. **2 - Constructor** — say what each **type** runs. The tab asks two questions,
+   because one raw recording can drive **two independent result sets**: the steps that
+   read the recording itself (contrast → `_t`/`_s`, internal cycle → `_c`) each write a
+   *new* triplet, and everything later appends to one of them.
+   * **1 - Processing the recording itself** (top) — a `type × step` grid. Each tick creates that
+     type's **product row** below. A `BP` that ticks both producers drives both
+     pipelines from one recording, with no ambiguity to resolve by hand.
+   * **Done once per animal** (beside it) — **registration** and **vessel typing** span the
+     *animal*, not the type: they run over all of that animal's files whatever their
+     type or group, against its pinned reference recording. Ticking one pulls its
+     prerequisites into every type, since every type must produce what it reads.
+   * **2 - Processing each result** (bottom) — one row per **(type, result)**, labelled with
+     the type token and the product's stage flag (`_t`, `_s`, `_c`, `_e`). Tick the steps
+     each pipeline runs. A cell is greyed with its reason when the step does not belong
+     on that branch (vasomotion is contrast-side, pulsatility cardiac-side), or shown as
+     *inherited* when the wrapper covers the whole recording in one call — region
+     drawing, segmentation, split regions and BFI are drawn once and apply to every
+     product, so they can never be on for one and off for another.
+   * **Settings** (right) — pick a **Type** and a **Step** to edit its parameters, split
+     into *Basic* (what a protocol actually tunes) and *Advanced*. Settings are keyed by
+     **(step, type)**, so both rows of a type share them and a divergent animal is simply
+     a second type. Values shared between steps propagate automatically, and an edit
+     marks that step and everything downstream *stale* so you cannot silently mix
+     parameters. **Copy configuration from** seeds a type from a standard protocol
+     (Pulsatility, Vasomotion, NVC, Vasoreactivity, Pulsatility+Vasomotion) or from
+     another type you already configured — a starting point, never a locked mode.
+   * **What will run** at the bottom is where status is read: how many files each
+     type covers, which reference *file* each per-animal step resolved to, and the
+     warnings.
+3. **3 - Process** — read-only. Choose how much to run, press **Run**, watch.
+   * **From / To** slice the run by pipeline step, so you can take a protocol to
+     segmentation, tune it, and carry on without unticking anything. **`From = Last
+     valid`** *resumes*: it starts at the first configured step that is not finished and
+     skips whatever is already on disk. Naming a step instead **forces** it: everything
+     from there to **To** runs again, done or not — that is how you re-run segmentation
+     with new settings, or re-open the vessel-type painter on an animal you have already
+     typed. **To** offers only the steps at or after **From**.
+   * **Preview order** lists exactly what would run, in execution order, without calling
+     anything. **Run** executes it **step-major, the way a launcher does** — every
+     recording is contrasted, then every one segmented — so the steps that read across a
+     file set (registration, vessel typing, split regions) always find the whole set at
+     the same level. **Stop** cancels cooperatively between files; a failed step marks
+     its cell as an error and the batch continues.
+   * **Two state tables**, mirroring the Constructor: *Recordings* on top (what the raw
+     file itself runs, which goes first) **beside the run log**, and *Products* below
+     (one row per `(recording, product)` the configuration creates — a product row
+     appears as soon as its raw producer is ticked, long before the file exists). Each
+     cell reads `·` / queued / running NN% / done / error / skipped. Select a row to see
+     its path, its labels and its last error.
+   * **Wipe all** deletes every `_d.mat` / `_r.mat` / `_s.mat` belonging to the
+     recordings listed on the Files tab, so a protocol processed with the wrong settings
+     can be started over in one action. The raw recordings are never touched, nothing
+     outside the listed recordings is touched, and the count is shown for confirmation
+     first. It cannot be undone.
+   * **Reports** (right) — the report images the run wrote, newest first; double-click to
+     open one in the OS viewer, which stays zoomable while processing continues. Tick
+     **Create PDF reports** and each step's images are appended into **one PDF** when
+     that step finishes — a 60-file column becomes one document to page through instead
+     of 60 links. The dropdown filters the list to images or PDFs.
+   * Interactive steps (region drawing, vessel typing, tree editing) open their own
+     editor and grey the workbench out until you finish.
+
+**Next** and **Exit workbench** sit in the same bottom-right corner of every tab (the
+last tab has no *Next*). **Exit is one action**: it requests the same cooperative stop
+the *Stop* button does, saves the session, and closes as soon as the current step lets
+go. The session is rewritten on **every** state change — a scan, a label, a Constructor
+tick, a settings edit, each finished cell — always to **`workbench-sessions/lastSession.mat`**
+beside the library (a gitignored folder), and additionally to wherever you last saved or
+loaded one, so there is always something to resume from without anyone pressing *Save*.
 
 The workbench covers the **LSCI** pipeline. It never reimplements any processing — it
-orders, gates, parametrises and calls the same wrappers a launcher would.
+orders, gates, parametrises and calls the same wrappers a launcher would. It also does
+**not** export or plot: those are two separate programs.
+
+### Three programs, one session
+
+Export and Explore are no longer tabs. They are standalone tools, and the **session file
+is the only thing that travels between them and the workbench**:
+
+| program | what it does | how it gets its files |
+|---|---|---|
+| `guiWorkbench` | processes recordings; **writes** the session on every state change | scan a root, add files by hand, or load a session |
+| `guiExport` (`GUIs/guiExport.m`) | choose parameters and averaging, write one workbook per recording or one merged workbook for statistics | pick files, scan a folder, **or load a session** |
+| `guiExplore` (`GUIs/guiExplore.m`) | plot and compare finished results, export publication figures | pick a file or folder, **or load a session** |
+
+Pressing **Export…** or **Explore…** in the workbench's Files tab saves the session and
+opens the tool on it: the file list arrives with each recording's **animal**, **type**,
+**experimental group** and **index** already resolved, and with the record of which steps
+actually ran — so the explorer offers only the plots the data can support. The workbench
+keeps no handle to either tool; closing one leaves it running, and both open perfectly
+well on their own:
+
+```matlab
+guiExport                          % or guiExport('<path to>/workbench_session.mat')
+guiExplore                         % or guiExplore('<path to>/workbench_session.mat')
+```
 
 ---
 
@@ -270,6 +344,12 @@ orders, gates, parametrises and calls the same wrappers a launcher would.
 The launchers are the **scripted alternative** to the workbench — fully supported, and the
 right choice when you want a reproducible record of a pipeline, a headless/batch run, or a
 starting point to modify. Copy a launcher to your own location and edit it for your project.
+
+They are also the **reference implementation of every pipeline**: the workbench's step
+specs (`GUIs/workbench/wbStepRegistry`) are transcribed from these files — the same
+wrappers, the same `%Example-of-s` defaults, the same file lists and the same order — so
+if the two ever disagree, the launcher is right. Reading the one that matches your
+protocol is the fastest way to understand what the workbench is doing on your behalf.
 
 | Launcher | Purpose |
 |---|---|
@@ -294,13 +374,15 @@ and explore it with basic MATLAB skills — ROI selection, filtering, plotting a
 video.
 
 For the finished `_r.mat` results (per-segment BFI / diameter / pulsatility / vasomotion,
-single files or group comparisons), use the **Explore** tab of `guiWorkbench`: it is
-seeded from the recordings you already loaded (one explorer group per animal, which you
-can relabel there), matches the plot type to the
-data (time series, box plots, spectra, spectrograms, maps), and exports the figure at a
-chosen DPI. The same explorer can be opened on its own with `guiExplore`
-(`GUIs/workbench/guiExplore.m`) if you want to browse results without loading a workbench
-session, and embedded elsewhere with `guiExplore('Parent',container)`.
+single files or group comparisons), use **`guiExplore`** (`GUIs/guiExplore.m`). It needs no
+workbench: point it at a file, at a folder (labelled by three regexp boxes), or at a saved
+workbench **session**, from which it takes the file list together with each recording's
+experimental group, animal, recording type and index. Those four axes are independent — an
+animal may span groups and a group may span animals — and any of them can be the x-axis or
+the colour. The explorer matches the plot type to the data (time series, box plots,
+spectra, spectrograms, maps) and exports the figure at a chosen DPI. Hand-made groups
+(select files, name them, **Create group**) override both the regexp and the session, and
+survive a re-scan.
 
 ---
 

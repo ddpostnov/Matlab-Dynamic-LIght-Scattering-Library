@@ -5,8 +5,8 @@
 %   then GO (Process tab).  The window is a thin controller: every decision is
 %   delegated to the headless brain (wbStepRegistry, wbDiscoverFiles, wbFileModel,
 %   wbStateEngine, wbPrereqs, wbTypeModel, wbTypeSelection, wbSettingsModel,
-%   wbRefBranch, wbInvalidate), to wbExecutor / wbModalGuard / wbArtifacts, and to
-%   wbSession.
+%   wbRefBranch, wbRunRange, wbInvalidate), to wbExecutor / wbModalGuard /
+%   wbArtifacts / wbReportPdf, and to wbSession.
 %
 %   RUN IS AN EXPANSION, NOT A SELECTION.  Pressing Run turns the per-type
 %   configuration into an ordered list of (file, step) work items - each type's
@@ -17,15 +17,49 @@
 %   of 6.  The list runs STEP-MAJOR, exactly as a launcher does: every recording
 %   is contrasted, then every one segmented, and so on, so the steps that read
 %   across a file set (registration, vessel typing, split regions) always find the
-%   whole set at the same level.  Progress streams back through the hook seam into a READ-ONLY
-%   state table with cooperative Stop and continue-on-error; Preview order lists
-%   the same plan without calling anything.  Report images the run writes collect
-%   in a link list that opens them in the desktop viewer.
+%   whole set at the same level.  A step already done on every product it would
+%   touch is left out, so a re-run RESUMES rather than repeats - and that now
+%   includes the two per-animal steps, which are done once every configured product
+%   of every recording of the animal carries them (animalStepAlreadyDone).  Naming
+%   a From column is how you deliberately run one again.  Progress streams back
+%   through the hook seam into READ-ONLY state tables with cooperative Stop and
+%   continue-on-error; Preview order lists the same plan without calling anything.
+%   Report images the run writes collect in a link list that opens them in the
+%   desktop viewer.
 %
-%   THE SESSION IS THE DELIVERABLE.  wbSession is written on every state change
-%   and at the end of every run, so a crash, a Stop or a MATLAB restart always
-%   leaves a resumable project behind - and it is the hand-off to guiExport and
-%   guiExplore, which read it without this window being open.
+%   A REPORT IS A BY-PRODUCT (spec D9/D10).  With 'Create PDF reports' on, the
+%   images a COLUMN produced across the whole run are appended into ONE PDF - a
+%   page per image, each fitted to its own image (wbReportPdf) - the moment that
+%   column's last entry lands, so a 60-file step is one document to page through
+%   instead of 60 links; a Stop or an error still leaves the columns that finished.
+%   The list tells images and PDFs apart with a kind filter, and hands either to
+%   the desktop exactly the same way.  None of it is part of the run: it cannot
+%   change what a wrapper writes, cannot mark a step in error, and is a window
+%   preference the session does not carry.
+%
+%   FROM / TO IS A RANGE OVER THAT LIST, NOT A SECOND SELECTION (spec D1/D2).  The
+%   two dropdowns beside Run slice the expansion by registry column, so a protocol
+%   can be taken to segmentation, tuned, and carried on without unticking anything.
+%   'Last valid' RESUMES - it starts at the first configured column that is not
+%   finished and leaves out whatever is already on disk, which is the behaviour that
+%   was there before - while naming a column FORCES: the whole range runs again,
+%   done or not, so segmentation can be re-run with new settings.  Both dropdowns
+%   are built from the expansion's own output (wbRunRange), so nothing here lists a
+%   step or branches on one.
+%
+%   THE SESSION IS THE DELIVERABLE - AND THE ONLY COUPLING.  wbSession is written
+%   on every state change - a scan, a label, a Constructor tick, a settings edit,
+%   each finished cell, the end of a run, and the exit itself - so a crash, a Stop
+%   or a MATLAB restart always leaves a resumable project behind.  It always goes to
+%   THE LAST SESSION, one fixed file in the gitignored 'workbench-sessions' folder
+%   beside the code (sessionDir / lastSessionPath), and additionally to wherever a
+%   session was last saved or loaded from, so choosing a location never stops the
+%   automatic one.  It is also the whole
+%   hand-off to the two READ-ONLY tools: neither is a tab any more, and this window
+%   does not host, drive or hold a handle to either.  'Export...' and 'Explore...'
+%   at the bottom of the Files tab make the session on disk current and then open
+%   guiExport / guiExplore ON IT (handOffSession); both open perfectly well on their
+%   own with no session at all, and closing one leaves this window untouched.
 %
 %   THREE LABEL AXES.  Every file carries an ANIMAL (the subject - the scope of
 %   registration, vessel typing and the reference recording), a TYPE (its
@@ -46,8 +80,10 @@
 %   (bottom, one row per pipeline, cells greyed with their reason where a branch
 %   does not offer the step, and shown as inherited where a step is drawn once and
 %   copied to the other branches).  Both halves of a row label are data: the type
-%   token comes from the Files tab and the product flag from the producing step plus
-%   that type's own settings ('_t_K', '_s_K', '_c_K').  Settings stay keyed by
+%   token comes from the Files tab and the STAGE flag from the producing step plus
+%   that type's own settings ('_t', '_s', '_c', '_e' - the stage alone, since the
+%   product letter changes down the pipeline while the row's identity, the branch,
+%   does not; spec D8).  It is a label and never resolves a file.  Settings stay keyed by
 %   (step, TYPE) - two rows of one type share them - so a divergent animal is
 %   simply a second type.  Rows are built FROM THE DATA: two types or eleven work
 %   with no code change, and nothing anywhere branches on a type's name.  The two
@@ -55,24 +91,43 @@
 %   their own box; which BRANCH FILE of each animal's reference recording every
 %   reference-taking step resolves to is reported in the selection summary.
 %
+%   THREE TABS, THREE PROGRAMS.  This window PROCESSES; it neither exports nor
+%   plots.  Export and Explore are separate windows (guiExport, guiExplore), so
+%   browsing yesterday's results never means loading the heavy processing GUI.
+%
 %   Tabs: 1 Files (scan a root recursively for an extension - or add files by
 %                    hand - then CURATE: sort, delete, label every file (animal /
 %                    type / index / group / modality, in place or in bulk over a
 %                    selection), and pin ONE reference recording per animal.  The
 %                    other tabs stay locked until every field is assigned and the
-%                    file names are unique - see fileProblems) *
+%                    file names are unique - see fileProblems.  The session lives
+%                    here, and so do the two buttons that hand it to the read-only
+%                    tools) *
 %         2 Constructor (type x raw step on top with the per-animal steps beside
 %                    it, one (type, product) row per pipeline below, and the
 %                    per-(step,type) settings on the right; the summary carries the
 %                    resolved reference branches and the warnings) *
-%         3 Process (READ-ONLY: one state table, rows = files and columns =
-%                    steps, showing '.'/queued/running NN%/done/error/skipped; the
-%                    selected row's file below it; the run log; and the result
-%                    links on the right.  All selection lives in the Constructor -
-%                    spec D6/D7) *
-%         4 Export  (a sheet/format selection UI over exportToExcel) *
-%         5 Explore (GUIs/workbench/guiExplore hosted in-tab, seeded from the
-%                    loaded files/animals) *
+%         3 Process (READ-ONLY, and shaped like the Constructor: the From/To range
+%                    beside Run (and Wipe all), then TWO state tables - recordings
+%                    x raw steps on top BESIDE the run log, (recording, product)
+%                    rows x derived steps below, the latter built from the
+%                    CONFIGURATION so a product row appears with its producer rather
+%                    than with its file (spec D7) - each cell showing
+%                    '.'/queued/running NN%/done/error/skipped; the selected row's
+%                    file below them; and on the right the Reports panel - a kind
+%                    filter, the 'Create PDF reports' switch and the link list.  All
+%                    selection lives in the Constructor - spec D6/D7) *
+%
+%   NEXT AND EXIT NEVER MOVE.  'Next' (Files -> Constructor -> Process) and 'Exit
+%   workbench' sit in the same bottom-right corner of every tab - the last tab has
+%   no Next - so the settings and Reports panels each stop one row short of the
+%   bottom to leave that strip free (tabFooter).  Exit is one decision, not three:
+%   it requests the same cooperative Stop the Stop button does, writes the session,
+%   and closes the moment the executor has let go.
+%
+%   WIPE ALL throws away the processing and keeps the recordings: every _d/_r/_s.mat
+%   of the files listed on the Files tab, counted and confirmed before anything goes
+%   (wipeTargets fences on the whole identity, so 'Foo' never carries off 'Foo2').
 %
 % Syntax:
 %    guiWorkbench                       % open the workbench
@@ -83,13 +138,13 @@
 %
 % See also: wbStepRegistry, wbDiscoverFiles, wbTypeModel, wbTypeSelection,
 %           wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
-%           wbRefBranch, wbExecutor, wbModalGuard, wbArtifacts, wbSession,
-%           guiExplore, guiMyograph
+%           wbRefBranch, wbRunRange, wbExecutor, wbModalGuard, wbArtifacts,
+%           wbReportPdf, wbSession, guiExport, guiExplore, guiMyograph
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 29-July-2026
 
 %------------- BEGIN CODE --------------
 function h = guiWorkbench(varargin)
@@ -123,16 +178,25 @@ app.modelArr     = wbFileModel('x.rls'); app.modelArr(1) = [];   % 1x0 model arr
 app.base         = containers.Map('KeyType','char','ValueType','any');   % identity -> struct(stepId->state)
 app.fileState    = containers.Map('KeyType','char','ValueType','any');   % PATH     -> struct(stepId->state)  (D6)
 app.branchState  = containers.Map('KeyType','char','ValueType','any');   % 'identity||branch' -> struct(...)   (D6)
-app.checked      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> true
-app.stale        = containers.Map('KeyType','char','ValueType','any');   % session edit overlay
+app.stale        = containers.Map('KeyType','char','ValueType','any');   % session INVALIDATION overlay
 app.runState     = containers.Map('KeyType','char','ValueType','any');   % transient run overlay: 'running'|'done'|'error'
 app.cellMsg      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> error/tooltip text
 app.cellPct      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> 0..100 while running
 app.completed    = containers.Map('KeyType','char','ValueType','any');   % 'path||stepId' -> completion record (session)
-app.pRows        = emptyProgressRows();            % the monitor's rows: ONE PER FILE
-app.pRowOf       = containers.Map('KeyType','char','ValueType','double');% path -> progress-table row
-app.pSel         = 0;                              % the monitor row whose detail is shown
-app.results      = emptyResults();                 % report images this session produced
+app.pRows        = emptyProgressRows();            % TOP table: ONE PER FILE of the working set
+app.pRowOf       = containers.Map('KeyType','char','ValueType','double');% path -> raw-table row
+app.dRows        = emptyProgressRows();            % BOTTOM table: one per (recording, PRODUCT)
+app.dRowOf       = containers.Map('KeyType','char','ValueType','double');% 'identity||branch' -> row
+app.pSel         = struct('kind','raw','idx',0);   % the monitor row whose detail is shown
+app.rangeFrom    = wbRunRange('lastValid');        % Process tab: From (sentinel = resume)
+app.rangeTo      = '';                             % Process tab: To ('' = the last column)
+app.results      = emptyResults();                 % report artifacts this session produced
+app.resultFilter = 'all';                          % result list: 'all' | 'images' | 'pdfs'
+app.pdfReports   = false;                          % Create PDF reports (UI ONLY - spec D9)
+app.colTotal     = containers.Map('KeyType','char','ValueType','double'); % stepId -> entries THIS run
+app.colDone      = containers.Map('KeyType','char','ValueType','double'); % stepId -> entries finished
+app.colArt       = containers.Map('KeyType','char','ValueType','any');    % stepId -> its artifact paths
+app.reportPdfs   = {};                             % the per-column PDFs assembled so far
 app.sessionPath  = '';                             % where the durable session is autosaved
 app.selStep      = app.reg(1).id;                  % step last selected programmatically
 % ---- the Constructor: configuration per recording TYPE (never per file) ----
@@ -144,10 +208,7 @@ app.presetDir    = presetDirDefault();
 app.presetRef    = '';
 app.running      = false;
 app.cancel       = false;
-app.exportSrcs   = struct('path',{},'rpath',{},'animal',{},'label',{}); % exportable BFI sources
-app.exploreAPI   = [];                             % handle bundle of the hosted guiExplore
-app.exploreHosted= false;                          % true = in-tab, false = child window / none
-app.exploreSeedKey = '';                           % file-set fingerprint of the last seed
+app.exitAfterStop = false;                         % Exit pressed during a run
 
 % single instance: replace any stale window (by Tag AND Name so older,
 % Tag-less windows are cleared too)
@@ -161,17 +222,13 @@ tg = uitabgroup(g);
 app.tabs.files       = uitab(tg,'Title','1 - Files');
 app.tabs.constructor = uitab(tg,'Title','2 - Constructor');
 app.tabs.process     = uitab(tg,'Title','3 - Process');
-app.tabs.export      = uitab(tg,'Title','4 - Export');
-app.tabs.explore     = uitab(tg,'Title','5 - Explore');
 app.tg = tg;
 setappdata(fig,'app',app);
 
 buildFilesTab(fig);
 buildConstructorTab(fig);
 buildProcessTab(fig);
-buildExportTab(fig);
-buildExploreTab(fig);
-tg.SelectionChangedFcn = @(~,~) onTabSelected(fig);   % lazily seed Export/Explore on show
+tg.SelectionChangedFcn = @(~,~) onTabSelected(fig);   % keep the monitor in step
 
 fig.CloseRequestFcn = @(~,~) requestExit(fig);
 
@@ -245,12 +302,6 @@ api = struct( ...
     'goNext',      @() guardTabSwitchTo(fig,getApp(fig).tabs.constructor), ...
     'currentTab',  @() getApp(fig).tg.SelectedTab.Title, ...
     'cellState',   @(id,stepId) resolveCellState(getApp(fig),id,stepId), ...
-    'check',       @(id,stepId,tf) apiCheck(fig,id,stepId,tf), ...
-    'checkColumn', @(stepId,tf) checkColumn(fig,stepId,tf), ...
-    'checkAnimal', @(a,tf) checkAnimal(fig,a,tf), ...
-    'checkModality',@(m,tf) checkModality(fig,m,tf), ...
-    'checkAll',    @(tf) checkAll(fig,tf), ...
-    'checkedList', @() checkedList(fig), ...
     'editSetting', @(stepId,field,value) onSettingEdit(fig,stepId,field,value), ...
     'getSetting',  @(stepId,field) getSetting(fig,stepId,field), ...
     'selectStep',  @(stepId) selectStep(fig,stepId), ...
@@ -262,25 +313,42 @@ api = struct( ...
     'dryRun',      @() dryRun(fig), ...
     'run',         @() runChecked(fig), ...
     'log',         @() getLog(fig), ...
+    ... % ---- Process tab: the From/To run range (spec D1-D5) ----
+    'runColumns',  @() runRangeColumns(fig), ...
+    'frontier',    @() runRangeFrontier(fig), ...
+    'setRange',    @(f,t) setRunRange(fig,f,t), ...
+    'range',       @() runRangeValue(fig), ...
+    'runOrderIn',  @(f,t) runOrderIn(fig,f,t), ...
+    'lastValid',   @() wbRunRange('lastValid'), ...
     ... % ---- Process tab: the read-only monitor, its results, the session ----
     'progressRows',@() {getApp(fig).pRows.path}, ...
-    'progressData',@() getApp(fig).c.process.stateTable.Data, ...
+    'progressData',@() getApp(fig).c.process.rawTable.Data, ...
+    'rawProgressData',@() getApp(fig).c.process.rawTable.Data, ...
+    'derivedProgressData',@() getApp(fig).c.process.derivedTable.Data, ...
+    'derivedProgressRows',@() getApp(fig).dRows, ...
     'progressCell',@(p,stepId) progressCellOf(fig,p,stepId), ...
+    'derivedCell', @(id,br,stepId) derivedCellOf(fig,id,br,stepId), ...
     'fileState',   @(p,stepId) fileStateOf(getApp(fig),p,stepId), ...
     'plannedSteps',@(p) plannedStepsOf(fig,p), ...
     'resultLinks', @() resultLinks(fig), ...
+    ... % ---- Process tab: the reports panel (spec D9/D10) ----
+    'setPdfReports',@(tf) setPdfReports(fig,tf), ...
+    'pdfReports',  @() getApp(fig).pdfReports, ...
+    'resultKinds', @() resultKinds(fig), ...
+    'setResultFilter',@(kind) setResultFilter(fig,kind), ...
+    'resultFilter',@() getApp(fig).resultFilter, ...
+    'reportPdfs',  @() reportPdfList(fig), ...
     'sessionPath', @() getApp(fig).sessionPath, ...
     'autosave',    @() autosaveSession(fig), ...
+    'lastSessionPath',@() lastSessionPath(), ...
+    'wipeTargets', @() wipeTargets(getApp(fig)), ...
+    'wipeAll',     @() wipeAll(fig), ...
     'completed',   @() getApp(fig).completed, ...
-    'exportRefresh',@() refreshExportFiles(fig), ...
-    'exportSources',@() exportSourcePaths(fig), ...
-    'exportAvailableSheets',@(rpaths) availableExportSheets(rpaths), ...
-    'runExport',   @(files,opts) runExport(fig,files,opts), ...
-    'seedExplore', @() seedExplore(fig,true), ...
-    'exploreApi',  @() getApp(fig).exploreAPI, ...
+    ... % ---- the hand-off to the two standalone tools (spec §5) ----
+    'handOff',     @(tool) handOffSession(fig,tool), ...
     'identities',  @() {getApp(fig).rows.identity}, ...
     'getApp',      @() getApp(fig), ...
-    'exit',        @() onClose(fig));
+    'exit',        @() requestExit(fig));   % the BUTTON's contract: stop, save, close
 setappdata(fig,'workbenchAPI',api);
 
 renderProgress(fig);
@@ -304,16 +372,49 @@ f = struct('model',{},'path',{},'name',{},'animal',{},'type',{},'index',{}, ...
     'expGroup',{},'modality',{},'isRef',{});
 end
 function r = emptyProgressRows()
-%emptyProgressRows  The Process tab's rows - one per FILE, run-ordered.
-r = struct('path',{},'model',{},'identity',{},'label',{},'animal',{},'type',{}, ...
-    'expGroup',{},'branch',{},'isRef',{},'animalIdx',{},'rowInAnimal',{});
+%emptyProgressRows  A row of EITHER monitor table, run-ordered.  'kind' says which:
+%   'raw'     - one per FILE of the working set (what happens to the recording);
+%   'derived' - one per (recording, PRODUCT) row the Constructor built, so a
+%               two-pipeline recording appears twice, once per branch (spec D6).
+r = struct('kind',{},'path',{},'model',{},'identity',{},'label',{},'rowLabel',{}, ...
+    'animal',{},'type',{},'expGroup',{},'branch',{},'flag',{},'isRef',{}, ...
+    'animalIdx',{},'rowInAnimal',{},'branchIdx',{});
 end
 function r = emptyResults()
-%emptyResults  The result-link list (spec D5): report images, newest first.
-r = struct('path',{},'label',{},'when',{});
+%emptyResults  The result-link list (spec D5/D10): report artifacts, newest first.
+%   An entry carries the STEP that produced it and its KIND, so the panel's filter
+%   is a property of the data rather than a string test in the render function -
+%   and so a column's own images can be collected without asking the file name.
+r = struct('path',{},'label',{},'when',{},'stepId',{},'kind',{});
+end
+function k = artifactKind(pth)
+%artifactKind  'pdf' or 'image' - the only distinction the result list draws (D10).
+[~,~,e] = fileparts(char(pth));
+k = ternary(strcmpi(e,'.pdf'),'pdf','image');
 end
 function d = presetDirDefault()
 d = fullfile(prefdir,'guiWorkbenchPresets');
+end
+function d = sessionDir()
+%sessionDir  THE workbench sessions folder, created on demand.  Sessions belong
+%   with the library rather than with the data - a protocol is re-scanned from
+%   several roots and a session must not go missing with one of them - so they live
+%   in 'workbench-sessions' beside the code and the folder is gitignored.  A
+%   read-only install falls back to the MATLAB preferences directory, which is the
+%   only place a session is guaranteed to be writable.
+d = fullfile(fileparts(fileparts(mfilename('fullpath'))),'workbench-sessions');
+if isfolder(d), return; end
+[ok,~] = mkdir(d);
+if ~ok
+    d = fullfile(prefdir,'guiWorkbenchSessions');
+    if ~isfolder(d), mkdir(d); end
+end
+end
+function p = lastSessionPath()
+%lastSessionPath  The LAST SESSION: one fixed file, rewritten on every state change
+%   and on exit, so re-opening the workbench after a crash, a Stop or a plain close
+%   always has somewhere to resume from without anyone having pressed Save.
+p = fullfile(sessionDir(),'lastSession.mat');
 end
 function s = stepById(reg,id), s = reg(strcmp({reg.id},id)); end
 function k = cellKey(identity,stepId), k = [identity '||' stepId]; end
@@ -330,32 +431,35 @@ gl = uigridlayout(t,[1 1],'Padding',[6 6 6 6]);
 lp = uigridlayout(gl,[8 1], ...
     'RowHeight',{'fit','fit','fit','1x','fit','fit','fit','fit'},'RowSpacing',6);
 
-uilabel(lp,'Text',['Scan a root folder for an extension (or add files by hand), then curate: ' ...
-    'sort, delete, label and pin one reference recording per ANIMAL.'],'FontWeight','bold','WordWrap','on');
+uilabel(lp,'Text',['Collect the recordings you want to process - scan a folder, or add files ' ...
+    'by hand.  Then sort them, delete what you do not need, label every one, and mark ' ...
+    'one reference recording for each animal.'],'FontWeight','bold','WordWrap','on');
 
 % -- source row: root + glob + the loaders --
 sp = uigridlayout(lp,[1 9], ...
     'ColumnWidth',{'fit','2x','fit','fit','0.9x','fit','fit','fit','fit'},'Padding',[0 0 0 0]);
-uilabel(sp,'Text','root');
-c.root = uieditfield(sp,'text','Value','','Tooltip','folder searched RECURSIVELY by Scan', ...
+uilabel(sp,'Text','look in');
+c.root = uieditfield(sp,'text','Value','','Tooltip', ...
+    'The folder to search.  Every subfolder inside it is searched too.', ...
     'ValueChangedFcn',@(s,~)onSourceEdit(fig));
 uibutton(sp,'Text','Browse...','ButtonPushedFcn',@(~,~)uiBrowseRoot(fig));
-uilabel(sp,'Text','files');
+uilabel(sp,'Text','for files named');
 c.glob = uieditfield(sp,'text','Value',app.glob,'ValueChangedFcn',@(s,~)onSourceEdit(fig), ...
     'Tooltip',tipGlob());
 uibutton(sp,'Text','Scan','BackgroundColor',[0.82 0.92 0.82],'ButtonPushedFcn',@(~,~)uiScan(fig), ...
-    'Tooltip','recurse the root for the glob and REPLACE the working set');
+    'Tooltip','Search the folder and start a new list from what it finds.');
 uibutton(sp,'Text','Add files...','ButtonPushedFcn',@(~,~)uiAddFiles(fig), ...
-    'Tooltip','pick files by hand (multiselect) and ADD them to the working set');
+    'Tooltip','Pick files yourself and add them to the list.  You can select several at once.');
 uibutton(sp,'Text','Add folder...','ButtonPushedFcn',@(~,~)uiAddFolder(fig), ...
-    'Tooltip','recurse another folder for the glob and ADD what it finds');
-uibutton(sp,'Text','Clear','ButtonPushedFcn',@(~,~)uiClear(fig),'Tooltip','empty the working set (no file is deleted)');
+    'Tooltip','Search another folder and add what it finds to the list.');
+uibutton(sp,'Text','Clear','ButtonPushedFcn',@(~,~)uiClear(fig), ...
+    'Tooltip','Empty the list.  No file is deleted from your disk.');
 
 % -- regexp row: one box per label axis + the reference rule --
 rp = uigridlayout(lp,[2 5],'RowHeight',{'fit','fit'},'Padding',[0 0 0 0],'RowSpacing',1);
-axes5 = {'animal','Animal','[A-Z]+\d+',tipAnimal(); 'type','Type','',tipType(); ...
-         'index','Rec. index','',tipIndex(); 'expGroup','Group (experimental)','',tipExpGroup(); ...
-         'ref','Reference','',tipRef()};
+axes5 = {'animal','Animal','[A-Z]+\d+',tipAnimal(); 'type','Recording type','',tipType(); ...
+         'index','Recording number','',tipIndex(); 'expGroup','Experimental group','',tipExpGroup(); ...
+         'ref','Reference recording','',tipRef()};
 for k = 1:size(axes5,1)
     lb = uilabel(rp,'Text',axes5{k,2},'FontSize',10); lb.Layout.Row = 1; lb.Layout.Column = k;
     f  = patField(rp,fig,axes5{k,1},axes5{k,3},axes5{k,4});
@@ -384,35 +488,77 @@ cp = uigridlayout(lp,[1 7], ...
     'ColumnWidth',{'fit','fit','fit','1.2x','fit','fit','2x'},'Padding',[0 0 0 0]);
 uilabel(cp,'Text','Quick assign: set','FontWeight','bold');
 c.assignAxis = uidropdown(cp,'Items',assignableColumns(),'Value','type', ...
-    'Tooltip','which field the selected rows get', ...
+    'Tooltip','Which label the selected rows should get.', ...
     'ValueChangedFcn',@(~,~)refreshAssignItems(fig));
 uilabel(cp,'Text','=');
 c.assignVal = uidropdown(cp,'Items',{''},'Value','','Editable','on', ...
-    'Tooltip','pick a value already in use, or TYPE A NEW ONE - the vocabulary is yours');
+    'Tooltip',['Pick a value you have used before, or type a new one.  The names are ' ...
+               'entirely yours - nothing here has a fixed list.']);
 uibutton(cp,'Text','Apply to selected rows','BackgroundColor',[0.85 0.9 1], ...
     'ButtonPushedFcn',@(~,~)uiAssignLabel(fig), ...
-    'Tooltip','set this field on EVERY selected row at once (select rows by clicking / shift-clicking the table)');
+    'Tooltip',['Give every selected row this value at once.  Select rows by clicking ' ...
+               'them in the table, shift-click for a range.']);
 uibutton(cp,'Text','Delete selected','BackgroundColor',[1 0.88 0.82], ...
     'ButtonPushedFcn',@(~,~)uiDeleteSelected(fig), ...
-    'Tooltip','remove the selected rows from the WORKING SET only - nothing is ever deleted from disk');
+    'Tooltip','Take the selected rows out of this list.  Nothing is deleted from your disk.');
 c.curStatus = uilabel(cp,'Text','','FontAngle','italic','FontSize',10);
 
 c.problems = uilabel(lp,'Text','','WordWrap','on','FontWeight','bold');
 c.status   = uilabel(lp,'Text','No files loaded.','WordWrap','on');
 
-% -- session row (RowHeight fit: buttons keep their natural height) --
-ssp = uigridlayout(lp,[1 5],'RowHeight',{'fit'}, ...
-    'ColumnWidth',{'fit','fit','1x','fit','fit'},'Padding',[0 0 0 0]);
+% -- session row (RowHeight fit: buttons keep their natural height) -----------
+%   The two hand-off buttons live HERE rather than beside Run: they are session
+%   CONSUMERS, this is where the session lives, and the Process toolbar is a run
+%   control - nothing that opens another window belongs in it.
+ssp = uigridlayout(lp,[1 7],'RowHeight',{'fit'}, ...
+    'ColumnWidth',{'fit','fit','fit','fit','1x','fit','fit'},'Padding',[0 0 0 0]);
 uibutton(ssp,'Text','Save session...','ButtonPushedFcn',@(~,~)uiSaveSession(fig));
 uibutton(ssp,'Text','Load session...','ButtonPushedFcn',@(~,~)uiLoadSession(fig));
-uilabel(ssp,'Text','the session carries the file list, its labels, the references and the settings', ...
+uibutton(ssp,'Text','Export...','BackgroundColor',[0.90 0.94 1.0], ...
+    'ButtonPushedFcn',@(~,~)handOffSession(fig,'guiExport'), ...
+    'Tooltip',['Save the session and open the export tool on it, to write your results ' ...
+               'to Excel.  It is a separate window and this one keeps running.']);
+uibutton(ssp,'Text','Explore...','BackgroundColor',[0.90 0.94 1.0], ...
+    'ButtonPushedFcn',@(~,~)handOffSession(fig,'guiExplore'), ...
+    'Tooltip',['Save the session and open the results explorer on it, to plot and compare ' ...
+               'your results.  It is a separate window and this one keeps running.']);
+uilabel(ssp,'Text','the session remembers your file list, its labels, the references and the settings', ...
     'FontAngle','italic','FontSize',10);
-c.nextBtn = uibutton(ssp,'Text','Next: Constructor','BackgroundColor',[0.82 0.92 0.82], ...
-    'ButtonPushedFcn',@(~,~)goToConstructor(fig), ...
-    'Tooltip','continue to the Constructor (enabled once every file is labelled)');
-uibutton(ssp,'Text','Exit workbench','ButtonPushedFcn',@(~,~)requestExit(fig),'BackgroundColor',[1 0.82 0.82]);
+c.nextBtn = nextButton(ssp,fig,'Next: Constructor',app.tabs.constructor, ...
+    'Go on to the Constructor.  It becomes available once every file is fully labelled.');
+c.exitBtn = exitButton(ssp,fig);
 
 app.c.files = c; setApp(fig,app);
+end
+
+%% ---- the strip every tab ends with (spec: Next / Exit never move) ---- %%
+function b = nextButton(parent,fig,text,tab,tip)
+%nextButton  'Next' - the same button, in the same corner, on every tab but the
+%   last.  It is the ONLY forward move the window offers, and it goes through the
+%   same gate a tab click does, so an incomplete file set is refused identically.
+b = uibutton(parent,'Text',text,'BackgroundColor',[0.82 0.92 0.82], ...
+    'ButtonPushedFcn',@(~,~)guardTabSwitchTo(fig,tab),'Tooltip',tip);
+end
+function b = exitButton(parent,fig)
+%exitButton  'Exit workbench' - PERSISTENT: the same button in the same corner of
+%   all three tabs, so leaving never means hunting for the tab that owns it.
+b = uibutton(parent,'Text','Exit workbench','BackgroundColor',[1 0.82 0.82], ...
+    'ButtonPushedFcn',@(~,~)requestExit(fig), ...
+    'Tooltip',['Stop anything still running, save your session and close the window.  ' ...
+               'The session is always saved, so you can pick up where you left off.']);
+end
+function c = tabFooter(parent,fig,nextText,nextTab,nextTip)
+%tabFooter  The bottom strip of the Constructor and Process tabs: a stretch, then
+%   Next (omitted on the last tab), then Exit - laid out so both land exactly where
+%   the Files tab's own pair does.  The panel above simply ends one row early to
+%   leave the strip free, which is the whole cost of the two buttons persisting.
+n = 2 + double(~isempty(nextText));
+fp = uigridlayout(parent,[1 n],'RowHeight',{'fit'}, ...
+    'ColumnWidth',[{'1x'}, repmat({'fit'},1,n-1)],'Padding',[0 0 0 0],'ColumnSpacing',4);
+uilabel(fp,'Text','');                                   % the stretch
+c = struct();
+if ~isempty(nextText), c.nextBtn = nextButton(fp,fig,nextText,nextTab,nextTip); end
+c.exitBtn = exitButton(fp,fig);
 end
 
 function f = patField(parent,fig,axis,dflt,tip)
@@ -447,55 +593,62 @@ function cols = assignableColumns()
 cols = {'animal','type','index','group','modality'};
 end
 
-%% ---- Files-tab tooltips (the guiExplore idiom: examples, not prose) ---- %%
+%% ---- Files-tab tooltips.  Written for the person at the microscope: what the
+%%      box is for, then real examples.  Examples teach a pattern far faster than
+%%      prose about patterns, so every one of these ends in a worked list. ---- %%
 function t = tipGlob()
-t = sprintf(['dir() glob matched against the file NAME, searched recursively.\n' ...
-    '   *.rls           raw LSCI recordings\n' ...
-    '   *_t_K_d.mat     temporal-contrast SOURCE files\n' ...
-    '   *_BFI_d.mat     every BFI branch\n' ...
-    'This is a GLOB (shell wildcards), not a regexp - the boxes below are regexps.']);
+t = sprintf(['Which file names to look for.  * stands for any text.\n' ...
+    '   *.rls           raw speckle recordings\n' ...
+    '   *_t_K_d.mat     contrast files\n' ...
+    '   *_BFI_d.mat     blood flow files\n' ...
+    'The five boxes below work differently - they are search patterns, not names.']);
 end
 function t = tipAnimal()
-t = sprintf(['Regexp whose MATCH is the ANIMAL id - the subject.  One animal owns one\n' ...
-    'reference recording and is the scope of registration / vessel typing.\n' ...
-    '   [A-Z]+\\d+        PSY01, REG12, AB3 ...\n' ...
-    '   m\\d+             m07, m11 ...\n' ...
-    '   (mouse|rat)\\d+   a species-prefixed id\n' ...
-    'No match -> the "(unassigned)" bucket.  Empty = every file in one row.']);
+t = sprintf(['Finds the ANIMAL - the subject - in each file name.  Each animal has one\n' ...
+    'reference recording, and registration and vessel typing work animal by animal.\n' ...
+    '   [A-Z]+\\d+        matches PSY01, REG12, AB3 ...\n' ...
+    '   m\\d+             matches m07, m11 ...\n' ...
+    '   (mouse|rat)\\d+   matches mouse4, rat12 ...\n' ...
+    'A file this does not find anything in is listed as "(unassigned)" and you can\n' ...
+    'type its animal in the table.  Leave the box empty to treat every file as one\n' ...
+    'animal.']);
 end
 function t = tipType()
-t = sprintf(['Regexp whose MATCH is the recording TYPE - its experimental role.  The type\n' ...
-    'owns the processing configuration, so files of one type are processed alike.\n' ...
-    '   BV|BN|BP         one lab''s slow / NVC / pulsatile recordings\n' ...
+t = sprintf(['Finds the RECORDING TYPE - what the recording is for in your experiment.\n' ...
+    'You set up the processing once per type, and every recording of that type is\n' ...
+    'then processed the same way.\n' ...
+    '   BV|BN|BP         one lab''s slow, stimulation and pulsatile recordings\n' ...
     '   ctrl|stim|washout   another lab''s protocol\n' ...
-    '   \\d(?=BP)         whatever your names actually carry\n' ...
-    'There is NO built-in list of types: the values are whatever this matches.\n' ...
-    'No match -> the "(untyped)" bucket, which is a type like any other.']);
+    '   \\d(?=BP)         whatever your own file names carry\n' ...
+    'There is no built-in list of types - they are whatever you call them.  A file\n' ...
+    'this does not find anything in is listed as "(untyped)", which is a type like\n' ...
+    'any other, and you can type its real one in the table.']);
 end
 function t = tipIndex()
-t = sprintf(['Regexp whose MATCH is the recording index inside an animal (a stratifier).\n' ...
-    '   [aik]\\d           a condition+repeat token, e.g. i2, k1, a2\n' ...
-    '   run(\\d+)          the number after "run"\n' ...
-    '   \\d+(?=_c_)        the digits just before _c_\n' ...
-    'Leave empty to treat every file as the same index.']);
+t = sprintf(['Finds the RECORDING NUMBER within an animal, so repeats can be told apart.\n' ...
+    '   [aik]\\d           matches i2, k1, a2 ...\n' ...
+    '   run(\\d+)          matches the number after "run"\n' ...
+    '   \\d+(?=_c_)        matches the digits just before _c_\n' ...
+    'Leave the box empty to treat every recording as the same number.']);
 end
 function t = tipExpGroup()
-t = sprintf(['Regexp whose MATCH is the EXPERIMENTAL group - a comparison label used by\n' ...
-    'Export and Explore.  Processing ignores it entirely.\n' ...
+t = sprintf(['Finds the EXPERIMENTAL GROUP - the label you will compare by.  Export and\n' ...
+    'Explore use it; processing ignores it, so it never changes a result.\n' ...
     '   KO|WT             genotype taken from the name\n' ...
     '   Ctrl|Stroke       condition taken from the name\n' ...
     '   pre|post          a timepoint\n' ...
-    'It is INDEPENDENT of the animal: a group may span animals and one animal\n' ...
-    'may span groups.  No match -> the "(ungrouped)" bucket.']);
+    'It is independent of the animal: a group can span several animals, and one\n' ...
+    'animal can appear in several groups.  A file this does not find anything in is\n' ...
+    'listed as "(ungrouped)".']);
 end
 function t = tipRef()
-t = sprintf(['Regexp picking the REFERENCE recording of each animal, valid for ALL of\n' ...
-    'that animal''s files whatever their type or group.  Passed to getFileNamesList,\n' ...
-    'which forces the match into column 1.\n' ...
+t = sprintf(['Finds each animal''s REFERENCE RECORDING - the one every other recording of\n' ...
+    'that animal is aligned to, whatever its type or group.\n' ...
     '   1BP_c_BFI_d\\.mat  the animal''s first pulsatile recording\n' ...
-    '   _ref_             a name you mark by hand\n' ...
-    'Applied by Scan.  You can always override it by ticking "ref" in the table -\n' ...
-    'a hand-pinned reference wins, and an animal may legally have none.']);
+    '   _ref_             a name you mark yourself\n' ...
+    'This is applied when you press Scan.  You can always change it afterwards by\n' ...
+    'ticking the reference box in the table - your own choice wins.  An animal may\n' ...
+    'have no reference at all; steps that need one will say so.']);
 end
 
 %% ===================== CONSTRUCTOR tab ============================== %%
@@ -523,45 +676,50 @@ left = uigridlayout(gl,[4 1],'RowHeight',{'fit',170,'1.3x','1x'},'RowSpacing',6)
 c.left = left;
 
 hdr = uigridlayout(left,[2 1],'RowHeight',{'fit','fit'},'Padding',[0 0 0 0],'RowSpacing',3);
-uilabel(hdr,'Text',['Tick the steps each recording TYPE runs.  A type owns its ' ...
-    'processing configuration and every file of that type is processed alike - if one ' ...
-    'animal needs different parameters, make it a second type on the Files tab.'], ...
+uilabel(hdr,'Text',['Tick the processing steps each RECORDING TYPE should run.  You set a ' ...
+    'type up once and every recording of that type is processed the same way.  If one ' ...
+    'animal needs different parameters, give it its own type on the Files tab.'], ...
     'WordWrap','on','FontWeight','bold');
 tb = uigridlayout(hdr,[1 7], ...
     'ColumnWidth',{'fit','1x','fit','1x','fit','fit','1.2x'},'Padding',[0 0 0 0]);
 uilabel(tb,'Text','Copy configuration from');
 c.copySrc = uidropdown(tb,'Items',{''},'Value','', ...
-    'Tooltip',['a standard protocol, or another type you have already configured.  ' ...
-               'A protocol only POPULATES the boxes - everything stays editable.']);
+    'Tooltip',['A ready-made protocol, or another type you have already set up.  ' ...
+               'A protocol only fills the boxes in - you can still change everything.']);
 uilabel(tb,'Text','to');
-c.copyDst = uidropdown(tb,'Items',{''},'Value','','Tooltip','the type to overwrite');
+c.copyDst = uidropdown(tb,'Items',{''},'Value','','Tooltip','The type that will be overwritten.');
 uibutton(tb,'Text','Copy','BackgroundColor',[0.85 0.9 1],'ButtonPushedFcn',@(~,~)uiCopyType(fig), ...
-    'Tooltip','give the second type the first one''s selected steps AND settings');
+    'Tooltip','Give the second type the same steps and the same parameters as the first.');
 uibutton(tb,'Text','Reset selected type','ButtonPushedFcn',@(~,~)uiResetType(fig), ...
-    'Tooltip','drop the type shown on the right back to the launcher defaults');
+    'Tooltip','Put the type shown on the right back to the standard parameters.');
 c.status = uilabel(tb,'Text','','FontAngle','italic','FontSize',10);
 
-c.rawPanel = uipanel(left,'Title','1 - Raw processing: what each TYPE computes from the recording', ...
+c.rawPanel = uipanel(left,'Title','1 - Processing the recording itself', ...
     'FontWeight','bold');
-c.derivedPanel = uipanel(left,'Title','2 - Derived processing: one row per TYPE and PRODUCT', ...
+c.derivedPanel = uipanel(left,'Title','2 - Processing each result: one row per recording type and result', ...
     'FontWeight','bold');
-c.summaryPanel = uipanel(left,'Title','Selection summary','FontWeight','bold');
+c.summaryPanel = uipanel(left,'Title','What will run','FontWeight','bold');
 
-% -- RIGHT: settings for one (step, type) --
-right = uigridlayout(gl,[4 1],'RowHeight',{'fit','fit','fit','1x'},'RowSpacing',6);
+% -- RIGHT: settings for one (step, type), then the persistent Next/Exit strip --
+%   the settings panel stops one row short of the bottom on purpose: that row is
+%   where Next and Exit sit on every tab (tabFooter)
+right = uigridlayout(gl,[5 1],'RowHeight',{'fit','fit','fit','1x','fit'},'RowSpacing',6);
 sel = uigridlayout(right,[2 2],'ColumnWidth',{'fit','1x'},'RowHeight',{'fit','fit'}, ...
     'Padding',[0 0 0 0],'RowSpacing',3);
 uilabel(sel,'Text','Type','FontWeight','bold');
 c.typeDrop = uidropdown(sel,'Items',{'(no types)'},'Value','(no types)', ...
-    'Tooltip','the recording type whose settings are edited below', ...
+    'Tooltip','The recording type whose parameters you are editing below.', ...
     'ValueChangedFcn',@(s,~)selectConstructorType(fig,s.Value));
 uilabel(sel,'Text','Step','FontWeight','bold');
 c.stepDrop = uidropdown(sel,'Items',{''},'Value','', ...
-    'Tooltip','the step whose settings are shown below', ...
+    'Tooltip','The processing step whose parameters are shown below.', ...
     'ValueChangedFcn',@(s,~)selectConstructorStep(fig,s.Value));
 c.stepInfo = uilabel(right,'Text','','WordWrap','on','FontAngle','italic');
 c.scopeInfo = uilabel(right,'Text','','WordWrap','on','FontSize',10);
 c.paramPanel = uipanel(right,'BorderType','none');   % the section stack owns the scroll
+f = tabFooter(right,fig,'Next: Process',app.tabs.process, ...
+    'Go on to the Process tab and run what you have set up here.');
+c.nextBtn = f.nextBtn; c.exitBtn = f.exitBtn;
 
 app.c.constructor = c; setApp(fig,app);
 end
@@ -621,7 +779,7 @@ types = constructorTypes(app);
 cols  = wbTypeSelection('rawSteps', app.reg);
 if isempty(types) || isempty(cols)
     g = uigridlayout(parent,[1 1],'Padding',[16 16 16 16]);
-    uilabel(g,'Text','Load and label recordings on the Files tab to populate the type matrix.', ...
+    uilabel(g,'Text','Load your recordings and label them on the Files tab, then come back here.', ...
         'HorizontalAlignment','center','FontAngle','italic');
     return
 end
@@ -630,7 +788,7 @@ grid = uigridlayout(parent,[1+numel(types) 1+numel(cols)], ...
     'ColumnWidth',[{170}, repmat({120},1,numel(cols))], ...
     'RowHeight',[{50}, repmat({26},1,numel(types))], ...
     'RowSpacing',2,'ColumnSpacing',2,'Padding',[2 2 2 2],'Scrollable','on');
-h = uilabel(grid,'Text','Type  \  Raw step','FontWeight','bold');
+h = uilabel(grid,'Text','Recording type','FontWeight','bold');
 h.Layout.Row = 1; h.Layout.Column = 1;
 for s = 1:numel(cols)
     step = stepById(app.reg,cols{s});
@@ -643,7 +801,7 @@ end
 for r = 1:numel(types)
     ty = types{r};
     lb = uilabel(grid,'Text',sprintf('%s - %d files', ty, typeFileCount(app,ty)), ...
-        'FontWeight','bold','Tooltip','every file of this type is processed alike');
+        'FontWeight','bold','Tooltip','Every recording of this type is processed the same way.');
     lb.Layout.Row = r+1; lb.Layout.Column = 1;
     for s = 1:numel(cols)
         step = stepById(app.reg,cols{s});
@@ -657,13 +815,13 @@ end
 end
 
 function t = rawStepTip(step)
-t = sprintf(['%s reads the raw recording and writes a NEW, independent product.\n' ...
-    'Ticking it gives this type a %s row below; everything done to that product is ' ...
-    'ticked there.'], step.label, step.branch);
+t = sprintf(['%s reads the raw recording and writes a new, separate result.\n' ...
+    'Tick it and this type gets its own %s row below, where you choose everything ' ...
+    'that is then done to that result.'], step.label, step.branch);
 end
 function t = rawCellTip(app,type,step)
-t = sprintf('%s produces %s%s for every %s recording.', step.label, ...
-    rowFlagFor(app,type,step.branch), ' ', type);
+t = sprintf('%s produces %s for every %s recording.', step.label, ...
+    rowFlagFor(app,type,step.branch), type);
 end
 
 function lines = tickRaw(fig,type,stepId,tf)
@@ -688,6 +846,8 @@ if ~tf
 end
 for i = 1:numel(lines), wbLog(fig,lines{i}); end
 renderConstructor(fig);
+renderProgress(fig);      % D7: the product row appears with its producer, not with its file
+autosaveSession(fig);
 end
 
 function lines = tickRow(fig,type,branch,stepId,tf)
@@ -731,6 +891,8 @@ end
 setApp(fig,app);
 for i = 1:numel(lines), wbLog(fig,lines{i}); end
 renderConstructor(fig);
+renderProgress(fig);      % what a row is queued for changed; so did the run columns
+autosaveSession(fig);
 end
 
 %% ---- Constructor: the derived (type, branch) rows ------------------ %%
@@ -757,22 +919,29 @@ r = struct('type',type,'branch',branch,'flag',f, ...
 end
 
 function f = rowFlagFor(app,type,branch)
-%rowFlagFor  The PRODUCT FLAG a (type,branch) row's files carry - '_t_K', '_s_K',
-%   '_c_K'.  Never a literal: the producing step's own outSuffix supplies the
-%   product and the default stage, and a producer whose stage is a SETTING (the
-%   contrast step's contrastType) is asked for this type's answer.  Row identity
-%   is (type, BRANCH), so switching a project from temporal to spatial contrast
-%   changes the flag shown and the files resolved, not the configuration.
+%rowFlagFor  The STAGE FLAG a (type,branch) row's files carry - '_t', '_s', '_c',
+%   '_e' (spec D8).  Never a literal: the producing step's own outSuffix supplies
+%   the default stage, and a producer whose stage is a SETTING (the contrast step's
+%   contrastType) is asked for this type's answer.  Row identity is (type, BRANCH),
+%   so switching a project from temporal to spatial contrast changes the flag shown,
+%   not the configuration.
+%
+%   THE STAGE ALONE, NOT STAGE+PRODUCT.  The product letter changes down the
+%   pipeline ('_t_K' becomes '_t_BFI' at the BFI step) while the row's identity is
+%   the BRANCH, which does not - so showing '_t_K' on a row that will end up holding
+%   a '_t_BFI' was over-specified.  This is a DISPLAY label and nothing else: no
+%   file is ever resolved through it (that goes through branchScope / wbFileModel /
+%   contrastStageForModel), so shortening it cannot move a file.
 f = '';
 pid = wbTypeSelection('producer', app.reg, branch);
 if isempty(pid), return; end
 step = stepById(app.reg,pid);
 if isempty(step.outSuffix), return; end
-m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t, product K
+m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t
 st = m.stage;
 alt = settingStage(app,type,step);
 if ~isempty(alt), st = alt; end
-f = ['_' st '_' m.product];
+f = ['_' st];
 end
 
 function st = settingStage(app,type,step)
@@ -814,7 +983,7 @@ rows = constructorRows(app);
 types = constructorTypes(app);
 if isempty(cols) || (isempty(rows) && isempty(types))
     g = uigridlayout(c.derivedPanel,[1 1],'Padding',[16 16 16 16]);
-    uilabel(g,'Text','Load and label recordings on the Files tab first.', ...
+    uilabel(g,'Text','Load your recordings and label them on the Files tab first.', ...
         'HorizontalAlignment','center','FontAngle','italic');
     return
 end
@@ -832,7 +1001,7 @@ grid = uigridlayout(gl,[1+numel(rows) 1+numel(cols)], ...
     'ColumnWidth',[{190}, repmat({88},1,numel(cols))], ...
     'RowHeight',[{56}, repmat({28},1,numel(rows))], ...
     'RowSpacing',2,'ColumnSpacing',2,'Padding',[2 2 2 2],'Scrollable','on');
-h = uilabel(grid,'Text','Type (product)  \  Step','FontWeight','bold');
+h = uilabel(grid,'Text','Recording type and result','FontWeight','bold');
 h.Layout.Row = 1; h.Layout.Column = 1;
 for s = 1:numel(cols)
     step = stepById(app.reg,cols{s});
@@ -845,9 +1014,9 @@ end
 for r = 1:numel(rows)
     row = rows(r);
     txt = row.label;
-    if preview, txt = sprintf('%s - tick a raw step above', row.type); end
+    if preview, txt = sprintf('%s - tick a step above first', row.type); end
     lb = uilabel(grid,'Text',sprintf('%s - %d files', txt, row.files),'FontWeight','bold', ...
-        'Tooltip','one pipeline: this type''s recordings, this product');
+        'Tooltip','One pipeline - this type''s recordings, and this one result of them.');
     lb.Layout.Row = r+1; lb.Layout.Column = 1;
     if preview, lb.FontColor = [0.45 0.45 0.45]; end
     for s = 1:numel(cols)
@@ -861,7 +1030,7 @@ function cb = makeRowCell(fig,grid,app,row,stepId,preview)
 %makeRowCell  One derived cell: live, greyed-with-a-reason, or inherited.
 why = wbTypeSelection('why', app.reg, row.branch, stepId);
 if preview || ~isempty(why)
-    if isempty(why), why = 'tick a raw step above to give this type a product to work on'; end
+    if isempty(why), why = 'Tick a step in the panel above first, to give this type a result to work on.'; end
     cb = uicheckbox(grid,'Text','','Value',false,'Enable','off','Tooltip',why);
     return
 end
@@ -869,7 +1038,7 @@ end
 if inh
     src = wbTypeSelection('anchorBranch', app.reg);
     cb = uicheckbox(grid,'Text','','Value',tf,'Enable','off', ...
-        'Tooltip',sprintf('%s  Tick it on the %s row.', ...
+        'Tooltip',sprintf('%s  Tick it on the %s row instead.', ...
         sharedReason(stepById(app.reg,stepId)), rowFlagFor(app,row.type,src)));
     return
 end
@@ -882,21 +1051,21 @@ function t = sharedReason(step)
 %   row - straight from its branchScope, which is also what the executor obeys.
 switch step.branchScope
     case 'copy'
-        t = sprintf(['%s is done ONCE, on the contrast product, and the result is ' ...
-            'inherited by the other products of the same recording.'], step.label);
+        t = sprintf(['%s is done once, on the contrast result, and carried over to the ' ...
+            'other results of the same recording.'], step.label);
     otherwise
-        t = sprintf(['%s runs over EVERY product of a recording in one call, so it ' ...
-            'cannot be on for one product and off for another.'], step.label);
+        t = sprintf(['%s covers every result of a recording in one go, so it cannot be ' ...
+            'on for one result and off for another.'], step.label);
 end
 end
 
 function t = derivedHint(rows)
 if isempty(rows)
-    t = ['Nothing to configure yet: tick a raw step above.  Each raw step gives its ' ...
-         'type a product, and each product is its own pipeline row here.'];
+    t = ['Nothing to set up yet - tick a step in the panel above.  Each one gives its ' ...
+         'type a result, and each result gets its own row here.'];
 else
-    t = ['One row = one pipeline (a type''s recordings, one product).  A type running ' ...
-         'both raw steps gets two independent rows.'];
+    t = ['One row is one pipeline: a type''s recordings and one result of them.  A type ' ...
+         'running both steps above gets two rows, and they are independent.'];
 end
 end
 
@@ -905,7 +1074,7 @@ step = stepById(reg,stepId);
 t = step.label;
 req = wbPrereqs('describe',step);
 if ~isempty(req)
-    t = [t sprintf('\nneeds %s - ticking this ticks them too, in this row', req)];
+    t = [t sprintf('\nIt needs %s first.  Ticking this ticks those too, on this row.', req)];
 end
 end
 
@@ -918,7 +1087,7 @@ function renderAnimalBox(fig,parent)
 %   resolve to is reported in the selection summary, the one place status is read.
 app = getApp(fig);
 ids = wbTypeSelection('animalSteps', app.reg);
-p  = uipanel(parent,'Title','Applied per animal','FontWeight','bold','FontSize',10);
+p  = uipanel(parent,'Title','Done once per animal','FontWeight','bold','FontSize',10);
 n  = max(1,numel(ids));
 gl = uigridlayout(p,[n+1 2],'ColumnWidth',{'1x','fit'}, ...
     'RowHeight',[repmat({'fit'},1,n), {'1x'}], ...
@@ -929,27 +1098,28 @@ for i = 1:numel(ids)
         'Tooltip',animalStepTip(step), ...
         'ValueChangedFcn',@(o,~)tickAnimalStep(fig,step.id,o.Value));
     uibutton(gl,'Text','settings','FontSize',9, ...
-        'Tooltip','open this step''s parameters in the settings panel', ...
+        'Tooltip','Open this step''s parameters in the panel on the right.', ...
         'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
 end
-uilabel(gl,'Text',['One run per animal, over all of its files whatever their type ' ...
-    'or product.  These parameters are global.'],'WordWrap','on','FontSize',9, ...
-    'FontColor',[0.4 0.4 0.4]);
+uilabel(gl,'Text',['These run once per animal, over all of its recordings whatever ' ...
+    'their type.  Their parameters are the same for every animal.'],'WordWrap','on', ...
+    'FontSize',9,'FontColor',[0.4 0.4 0.4]);
 end
 
 function t = animalStepTip(step)
-t = sprintf(['%s runs ONCE per animal over all of its files, whatever their type.\n' ...
-    'It reads the animal''s reference recording''s %s branch.'], step.label, refBranchWord(step));
+t = sprintf(['%s runs once per animal, over all of its recordings whatever their type.\n' ...
+    'It reads the %s of that animal''s reference recording.'], step.label, refBranchWord(step));
 end
 function w = refBranchWord(step)
 switch step.refBranch
-    case 'contrast', w = 'contrast (_t/_s)';
-    case 'cardiac',  w = 'cardiac (_c)';
-    otherwise,       w = 'any';
+    case 'contrast', w = 'contrast result, _t or _s';
+    case 'cardiac',  w = 'cardiac-cycle result, _c';
+    otherwise,       w = 'first result available';
 end
 end
 function s = warnLine(w)
-if isempty(w), s = 'Every selected step can resolve its reference.'; else, s = ['Warning: ' strjoin(w,'   |   ')]; end
+if isempty(w), s = 'Every step you have ticked can find the reference recording it needs.';
+else,          s = ['Warning: ' strjoin(w,'   |   ')]; end
 end
 
 function tickAnimalStep(fig,stepId,tf)
@@ -968,6 +1138,8 @@ setApp(fig,app);
 wbLog(fig,sprintf('constructor: animal step %s %s', stepId, ternary(logical(tf),'on','off')));
 if tf, autoTickPrereqs(fig,stepId); end
 renderConstructor(fig);
+renderProgress(fig);      % an animal step is a monitor column and a run column too
+autosaveSession(fig);
 end
 
 function autoTickPrereqs(fig,stepId)
@@ -1099,18 +1271,18 @@ animals = unique({plan.animal},'stable');
 for a = 1:numel(animals)
     p = plan(strcmp({plan.animal},animals{a}));
     if isempty(p(1).refIdentity)
-        lines{end+1} = sprintf('%s: NO reference recording pinned', animals{a}); %#ok<AGROW>
+        lines{end+1} = sprintf('%s: no reference recording marked', animals{a}); %#ok<AGROW>
         continue
     end
     bits = cell(1,numel(p));
     for i = 1:numel(p)
         switch p(i).status
-            case 'ok',       bits{i} = sprintf('%s %s', p(i).stepId, p(i).name);
-            case 'fallback', bits{i} = sprintf('%s %s (fallback)', p(i).stepId, p(i).name);
-            otherwise,       bits{i} = sprintf('%s (no file)', p(i).stepId);
+            case 'ok',       bits{i} = sprintf('%s %s', p(i).stepLabel, p(i).name);
+            case 'fallback', bits{i} = sprintf('%s %s - second choice', p(i).stepLabel, p(i).name);
+            otherwise,       bits{i} = sprintf('%s - no file yet', p(i).stepLabel);
         end
     end
-    lines{end+1} = sprintf('%s: ref = %s -> %s', animals{a}, p(1).refLabel, strjoin(bits,' | ')); %#ok<AGROW>
+    lines{end+1} = sprintf('%s: reference %s -> %s', animals{a}, p(1).refLabel, strjoin(bits,' | ')); %#ok<AGROW>
 end
 end
 
@@ -1127,10 +1299,10 @@ for i = 1:numel(plan)
     p = plan(i);
     if ~p.selected, continue; end
     if strcmp(p.status,'noref')
-        w{end+1} = sprintf('%s: %s is selected but the animal has no reference recording', ...
-            p.animal, p.stepId); %#ok<AGROW>
+        w{end+1} = sprintf('%s: %s is ticked but this animal has no reference recording', ...
+            p.animal, p.stepLabel); %#ok<AGROW>
     elseif any(strcmp(p.status,{'fallback','missing'})) && ~willBeProduced(app,p)
-        w{end+1} = sprintf('%s: %s - %s', p.animal, p.stepId, p.note); %#ok<AGROW>
+        w{end+1} = sprintf('%s: %s - %s', p.animal, p.stepLabel, p.note); %#ok<AGROW>
     end
 end
 end
@@ -1252,14 +1424,15 @@ if isempty(step) || (isempty(app.selType) && ~isAnimal)
 end
 c.stepInfo.Text = stepInfoText(step);
 if isAnimal
-    c.scopeInfo.Text = sprintf(['%s runs once per ANIMAL, over all of its files whatever ' ...
-        'their type or product, so these values are GLOBAL - there is no per-type ' ...
-        'version of them.'], step.label);
+    c.scopeInfo.Text = sprintf(['%s runs once per animal, over all of its recordings ' ...
+        'whatever their type, so these values are the same everywhere - there is no ' ...
+        'separate set per type.'], step.label);
     buildSettingsPanel(fig,c.paramPanel,step,'');
 else
-    c.scopeInfo.Text = sprintf(['These values apply to EVERY file of type "%s" (%d file(s)) - both of ' ...
-        'its product rows if it has two - and to no other type.  Editing one marks this ' ...
-        'type''s downstream steps stale.'], app.selType, typeFileCount(app,app.selType));
+    c.scopeInfo.Text = sprintf(['These values apply to every recording of type "%s" - %d ' ...
+        'of them, and to both its result rows if it has two - and to no other type.  ' ...
+        'Changing one marks the later steps of this type as out of date.'], ...
+        app.selType, typeFileCount(app,app.selType));
     buildSettingsPanel(fig,c.paramPanel,step,app.selType);
 end
 end
@@ -1288,7 +1461,7 @@ end                                    % on BFI must not disturb splitRegions
 setApp(fig,app);
 recomputeBase(fig);                    % new fingerprint for this type's files
 applyInvalidation(fig,seed,type);      % forward cascade, restricted to this type
-refreshCells(fig,{});
+renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
 % a setting can change the PRODUCT this type writes (contrastType -> _t_K | _s_K),
 % and that flag is on every row label and checkbox - so redraw them, do not leave
 % the panels showing the flag the type had before the edit
@@ -1297,6 +1470,7 @@ renderDerivedPanel(fig);
 refreshConstructorSettings(fig);
 refreshSummary(fig);
 wbLog(fig,sprintf('edit [%s] %s.%s -> %s',type,stepId,field,val2str(value)));
+autosaveSession(fig);
 end
 
 function items = presetItems()
@@ -1336,7 +1510,8 @@ setApp(fig,app);
 recomputeBase(fig);
 wbLog(fig,sprintf('constructor: copied configuration %s -> %s', src, dst));
 setConstructorStatus(fig,sprintf('%s now matches %s.', dst, src));
-renderConstructor(fig); refreshCells(fig,{});
+renderConstructor(fig); renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
+autosaveSession(fig);
 end
 
 function applyPreset(fig,presetName,type)
@@ -1371,7 +1546,8 @@ recomputeBase(fig);
 wbLog(fig,sprintf('constructor: %s configured from the "%s" protocol (%s)', ...
     type, p.name, p.note));
 setConstructorStatus(fig,sprintf('%s configured from "%s".', type, p.name));
-renderConstructor(fig); refreshCells(fig,{});
+renderConstructor(fig); renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
+autosaveSession(fig);
 end
 
 function resetTypeConfig(fig,type)
@@ -1385,7 +1561,8 @@ setApp(fig,app);
 recomputeBase(fig);
 wbLog(fig,sprintf('constructor: reset %s to the launcher defaults', type));
 setConstructorStatus(fig,sprintf('%s reset to the launcher defaults.', type));
-renderConstructor(fig); refreshCells(fig,{});
+renderConstructor(fig); renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
+autosaveSession(fig);
 end
 
 function uiCopyType(fig)
@@ -1414,18 +1591,18 @@ for i = 1:numel(types)
     n   = typeFileCount(app,ty);
     brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
     if isempty(brs)
-        lines{end+1} = sprintf('%s: (no raw step selected) - %d file(s)', ty, n); %#ok<AGROW>
+        lines{end+1} = sprintf('%s: nothing selected yet - %d recording(s)', ty, n); %#ok<AGROW>
         continue
     end
     for b = 1:numel(brs)
         ids = wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b});
         inh = wbTypeSelection('inherited', app.typeSel, app.reg, ty, brs{b});
         lbl = sprintf('%s (%s)', ty, rowFlagFor(app,ty,brs{b}));
-        txt = strjoin(ids,', ');
+        txt = stepWords(app.reg,ids);
         if ~isempty(inh)
-            txt = sprintf('%s [+ inherited: %s]', txt, strjoin(inh,', '));
+            txt = sprintf('%s + carried over: %s', txt, stepWords(app.reg,inh));
         end
-        lines{end+1} = sprintf('%s: %s (%d %s x %d files = %d cell-runs)', ...
+        lines{end+1} = sprintf('%s: %s - %d %s on %d recordings = %d runs', ...
             lbl, txt, numel(ids), plural(numel(ids),'step'), n, numel(ids)*n); %#ok<AGROW>
     end
 end
@@ -1437,15 +1614,28 @@ end
 nA = 0;
 if ~isempty(app.labels), nA = numel(wbTypeModel('values', app.labels, 'animal')); end
 if isempty(aids)
-    lines{end+1} = sprintf('Animal steps: none selected - %d animal(s)', nA);
+    lines{end+1} = sprintf('Once per animal: nothing selected - %d %s', nA, plural(nA,'animal'));
 else
-    lines{end+1} = sprintf('Animal steps: %s (%d %s x %d %s = %d runs)', ...
-        strjoin(aids,', '), numel(aids), plural(numel(aids),'step'), ...
+    lines{end+1} = sprintf('Once per animal: %s - %d %s on %d %s = %d runs', ...
+        stepWords(app.reg,aids), numel(aids), plural(numel(aids),'step'), ...
         nA, plural(nA,'animal'), numel(aids)*nA);
 end
 end
 function w = plural(n,word)
 w = word; if n~=1, w = [word 's']; end
+end
+function s = stepWords(reg,ids)
+%stepWords  A step list as the READER knows it: the registry's own labels, never
+%   the internal ids.  'setRegions, dynamicSegmentation' is a programmer's list;
+%   'Regions, Dynamic segmentation' is what the columns and the checkboxes say, so
+%   the summary and the warnings say it too.
+ids = reshape(ids,1,[]);
+out = cell(1,numel(ids));
+for i = 1:numel(ids)
+    st = stepById(reg,ids{i});
+    if isempty(st), out{i} = ids{i}; else, out{i} = st.label; end
+end
+s = strjoin(out,', ');
 end
 
 function refreshSummary(fig)
@@ -1459,11 +1649,11 @@ g = uigridlayout(c.summaryPanel,[2 1],'RowHeight',{'1x','fit'}, ...
     'RowSpacing',3,'Padding',[4 4 4 4]);
 lines = summaryLines(app);
 ref   = animalPlanLines(app);
-if isempty(ref), ref = {'(no animals loaded)'}; end
-lines = [lines, {''}, {'References:'}, ref];
+if isempty(ref), ref = {'no animals loaded yet'}; end
+lines = [lines, {''}, {'Reference recordings:'}, ref];
 uitextarea(g,'Value',lines,'Editable','off','FontName','monospaced', ...
-    'Tooltip',['what each row runs, and the reference RECORDING of each animal with ' ...
-               'the branch file every reference-taking step resolves to']);
+    'Tooltip',['What each row will run, and each animal''s reference recording with ' ...
+               'the exact file every step that needs one will read.']);
 w = constructorWarnings(app);
 lb = uilabel(g,'Text',warnLine(w),'WordWrap','on');
 if isempty(w), lb.FontColor = [0 0.45 0]; else, lb.FontColor = [0.75 0.35 0]; end
@@ -1471,396 +1661,221 @@ end
 
 %% ===================== PROCESS tab ================================== %%
 function buildProcessTab(fig)
-%buildProcessTab  The MONITOR (spec D6): press Run, watch, open results.  Nothing
-%   here is selectable - what runs was decided per TYPE on the Constructor tab -
-%   so the file x step picture is ONE read-only uitable rather than a live widget
-%   per cell.  200 files x 15 steps is 3000 widgets and was exactly where the old
-%   matrix fell over; a table costs one component whatever the file count.
+%buildProcessTab  The MONITOR (spec D6): choose how much to run, press Run, watch,
+%   open results.  Nothing here is selectable - what runs was decided per TYPE on
+%   the Constructor tab, and the From/To pair only says how much of THAT to execute
+%   (spec D1) - so the picture is read-only uitables rather than a live widget per
+%   cell.  200 files x 15 steps is 3000 widgets and was exactly where the old matrix
+%   fell over; a table costs one component whatever the file count.
+%
+%   TWO TABLES, SHAPED LIKE THE CONSTRUCTOR (spec D6/D7).  The Constructor asks two
+%   questions - which RAW steps a type runs, then which DERIVED steps each
+%   (type, product) row runs - so the monitor answers in the same two halves:
+%   above, one row per recording under the raw producers; below, one row per
+%   (recording, product) under the derived steps.  With a type driving two pipelines
+%   the single flat table could not say which column landed on which product, which
+%   is exactly the ambiguity Phase 2b removed upstream.
+%
+%   THE LOG SITS BESIDE THE RAW TABLE, NOT UNDER EVERYTHING.  The raw table carries
+%   only the handful of RAW producer columns, so it never fills the width it was
+%   given, while the derived table carries every later column and wants all the
+%   height it can get.  So the run log - the preview order, the progress and the
+%   errors - moves into the space the raw table was wasting, and the products table
+%   takes the full height that frees up.
 app = getApp(fig); t = app.tabs.process;
 gl = uigridlayout(t,[1 2],'ColumnWidth',{'2.6x','1x'},'Padding',[6 6 6 6],'ColumnSpacing',8);
 
-% -- LEFT: toolbar + the state table + the selected row + the log --
-left = uigridlayout(gl,[4 1],'RowHeight',{'fit','1.8x','fit','1x'},'RowSpacing',6);
-tb = uigridlayout(left,[1 7], ...
-    'ColumnWidth',{'fit','fit','fit','1x','fit','fit','fit'},'Padding',[0 0 0 0]);
+% -- LEFT: toolbar + (recordings | log) + the products table + the selected row --
+left = uigridlayout(gl,[4 1], ...
+    'RowHeight',{'fit','1x','1.5x','fit'},'RowSpacing',4);
+tb = uigridlayout(left,[1 12], ...
+    'ColumnWidth',{'fit',130,'fit',130,'fit','fit','fit','1x','fit','fit','fit','fit'}, ...
+    'Padding',[0 0 0 0],'ColumnSpacing',4);
+uilabel(tb,'Text','From','FontWeight','bold','Tooltip',tipRangeFrom());
+c.fromDrop = uidropdown(tb,'Items',{noRangeItem()},'ItemsData',{''}, ...
+    'ValueChangedFcn',@(s,~)onRangeEdit(fig,'from',s.Value),'Tooltip',tipRangeFrom());
+uilabel(tb,'Text','To','FontWeight','bold','Tooltip',tipRangeTo());
+c.toDrop = uidropdown(tb,'Items',{noRangeItem()},'ItemsData',{''}, ...
+    'ValueChangedFcn',@(s,~)onRangeEdit(fig,'to',s.Value),'Tooltip',tipRangeTo());
 c.previewBtn = uibutton(tb,'Text','Preview order','ButtonPushedFcn',@(~,~)dryRun(fig), ...
-    'Tooltip','list, in execution order, every step the configuration would run (no wrapper is called)');
+    'Tooltip','List everything that would run, in the order it would run.  Nothing is processed.');
 c.runBtn = uibutton(tb,'Text','Run','ButtonPushedFcn',@(~,~)runChecked(fig), ...
-    'BackgroundColor',[0.82 0.92 0.82],'Tooltip','run the configured steps, in dependency order');
+    'BackgroundColor',[0.82 0.92 0.82], ...
+    'Tooltip','Run everything from the From step to the To step, in the right order.');
 c.stopBtn = uibutton(tb,'Text','Stop','Enable','off','ButtonPushedFcn',@(~,~)cancelRun(fig), ...
-    'BackgroundColor',[1 0.86 0.86],'Tooltip','stop after the current step finishes');
+    'BackgroundColor',[1 0.86 0.86],'Tooltip','Stop once the step now running has finished.');
 c.progLabel = uilabel(tb,'Text','Ready.','FontAngle','italic');
 c.presetDrop = uidropdown(tb,'Items',{'(launcher defaults)'},'Value','(launcher defaults)', ...
-    'ValueChangedFcn',@(s,~)onPresetPick(fig,s.Value),'Tooltip','seed the settings bag from a saved preset');
+    'ValueChangedFcn',@(s,~)onPresetPick(fig,s.Value), ...
+    'Tooltip','Start every parameter from a set you saved earlier.');
 uibutton(tb,'Text','Save preset...','ButtonPushedFcn',@(~,~)uiSavePreset(fig));
 uibutton(tb,'Text','Load preset...','ButtonPushedFcn',@(~,~)uiLoadPreset(fig));
+c.wipeBtn = uibutton(tb,'Text','Wipe all...','BackgroundColor',[1 0.82 0.82], ...
+    'ButtonPushedFcn',@(~,~)uiWipeAll(fig),'Tooltip',tipWipeAll());
 
-c.stateTable = uitable(left,'Data',{},'ColumnName',{'File'},'RowName',{}, ...
-    'ColumnEditable',false,'CellSelectionCallback',@(~,ev)onProgressSelect(fig,ev), ...
+% -- the recordings table and the run log share one row (see the header) --
+topRow = uigridlayout(left,[1 2],'ColumnWidth',{'1.5x','1x'}, ...
+    'Padding',[0 0 0 0],'ColumnSpacing',8);
+rawBox = uigridlayout(topRow,[2 1],'RowHeight',{'fit','1x'},'Padding',[0 0 0 0],'RowSpacing',2);
+uilabel(rawBox,'Text','Recordings - what is done to the recording itself, and it goes first', ...
+    'FontWeight','bold','Tooltip',progressLegend());
+c.rawTable = uitable(rawBox,'Data',{},'ColumnName',{'Recording'},'RowName',{}, ...
+    'ColumnEditable',false,'CellSelectionCallback',@(~,ev)onProgressSelect(fig,'raw',ev), ...
     'Tooltip',progressLegend());
-c.detail = uilabel(left,'Text','Select a row to see its file.','WordWrap','on','FontAngle','italic');
-c.log = uitextarea(left,'Value',{'Ready.'},'Editable','off');
+logBox = uigridlayout(topRow,[2 1],'RowHeight',{'fit','1x'},'Padding',[0 0 0 0],'RowSpacing',2);
+uilabel(logBox,'Text','Run log - the preview order, the progress and the errors', ...
+    'FontWeight','bold');
+c.log = uitextarea(logBox,'Value',{'Ready.'},'Editable','off');
 
-% -- RIGHT: the result links (spec D5) --
-right = uigridlayout(gl,[3 1],'RowHeight',{'fit','1x','fit'},'RowSpacing',6);
-uilabel(right,'Text','Results (newest first)','FontWeight','bold');
-c.resultList = uilistbox(right,'Items',{'(no report images yet)'},'ItemsData',{''}, ...
-    'Tooltip',['every report image the run produced, newest first - double-click to open it ' ...
-               'in the desktop viewer, which stays zoomable while processing continues'], ...
-    'DoubleClickedFcn',@(s,~)openArtifactViewer(s.Value));
+prodBox = uigridlayout(left,[2 1],'RowHeight',{'fit','1x'},'Padding',[0 0 0 0],'RowSpacing',2);
+uilabel(prodBox,'Text','Results - one row for each result your setup creates', ...
+    'FontWeight','bold','Tooltip',derivedLegend());
+c.derivedTable = uitable(prodBox,'Data',{},'ColumnName',{'Recording and result'},'RowName',{}, ...
+    'ColumnEditable',false,'CellSelectionCallback',@(~,ev)onProgressSelect(fig,'derived',ev), ...
+    'Tooltip',derivedLegend());
+c.detail = uilabel(left,'Text','Select a row to see its file.','WordWrap','on','FontAngle','italic');
+
+% -- RIGHT: the report links (spec D5), what to show, the PDF switch (D9), Exit --
+right = uigridlayout(gl,[5 1],'RowHeight',{'fit','fit','1x','fit','fit'},'RowSpacing',6);
+head = uigridlayout(right,[1 2],'ColumnWidth',{'1x','fit'}, ...
+    'Padding',[0 0 0 0],'ColumnSpacing',4);
+uilabel(head,'Text','Reports (newest first)','FontWeight','bold');
+c.kindDrop = uidropdown(head,'Items',resultKindItems(),'ItemsData',resultKindIds(), ...
+    'Value','all','ValueChangedFcn',@(s,~)setResultFilter(fig,s.Value), ...
+    'Tooltip',tipResultKind());
+c.pdfCheck = uicheckbox(right,'Text','Create PDF reports','Value',false, ...
+    'ValueChangedFcn',@(s,~)setPdfReports(fig,s.Value),'Tooltip',tipPdfReports());
+c.resultList = uilistbox(right,'Items',{emptyResultItem()},'ItemsData',{''}, ...
+    'Tooltip',['Every report the run has produced, newest first.  Double-click one to ' ...
+               'open it in your image viewer, where you can zoom while processing ' ...
+               'carries on.'], ...
+    'DoubleClickedFcn',@(s,~)openArtifactViewer(fig,s.Value));
 c.openBtn = uibutton(right,'Text','Open selected', ...
-    'ButtonPushedFcn',@(~,~)openArtifactViewer(getApp(fig).c.process.resultList.Value));
+    'ButtonPushedFcn',@(~,~)openArtifactViewer(fig,getApp(fig).c.process.resultList.Value));
+f = tabFooter(right,fig,'',[],'');        % the last tab: Exit only
+c.exitBtn = f.exitBtn;
 
 app.c.process = c; setApp(fig,app);
 end
 
 function t = progressLegend()
-%progressLegend  What the state words in the table mean, in one tooltip.
-t = ['read-only state of every (file, step): ' char(183) ' = the configuration does not ' ...
-     'run it | queued = it will | running NN% = it is | done = on disk | error = it threw ' ...
-     '| skipped = configured but its input cannot be produced'];
+%progressLegend  What the state words in the table mean, in one tooltip.  It is a
+%   PICTURE, not a control: what runs is decided on the Constructor tab.
+t = ['This table shows you what is happening; you cannot change anything in it.  ' ...
+     'Each cell reads ' char(183) ' when your setup does not run that step, queued when ' ...
+     'it is waiting its turn, running NN% while it works, done when the result is ' ...
+     'saved, error when it failed, and skipped when it was asked for but its input ' ...
+     'could not be made.'];
 end
 
-%% ===================== EXPORT tab ================================== %%
-function buildExportTab(fig)
-%buildExportTab  A sheet/format selection UI in front of exportToExcel: pick which
-%   of the loaded recordings to export, which sheets to write, and the format.
-app = getApp(fig); t = app.tabs.export;
-gl = uigridlayout(t,[1 2],'ColumnWidth',{'1.4x','1x'},'Padding',[8 8 8 8],'ColumnSpacing',10);
-
-% -- LEFT: exportable recordings + run --
-left = uigridlayout(gl,[4 1],'RowHeight',{'fit','1x','fit','fit'},'RowSpacing',6);
-uilabel(left,'Text','Export processed results to Excel (wraps exportToExcel).','FontWeight','bold');
-c.fileList = uilistbox(left,'Items',{},'Multiselect','on', ...
-    'Tooltip',['The *_BFI_d.mat recordings discovered for the loaded files.  ' ...
-               'Selected ones are exported (one workbook each).'], ...
-    'ValueChangedFcn',@(~,~)refreshExportSheets(fig));
-rr = uigridlayout(left,[1 3],'ColumnWidth',{'fit','fit','1x'},'Padding',[0 0 0 0]);
-uibutton(rr,'Text','Refresh files','ButtonPushedFcn',@(~,~)refreshExportFiles(fig), ...
-    'Tooltip','re-scan the loaded recordings for exportable *_BFI results');
-uibutton(rr,'Text','Export selected','BackgroundColor',[0.82 0.92 0.82], ...
-    'ButtonPushedFcn',@(~,~)uiRunExport(fig),'Tooltip','write one workbook per selected recording');
-c.exportStatus = uilabel(rr,'Text','No files.','FontAngle','italic');
-
-% -- RIGHT: format + which sheets --
-right = uigridlayout(gl,[3 1],'RowHeight',{'fit','1x','fit'},'RowSpacing',6);
-fr = uigridlayout(right,[1 2],'ColumnWidth',{'fit','1x'},'Padding',[0 0 0 0]);
-uilabel(fr,'Text','Format');
-c.fmt = uidropdown(fr,'Items',{'xlsx','xls'},'Value','xlsx', ...
-    'Tooltip','output workbook format (both hold multiple sheets)');
-sp = uipanel(right,'Title','Sheets to write','FontWeight','bold','Scrollable','on');
-names = exportSheetNames();
-sg = uigridlayout(sp,[numel(names) 1],'RowHeight',repmat({'fit'},1,numel(names)), ...
-    'RowSpacing',2,'Padding',[6 6 6 6],'Scrollable','on');    % the grid owns the scroll, not the panel
-for i = 1:numel(names)
-    c.sheetChk.(names{i}) = uicheckbox(sg,'Text',names{i},'Value',true, ...
-        'Tooltip','tick to include this sheet (greyed = not produced by any selected file)');
-end
-brow = uigridlayout(right,[1 2],'ColumnWidth',{'1x','1x'},'Padding',[0 0 0 0]);
-uibutton(brow,'Text','All','ButtonPushedFcn',@(~,~)setAllSheets(fig,true));
-uibutton(brow,'Text','None','ButtonPushedFcn',@(~,~)setAllSheets(fig,false));
-
-app.c.export = c; setApp(fig,app);
-refreshExportFiles(fig);
+function t = derivedLegend()
+%derivedLegend  The bottom table's extra promise: its rows come from the
+%   CONFIGURATION, not from disk (spec D7), so a product appears here the moment its
+%   producer is ticked - which is the only way to see what is queued FOR it.
+t = [progressLegend() '  Each row is one recording and one of its results, taken ' ...
+     'from what you set up on the Constructor tab - so a row appears as soon as you ' ...
+     'tick the step that will create it, before the file exists.'];
 end
 
-function names = exportSheetNames()
-%exportSheetNames  The canonical sheets exportToExcel can produce, in write order.
-names = {'sMetrics','sData','sMetricsROI','sDataROI','dvsMetrics','dvsData', ...
-         'dvsDiameter','pulsatility','dvsPulsatility'};
+function s = noRangeItem()
+%noRangeItem  What the two dropdowns read with nothing configured.
+s = '(nothing set up yet)';
+end
+function t = tipRangeFrom()
+t = ['Where the run STARTS.  "Last valid" carries on where you left off: it begins at ' ...
+     'the first step that is not finished and leaves out whatever is already saved.  ' ...
+     'Choosing a step by name instead runs it again, finished or not, together with ' ...
+     'everything up to To.  That is how you redo segmentation with new parameters ' ...
+     'without changing anything you have set up, and how you re-open the vessel-type ' ...
+     'painter on an animal you have already done.'];
+end
+function t = tipRangeTo()
+t = ['Where the run STOPS.  That step is included.  Only steps at or after From are ' ...
+     'offered, and this moves up with From if you push From past it.'];
 end
 
-function refreshExportFiles(fig)
-%refreshExportFiles  Rebuild the exportable-recording list from the loaded rows.
-app = getApp(fig); c = app.c.export;
-srcs = resolveExportSources(app);
-app.exportSrcs = srcs; setApp(fig,app);
-items = cell(1,numel(srcs));
-for i = 1:numel(srcs), items{i} = sprintf('%s   [%s]', srcs(i).label, srcs(i).animal); end
-c.fileList.Items = items;
-if isempty(srcs)
-    c.fileList.ItemsData = {};
-    c.fileList.Value = {};                            % empty Items -> Value must be {}
-    c.exportStatus.Text = 'No exportable *_BFI results for the loaded files.';
-else
-    c.fileList.ItemsData = 1:numel(srcs);
-    c.fileList.Value = 1:numel(srcs);                 % all selected by default
-    c.exportStatus.Text = sprintf('%d exportable recording(s).', numel(srcs));
+function s = emptyResultItem()
+%emptyResultItem  What the result list reads with nothing (yet) to show.
+s = '(no reports yet)';
 end
-refreshExportSheets(fig);
+function items = resultKindItems()
+items = {'All','Images','PDFs'};
+end
+function ids = resultKindIds()
+%resultKindIds  The filter vocabulary.  It filters what is SHOWN and never what is
+%   stored, so switching back to All brings every entry back (spec D10).
+ids = {'all','images','pdfs'};
+end
+function t = tipResultKind()
+t = ['What to show: everything, only the report images, or only the PDFs.  This ' ...
+     'hides entries, it never throws them away - switch back to All and they are ' ...
+     'all still there.'];
+end
+function t = tipWipeAll()
+t = ['Delete every processed file - _d.mat, _r.mat and _s.mat - belonging to the ' ...
+     'recordings listed on the Files tab, so you can process the whole set again ' ...
+     'from scratch.  Your raw recordings are never touched, nothing outside the ' ...
+     'listed recordings is touched, and you are shown how many files it is and ' ...
+     'asked before anything is removed.  It cannot be undone.'];
+end
+function t = tipPdfReports()
+t = ['With this on, all the report images one step produces are collected into a ' ...
+     'single PDF, one page per image, as soon as that step finishes its last ' ...
+     'recording.  You page through one document instead of opening 60 JPGs.  The ' ...
+     'PDFs go into a "workbenchReports" folder beside the folder you scanned, or ' ...
+     'beside the images themselves if you added files by hand, and they appear in ' ...
+     'this list.  Stopping a run still leaves you the PDFs it already finished.'];
 end
 
-function refreshExportSheets(fig)
-%refreshExportSheets  Grey / untick sheets no selected file can produce.
-app = getApp(fig); c = app.c.export;
-sel = selectedExportSrcs(app,c);
-avail = availableExportSheets({sel.rpath});
-names = exportSheetNames();
-for i = 1:numel(names)
-    nm = names{i};
-    if ~isfield(c.sheetChk,nm) || ~isgraphics(c.sheetChk.(nm)), continue; end
-    chk = c.sheetChk.(nm);
-    if any(strcmp(nm,avail))
-        if strcmp(chk.Enable,'off'), chk.Value = true; end     % re-enabled -> re-tick
-        chk.Enable = 'on';
+%% ===================== hand-off to the standalone tools ============ %%
+function handOffSession(fig, tool)
+%handOffSession  THE hand-off contract (spec §5), shared by both Files-tab buttons.
+%   Export and Explore are no longer tabs: they are separate programs, and the ONLY
+%   thing that travels between them and this window is the session FILE.  So the
+%   sequence is always the same - make the session on disk current, then open the
+%   tool on that path:
+%
+%       autosaveSession(fig)  ->  guiExport(sessionPath) / guiExplore(sessionPath)
+%
+%   Nothing is captured on the way back.  The return value is deliberately dropped,
+%   so this window holds no handle to the tool, never waits for it, and is entirely
+%   unaffected when the user closes it - and the tool, for its part, has no idea the
+%   workbench exists.  When there is no session to write yet (nothing loaded at all)
+%   the tool is simply opened empty: both work perfectly well from their own file /
+%   folder pickers, which is the point of un-hosting them.
+autosaveSession(fig);
+app = getApp(fig);
+pth = app.sessionPath;
+if isempty(pth) && ~isempty(app.files)
+    % autosave needs a scanned root to invent a location; files added BY HAND have
+    % none, so the hand-off writes one beside the first file rather than handing
+    % over nothing.  This is the only reason the button ever writes on its own.
+    saveSessionTo(fig, fullfile(fileparts(app.files(1).path), 'workbench_session.mat'));
+    pth = getApp(fig).sessionPath;
+end
+try
+    if isempty(pth) || ~isfile(pth)
+        wbLog(fig, [tool ': no session on disk yet - opening it empty.']);
+        feval(tool);
     else
-        chk.Value = false; chk.Enable = 'off';                 % can't write it
+        wbLog(fig, [tool ' <- session ' pth]);
+        feval(tool, pth);
     end
-end
-end
-
-function srcs = resolveExportSources(app)
-%resolveExportSources  Exportable *_BFI_d.mat sources for the loaded recordings.
-%   For each loaded row, glob the recording's base name for *_BFI_d.mat, keep the
-%   identity matches whose _r.mat sibling (exportToExcel's real input) exists.
-srcs = struct('path',{},'rpath',{},'animal',{},'label',{});
-seen = containers.Map('KeyType','char','ValueType','logical');
-for i = 1:numel(app.rows)
-    r = app.rows(i); m = r.model;
-    if isempty(m.folder) || ~isfolder(m.folder), continue; end
-    base = [m.roiPrefix m.stem];
-    d = dir(fullfile(m.folder,[base '*_BFI_d.mat']));
-    for k = 1:numel(d)
-        p = fullfile(d(k).folder, d(k).name);
-        if isKey(seen,p), continue; end
-        cm = wbFileModel(p);
-        if ~strcmp(cm.identity, m.identity), continue; end
-        rp = strrep(p,'_d.mat','_r.mat');
-        if ~isfile(rp), continue; end                          % export needs the RESULTS file
-        seen(p) = true;
-        [~,nm,ex] = fileparts(p);
-        srcs(end+1) = struct('path',p,'rpath',rp,'animal',r.animal,'label',[nm ex]); %#ok<AGROW>
-    end
-end
-end
-
-function sel = selectedExportSrcs(app,c)
-%selectedExportSrcs  The exportable sources at the currently-selected list rows.
-srcs = app.exportSrcs;
-if isempty(srcs), sel = srcs; return; end
-idx = c.fileList.Value;
-if isempty(idx), idx = 1:numel(srcs); end
-sel = srcs(idx);
-end
-
-function names = availableExportSheets(rpaths)
-%availableExportSheets  Union (canonical order) of sheets producible from the given
-%   RESULTS files - mirrors exportToExcel's own presence tests, so the tick list
-%   matches what a full export would actually write.
-all = exportSheetNames();
-found = {};
-for i = 1:numel(rpaths), found = union(found, availOne(rpaths{i}), 'stable'); end
-names = all(ismember(all,found));
-end
-
-function a = availOne(rpath)
-%availOne  Sheets a single RESULTS file can produce.  A very large file (a per-pixel
-%   vasomotion result) is not fully loaded just to grey a checkbox - assume the base
-%   sheets and let exportToExcel skip any that turn out absent.
-a = {};
-if isempty(rpath) || ~isfile(rpath), return; end
-d = dir(rpath);
-if ~isempty(d) && d(1).bytes > 1.5e9, a = {'sMetrics','sData'}; return; end
-try
-    S = load(rpath,'results');
-catch
-    return
-end
-if ~isfield(S,'results'), return; end
-R = S.results;
-if isfield(R,'sMetrics') && istable(R.sMetrics)
-    a{end+1} = 'sMetrics';
-    if isfield(R,'sData') && isfield(R,'time'), a{end+1} = 'sData'; end
-    if ismember('label', R.sMetrics.Properties.VariableNames)
-        a{end+1} = 'sMetricsROI'; a{end+1} = 'sDataROI';
-    end
-end
-if isfield(R,'dvsMetrics') && istable(R.dvsMetrics)
-    a{end+1} = 'dvsMetrics';
-    if isfield(R,'dvsData'),     a{end+1} = 'dvsData';     end
-    if isfield(R,'dvsDiameter'), a{end+1} = 'dvsDiameter'; end
-end
-if isfield(R,'pulsatility') && isstruct(R.pulsatility)
-    P = R.pulsatility;
-    if isfield(P,'sData') && isstruct(P.sData) && isfield(P.sData,'scalars')
-        a{end+1} = 'pulsatility';
-    end
-    if isfield(R,'dvsMetrics') && isfield(P,'dvsData') && isstruct(P.dvsData) ...
-            && isfield(P.dvsData,'scalars')
-        a{end+1} = 'dvsPulsatility';
-    end
-end
-end
-
-function s = tickedSheets(c)
-%tickedSheets  The sheet names whose checkbox is on (and enabled).
-names = exportSheetNames(); s = {};
-for i = 1:numel(names)
-    nm = names{i};
-    if isfield(c.sheetChk,nm) && isgraphics(c.sheetChk.(nm)) ...
-            && strcmp(c.sheetChk.(nm).Enable,'on') && c.sheetChk.(nm).Value
-        s{end+1} = nm; %#ok<AGROW>
-    end
-end
-end
-
-function setAllSheets(fig,tf)
-%setAllSheets  Tick / untick every currently-enabled sheet checkbox.
-app = getApp(fig); c = app.c.export; names = exportSheetNames();
-for i = 1:numel(names)
-    nm = names{i};
-    if isfield(c.sheetChk,nm) && isgraphics(c.sheetChk.(nm)) && strcmp(c.sheetChk.(nm).Enable,'on')
-        c.sheetChk.(nm).Value = tf;
-    end
-end
-end
-
-function uiRunExport(fig)
-%uiRunExport  Gather the selection from the tab and run exportToExcel over it.
-app = getApp(fig); c = app.c.export;
-sel = selectedExportSrcs(app,c);
-if isempty(sel),                setExportStatus(fig,'Nothing selected to export.'); return; end
-sheets = tickedSheets(c);
-if isempty(sheets),             setExportStatus(fig,'No sheets ticked.'); return; end
-opts = struct('sheets',{sheets}, 'format',['.' c.fmt.Value]);
-runExport(fig, {sel.path}, opts);
-end
-
-function paths = runExport(fig, files, opts)
-%runExport  Call exportToExcel per file (per-file logging + continue-on-error),
-%   mirror the outcome into the Process-tab log, and refresh the matrix.
-if nargin<3 || isempty(opts), opts = struct(); end
-paths = {}; nok = 0; nfail = 0;
-wbLog(fig, sprintf('=== EXPORT: %d file(s) ===', numel(files)));
-for i = 1:numel(files)
-    f = files{i};
-    try
-        exportToExcel({f}, opts);
-        outp = strrep(f,'_d.mat', optExt(opts));
-        paths{end+1} = outp; %#ok<AGROW>
-        nok = nok + 1;
-        wbLog(fig, ['  wrote ' outp]);
-    catch ME
-        nfail = nfail + 1;
-        wbLog(fig, sprintf('  ERROR %s - %s', shortName(f), ME.message));
-    end
-end
-wbLog(fig, sprintf('=== EXPORT complete: %d ok, %d failed ===', nok, nfail));
-setExportStatus(fig, sprintf('Exported %d file(s), %d failed. See the Process-tab log.', nok, nfail));
-recomputeBase(fig); refreshCells(fig,{});          % a new .xlsx flips the export cell to done
-end
-
-function e = optExt(opts)
-%optExt  '.xlsx' (default) or '.xls' from an export opts struct.
-e = '.xlsx';
-if isstruct(opts) && isfield(opts,'format') && ~isempty(opts.format)
-    e = lower(char(string(opts.format))); if e(1)~='.', e = ['.' e]; end
-end
-end
-
-function p = exportSourcePaths(fig)
-%exportSourcePaths  The exportable *_BFI_d.mat paths currently listed (for tests).
-app = getApp(fig);
-if isfield(app,'exportSrcs') && ~isempty(app.exportSrcs), p = {app.exportSrcs.path}; else, p = {}; end
-end
-
-function setExportStatus(fig,msg)
-app = getApp(fig);
-if isfield(app.c,'export') && isfield(app.c.export,'exportStatus') && isgraphics(app.c.export.exportStatus)
-    app.c.export.exportStatus.Text = msg;
-end
-drawnow limitrate;
-end
-
-%% ===================== EXPLORE tab ================================= %%
-function buildExploreTab(fig)
-%buildExploreTab  Host guiExplore inside the Explore tab (a light toolbar + the
-%   embedded app).  If hosting fails on some MATLAB build, fall back to a button
-%   that launches guiExplore in its own window (still seeded from the workbench).
-app = getApp(fig); t = app.tabs.explore;
-gl = uigridlayout(t,[2 1],'RowHeight',{'fit','1x'},'Padding',[6 6 6 6],'RowSpacing',6);
-tb = uigridlayout(gl,[1 2],'ColumnWidth',{'fit','1x'},'Padding',[0 0 0 0]);
-uibutton(tb,'Text','Load workbench files & animals','ButtonPushedFcn',@(~,~)seedExplore(fig,true), ...
-    'Tooltip','seed the explorer with the workbench''s loaded recordings (_r.mat), one explorer group per animal');
-c.exploreStatus = uilabel(tb,'Text','(switch to this tab to seed from the loaded files)','FontAngle','italic');
-host = uipanel(gl,'BorderType','none');
-app.c.explore = c; app.exploreSeedKey = '';
-try
-    guiExplore('Parent',host);                     % embed the whole explorer in the tab
-    app.exploreAPI    = getappdata(fig,'exploreAPI');
-    app.exploreHosted = true;
 catch ME
-    app.exploreAPI    = [];
-    app.exploreHosted = false;
-    delete(host.Children);
-    fb = uigridlayout(host,[2 1],'RowHeight',{'fit','fit'},'Padding',[16 16 16 16],'RowSpacing',8);
-    uilabel(fb,'Text',['Could not host guiExplore in the tab (' ME.message ').'],'WordWrap','on');
-    uibutton(fb,'Text','Open guiExplore in its own window','ButtonPushedFcn',@(~,~)launchExploreChild(fig));
-end
-setApp(fig,app);
-end
-
-function launchExploreChild(fig)
-%launchExploreChild  Fallback: open guiExplore standalone and seed it.
-h = guiExplore;
-app = getApp(fig);
-app.exploreAPI = getappdata(h,'exploreAPI');
-app.exploreHosted = false; app.exploreSeedKey = '';
-setApp(fig,app);
-seedExplore(fig,true);
-end
-
-function seedExplore(fig, force)
-%seedExplore  Push the workbench's exportable RESULTS files + animals into the
-%   hosted guiExplore (only when the file set actually changed, unless forced).
-%   NOTE the explorer's own axis is called 'group' and is the EXPERIMENTAL group;
-%   this seed fills it with the workbench's ANIMAL, which is what it carried before
-%   the two axes were told apart (Phase 5 will feed it the real expGroup).
-if nargin<2, force = false; end
-app = getApp(fig);
-if ~isfield(app,'exploreAPI') || isempty(app.exploreAPI)
-    setExploreStatus(fig,'Explore is not hosted - use the button to open it in its own window.');
-    return
-end
-srcs = resolveExportSources(app);
-rpaths = {srcs.rpath};
-key = strjoin(sort(rpaths),'|');
-if ~force && strcmp(key, app.exploreSeedKey), return; end       % nothing changed
-app.exploreSeedKey = key; setApp(fig,app);
-if isempty(rpaths)
-    setExploreStatus(fig,'No processed *_r.mat results among the loaded files yet.');
-    return
-end
-app.exploreAPI.loadPaths(rpaths, '_r\.mat$', '', '');           % seed the file list
-a = app.exploreAPI.getApp(); order = {a.files.path};            % explore's file order
-animals = unique({srcs.animal},'stable');
-for ai = 1:numel(animals)
-    mem = {srcs(strcmp({srcs.animal},animals{ai})).rpath};
-    idx = find(ismember(order, mem));
-    if ~isempty(idx), app.exploreAPI.createGroup(animals{ai}, idx); end
-end
-setExploreStatus(fig, sprintf('Seeded %d file(s) in %d animal(s) from the workbench.', ...
-    numel(rpaths), numel(animals)));
-end
-
-function setExploreStatus(fig,msg)
-app = getApp(fig);
-if isfield(app.c,'explore') && isfield(app.c.explore,'exploreStatus') && isgraphics(app.c.explore.exploreStatus)
-    app.c.explore.exploreStatus.Text = msg;
+    wbLog(fig, [tool ' could not be opened: ' ME.message]);
 end
 end
 
-%% ===================== tab-change seeding ========================== %%
+%% ===================== tab-change refresh ========================== %%
 function onTabSelected(fig)
-%onTabSelected  Gate the move off the Files tab, then lazily refresh the Export
-%   list / seed Explore when its tab shows.
+%onTabSelected  Gate the move off the Files tab, then repaint the monitor when the
+%   Process tab shows: its rows and its From/To range are derived from the
+%   Constructor's configuration, so they have to be rebuilt after every edit.
 if ~guardTabSwitch(fig), return; end
 app = getApp(fig);
 if ~isfield(app,'tg') || ~isgraphics(app.tg), return; end
 tab = app.tg.SelectedTab;
-if     isequal(tab, app.tabs.export),  refreshExportFiles(fig);
-elseif isequal(tab, app.tabs.explore), seedExplore(fig,false);
-end
+if isequal(tab, app.tabs.process), renderProgress(fig); end   % rows + range follow the config
 end
 
 %% ===================== loaders ===================================== %%
@@ -2101,9 +2116,8 @@ else
 end
 app.reg = wbStepRegistry(app.modality);
 if nargin<3 || ~keepOverlay
-    % a fresh load starts with no session overlay
-    app.checked = containers.Map('KeyType','char','ValueType','any');
-    app.stale   = containers.Map('KeyType','char','ValueType','any');
+    % a fresh load starts with no invalidation overlay
+    app.stale = containers.Map('KeyType','char','ValueType','any');
 end
 setApp(fig,app);
 recomputeBase(fig);
@@ -2112,6 +2126,7 @@ renderProgress(fig);
 logPerFileFlips(fig);         % D6: say so when a cell stopped reading as done
 renderConstructor(fig);       % types are data: a label edit adds/removes a row live
 refreshStatus(fig);
+autosaveSession(fig);         % the state changed -> the last session follows it
 end
 
 function n = logPerFileFlips(fig)
@@ -2313,9 +2328,9 @@ v = strtrim(c.assignVal.Value);
 if isempty(v), setCurStatus(fig,'Type or pick a value first.'); return; end
 field = c.assignAxis.Value;
 [n,refused] = quickAssign(fig, sel, field, v);
-msg = sprintf('%d of %d selected row(s) -> %s "%s".', n, numel(sel), field, v);
+msg = sprintf('%d of %d selected rows set to %s "%s".', n, numel(sel), field, v);
 if refused > 0
-    msg = [msg sprintf('  %d refused (the file extension does not allow it).', refused)];
+    msg = [msg sprintf('  %d were left alone - their file format does not allow it.', refused)];
 end
 setCurStatus(fig,msg);
 end
@@ -2399,9 +2414,9 @@ names = {app.files.name};
 [u,~,ic] = unique(names);
 dup = u(accumarray(ic,1) > 1);
 if ~isempty(dup)
-    problems{end+1} = sprintf(['%d file name(s) appear more than once (%s). ' ...
-        'The workbench and the pipeline identify recordings BY NAME, so a scanned ' ...
-        'tree must not repeat one - rename them or scan a narrower root.'], ...
+    problems{end+1} = sprintf(['%d file names appear more than once: %s. ' ...
+        'Recordings are identified by name, here and in the pipeline, so no two ' ...
+        'may share one - rename them, or search a narrower folder.'], ...
         numel(dup), strjoin(shortList(dup),', '));
 end
 
@@ -2414,7 +2429,7 @@ for i = 1:numel(ax)
     if strcmp(ax{i},'index'), bucket = char(0);  end        % never matches: '1' is fine
     bad = strcmp({app.files.(ax{i})}, bucket) | cellfun(@isempty,{app.files.(ax{i})});
     if any(bad)
-        problems{end+1} = sprintf('%d file(s) have no %s assigned (%s).', ...
+        problems{end+1} = sprintf('%d files have no %s assigned: %s.', ...
             nnz(bad), nm{i}, strjoin(shortList({app.files(bad).name}),', ')); %#ok<AGROW>
     end
 end
@@ -2425,8 +2440,8 @@ for i = 1:numel(animalsNow)
     if ~isKey(app.animalRef, animalsNow{i}), noRef{end+1} = animalsNow{i}; end %#ok<AGROW>
 end
 if ~isempty(noRef)
-    warnings{end+1} = sprintf(['%d animal(s) have no reference recording (%s) - ' ...
-        'legal, but registration and vessel typing need one.'], ...
+    warnings{end+1} = sprintf(['%d animals have no reference recording: %s. ' ...
+        'That is allowed, but registration and vessel typing need one.'], ...
         numel(noRef), strjoin(shortList(noRef),', '));
 end
 end
@@ -2475,12 +2490,8 @@ if isfield(app.c,'files') && isfield(app.c.files,'nextBtn') && isgraphics(app.c.
 end
 end
 
-function goToConstructor(fig)
-%goToConstructor  The Files tab's "Next": move on once the set is complete.
-if ~guardTabSwitchTo(fig, getApp(fig).tabs.constructor), return; end
-end
 function s = warnText(w)
-if isempty(w), s = ''; else, s = ['   (' strjoin(w,'; ') ')']; end
+if isempty(w), s = ''; else, s = ['   ' strjoin(w,'   ')]; end
 end
 function tf = guardTabSwitch(fig)
 %guardTabSwitch  Refuse to leave the Files tab while the file set is incomplete.
@@ -2496,13 +2507,17 @@ alertIncomplete(fig,app);
 end
 
 function tf = guardTabSwitchTo(fig,tab)
-%guardTabSwitchTo  Move to a tab, or refuse and say what is still missing.
+%guardTabSwitchTo  Move to a tab, or refuse and say what is still missing.  This is
+%   what every 'Next' button does, and setting SelectedTab in code does NOT fire the
+%   tab group's callback - so the monitor is repainted here as well, or arriving by
+%   Next would show a Process tab still holding the configuration's previous shape.
 tf = false;
 app = getApp(fig);
 if ~isfield(app,'tg') || ~isgraphics(app.tg), return; end
 if ~filesValid(app), alertIncomplete(fig,app); return; end
 app.tg.SelectedTab = tab;
 tf = true;
+if isequal(tab, app.tabs.process), renderProgress(fig); end
 end
 
 function alertIncomplete(fig,app)
@@ -2657,12 +2672,13 @@ else
         if ~isKey(app.animalRef, animalsNow{i}), nNoRef = nNoRef + 1; end
     end
     nUntyped = sum(strcmp({app.files.type}, wbTypeModel('default','type')));
-    txt = sprintf(['%d files - %d animal(s) - %d type(s) - %d group(s) - ' ...
-        '%d untyped - %d animal(s) without a reference.  Modality %s.'], ...
-        numel(app.files), numel(animalsNow), ...
-        numel(wbTypeModel('values', app.labels, 'type')), ...
-        numel(wbTypeModel('values', app.labels, 'expGroup')), ...
-        nUntyped, nNoRef, app.modality);
+    nTy = numel(wbTypeModel('values', app.labels, 'type'));
+    nGr = numel(wbTypeModel('values', app.labels, 'expGroup'));
+    txt = sprintf(['%d files - %d %s - %d recording %s - %d experimental %s - ' ...
+        '%d untyped - %d %s without a reference recording.  Modality %s.'], ...
+        numel(app.files), numel(animalsNow), plural(numel(animalsNow),'animal'), ...
+        nTy, plural(nTy,'type'), nGr, plural(nGr,'group'), ...
+        nUntyped, nNoRef, plural(nNoRef,'animal'), app.modality);
 end
 app.c.files.status.Text = txt;
 end
@@ -2745,7 +2761,16 @@ if isstruct(model) && isfield(model,'type'), ty = char(model.type); end
 end
 
 function s = resolveCellState(app,identity,stepId)
-%resolveCellState  Disk baseline with the live session overlay (checked/stale).
+%resolveCellState  What one RECORDING's step reads as: the disk baseline with the
+%   two live overlays on top - the transient run state, and the in-session
+%   invalidation overlay (app.stale).
+%
+%   THERE IS NO 'checked' STATE ANY MORE (Phase 6).  Selection is a property of the
+%   recording TYPE and lives in the Constructor; the per-cell queue that used to
+%   promote 'ready' to 'checked' - and the look-ahead that promoted an
+%   'unavailable' cell whose prerequisites were merely QUEUED - went with it.
+%   Readiness is now exactly what wbStateEngine says it is, which already counts a
+%   prerequisite whose gating field is on disk, so nothing here re-derives it.
 key = cellKey(identity,stepId);
 % transient run overlay (running/done/error) is authoritative during & after a run
 if isfield(app,'runState') && isKey(app.runState,key)
@@ -2758,120 +2783,178 @@ s = bs.(stepId);
 if strcmp(s,'done') && isKey(app.stale,key)
     s = 'stale';                                   % an in-session edit pushed it stale
 end
-if strcmp(s,'unavailable')
-    s = projectCheckable(app,identity,stepId);     % promotable if prereqs are queued
-end
-if any(strcmp(s,{'ready','stale'})) && isKey(app.checked,key) && app.checked(key)
-    s = 'checked';                                 % queued for the next run
-end
 end
 
-function s = projectCheckable(app,identity,stepId)
-%projectCheckable  Look-ahead gating: an 'unavailable' cell becomes 'ready' when
-%   it is blocked ONLY by prerequisites that are themselves already done on disk or
-%   QUEUED (checked) for this recording - so a whole chain (contrast -> setRegions
-%   -> segmentation -> ...) can be queued in one pass, provided it is checked in
-%   dependency order (the executor then runs it in that order).  Entry steps (no
-%   requires) and modality-inapplicable steps are never promoted: an entry step
-%   needs its real input, and an inapplicable step's prereqs are inapplicable too,
-%   so this returns 'unavailable' for them.
-s = 'unavailable';
-step = stepById(app.reg,stepId);
-req  = wbPrereqs('all', step);
-if isempty(step) || isempty(req), return; end
-have = {};
-for i = 1:numel(req)
-    reqState = resolveCellState(app,identity,req{i});             % recurse over the DAG
-    if any(strcmp(reqState,{'done','stale','checked'})), have{end+1} = req{i}; end %#ok<AGROW>
-end
-if ~wbPrereqs('met', step, have), return; end
-s = 'ready';
-end
-
-%% ===================== the progress table (read-only) =============== %%
-function rows = progressRows(app)
-%progressRows  The monitor's rows: ONE PER FILE (spec D4/D6), ordered the way the
-%   run goes - animal, reference first, then the file's position in its animal -
-%   so watching the table reads top to bottom.  A recording with two product files
-%   contributes two rows, which is the whole point: each is gated on its OWN
-%   pipeline (D8) and each carries only the steps its branch runs.
+%% ===================== the progress tables (read-only) ============== %%
+function rows = progressRows(app, kind)
+%progressRows  A monitor table's rows, ordered the way the run goes - animal,
+%   reference first, then the file's position in its animal - so watching reads top
+%   to bottom.  The two tables mirror the Constructor's two questions (spec D6):
+%
+%     'raw'     ONE PER FILE of the working set: what happens to the recording
+%               itself.  A recording with two product files in the working set
+%               contributes two rows, each gated on its OWN pipeline (D8).
+%     'derived' ONE PER (recording, PRODUCT), taken from the CONFIGURATION rather
+%               than from disk (D7): the branches this file's type actually runs,
+%               so a '_c' row appears the moment its raw producer is ticked, long
+%               before the '_c' file exists.  Deduped on (identity, branch), since
+%               several files of one recording answer to the same product row.
+if nargin<2, kind = 'raw'; end
 rows = emptyProgressRows();
+brsAll = wbTypeSelection('branches', app.reg);
+seen = containers.Map('KeyType','char','ValueType','logical');
 for i = 1:numel(app.files)
     f = app.files(i);
     k = find(strcmp({app.rows.identity}, f.model.identity),1);
     if isempty(k), ai = inf; ria = inf; isRef = f.isRef; else
         ai = app.rows(k).animalIdx; ria = app.rows(k).rowInAnimal; isRef = app.rows(k).isRef;
     end
-    rows(end+1) = struct('path',f.path,'model',f.model,'identity',f.model.identity, ...
-        'label',f.name,'animal',f.animal,'type',f.type,'expGroup',f.expGroup, ...
-        'branch',f.model.branch,'isRef',logical(isRef),'animalIdx',ai,'rowInAnimal',ria); %#ok<AGROW>
+    if strcmp(kind,'raw')
+        rows(end+1) = mkProgressRow(app,'raw',f,f.model.branch,ai,ria,isRef,0); %#ok<AGROW>
+        continue
+    end
+    if isempty(f.type), continue; end
+    brs = wbTypeSelection('rows', app.typeSel, app.reg, f.type);
+    for b = 1:numel(brs)
+        key = [f.model.identity '||' brs{b}];
+        if isKey(seen,key), continue; end              % one row per (recording, product)
+        seen(key) = true;
+        bi = find(strcmp(brs{b}, brsAll),1);
+        if isempty(bi), bi = numel(brsAll)+1; end
+        rows(end+1) = mkProgressRow(app,'derived',f,brs{b},ai,ria,isRef,bi); %#ok<AGROW>
+    end
 end
 if isempty(rows), return; end
-[~,ord] = sortrows([[rows.animalIdx]', [rows.rowInAnimal]', (1:numel(rows))']);
+[~,ord] = sortrows([[rows.animalIdx]', [rows.rowInAnimal]', [rows.branchIdx]', (1:numel(rows))']);
 rows = rows(ord);
 end
 
+function r = mkProgressRow(app,kind,f,branch,ai,ria,isRef,branchIdx)
+%mkProgressRow  One row of either table: the FILE NAME WITHOUT ITS EXTENSION, then
+%   the product this row stands for in brackets - the same flag rowFlagFor gives the
+%   Constructor (spec D8), so the two surfaces name a product identically.  The
+%   extension is the one part of the name that never distinguishes two rows here,
+%   so it only costs column width.  The reference recording says so in words.
+flag = '';
+if strcmp(kind,'derived') && ~isempty(f.type), flag = rowFlagFor(app,f.type,branch); end
+[~,lbl] = fileparts(char(f.name));
+if ~isempty(flag), lbl = sprintf('%s (%s)', lbl, flag); end
+if isRef, lbl = [lbl '  reference']; end
+r = struct('kind',kind,'path',f.path,'model',f.model,'identity',f.model.identity, ...
+    'label',f.name,'rowLabel',lbl,'animal',f.animal,'type',f.type,'expGroup',f.expGroup, ...
+    'branch',char(branch),'flag',flag,'isRef',logical(isRef), ...
+    'animalIdx',ai,'rowInAnimal',ria,'branchIdx',branchIdx);
+end
+
+function ids = monitorColumns(reg, kind)
+%monitorColumns  A table's columns, DERIVED from the registry the same way the
+%   Constructor derives its two panels - nothing here lists a step.  The per-animal
+%   steps ride with the derived half: they land ON a product row (registration
+%   templates the '_t' product, vessel typing paints the '_c' one) and
+%   plannedStepsFor already adds them to every row, so between the two tables every
+%   registry step has exactly one column.
+if strcmp(kind,'raw')
+    ids = wbTypeSelection('rawSteps', reg);
+else
+    ids = orderIds(reg, [wbTypeSelection('derivedSteps',reg), wbTypeSelection('animalSteps',reg)]);
+end
+end
+
 function renderProgress(fig)
-%renderProgress  (Re)build the state table from scratch: rows, columns, contents.
+%renderProgress  (Re)build BOTH state tables from scratch: rows, columns, contents,
+%   and the From/To items - all of which follow the configuration, so this is what
+%   a Constructor edit calls.  refreshCells is the cheap repaint that does not.
 app = getApp(fig); c = app.c.process;
-if ~isfield(c,'stateTable') || ~isgraphics(c.stateTable), return; end
-app.pRows  = progressRows(app);
+if ~isfield(c,'rawTable') || ~isgraphics(c.rawTable), return; end
+app.pRows  = progressRows(app,'raw');
+app.dRows  = progressRows(app,'derived');
 app.pRowOf = containers.Map('KeyType','char','ValueType','double');
+app.dRowOf = containers.Map('KeyType','char','ValueType','double');
 for i = 1:numel(app.pRows), app.pRowOf(app.pRows(i).path) = i; end
+for i = 1:numel(app.dRows)
+    app.dRowOf([app.dRows(i).identity '||' app.dRows(i).branch]) = i;
+end
 setApp(fig,app);
 
-c.stateTable.ColumnName = [{'File'}, {app.reg.label}];
-c.stateTable.ColumnWidth = [{230}, repmat({94},1,numel(app.reg))];
+setTableColumns(c.rawTable,     'Recording',           monitorColumns(app.reg,'raw'),     app.reg);
+setTableColumns(c.derivedTable, 'Recording and result', monitorColumns(app.reg,'derived'), app.reg);
 refreshCells(fig,{});
+refreshRangeControls(fig);
 refreshProgressDetail(fig);
 end
 
-function refreshCells(fig,identities)
-%refreshCells  Repaint the state table.  It writes table DATA, never components:
-%   the whole point of the read-only monitor is that a 200-file project costs one
-%   uitable instead of 3000 live widgets.  'identities' narrows the repaint to the
-%   rows of those recordings ({} = all), which is what keeps a per-cell progress
-%   tick cheap during a run.
-app = getApp(fig); c = app.c.process;
-if ~isfield(c,'stateTable') || ~isgraphics(c.stateTable), return; end
-if isempty(app.pRows)
-    c.stateTable.Data = {};
-    return
+function setTableColumns(h, firstName, ids, reg)
+%setTableColumns  Column headers of one monitor table, from the registry's labels.
+if ~isgraphics(h), return; end
+lbls = cell(1,numel(ids));
+for i = 1:numel(ids), lbls{i} = reg(strcmp({reg.id},ids{i})).label; end
+h.ColumnName  = [{firstName}, lbls];
+h.ColumnWidth = [{240}, repmat({94},1,numel(ids))];
 end
-D = c.stateTable.Data;
-nCol = numel(app.reg)+1;
-if ~iscell(D) || size(D,1)~=numel(app.pRows) || size(D,2)~=nCol
-    D = cell(numel(app.pRows), nCol);
+
+function refreshCells(fig,identities)
+%refreshCells  Repaint the state tables.  They carry table DATA, never components:
+%   the whole point of the read-only monitor is that a 200-file project costs two
+%   uitables instead of 3000 live widgets.  'identities' narrows the repaint to the
+%   rows of those recordings ({} = all), which is what keeps a per-cell progress
+%   tick cheap during a run - it must stay a NARROW repaint, not a rebuild.
+if nargin<2, identities = {}; end
+paintProgressTable(fig,'raw',identities);
+paintProgressTable(fig,'derived',identities);
+end
+
+function paintProgressTable(fig,kind,identities)
+%paintProgressTable  One table's worth of refreshCells.
+app = getApp(fig); c = app.c.process;
+if strcmp(kind,'raw')
+    fld = 'rawTable'; rows = app.pRows;
+else
+    fld = 'derivedTable'; rows = app.dRows;
+end
+if ~isfield(c,fld) || ~isgraphics(c.(fld)), return; end
+h = c.(fld);
+if isempty(rows), h.Data = {}; return; end
+ids  = monitorColumns(app.reg, kind);
+D    = h.Data;
+nCol = numel(ids)+1;
+if ~iscell(D) || size(D,1)~=numel(rows) || size(D,2)~=nCol
+    D = cell(numel(rows), nCol);
     identities = {};                                   % a fresh grid: fill it all
 end
-if nargin<2 || isempty(identities)
-    which = 1:numel(app.pRows);
+if isempty(identities)
+    which = 1:numel(rows);
 else
-    which = find(ismember({app.pRows.identity}, identities));
+    which = find(ismember({rows.identity}, identities));
 end
 for i = which
-    r = app.pRows(i);
-    D{i,1} = [r.label ternary(r.isRef,'  (ref)','')];
+    r = rows(i);
+    D{i,1} = r.rowLabel;
     planned = plannedStepsFor(app, r);
-    for s = 1:numel(app.reg)
-        D{i,s+1} = progressCellText(app, r, app.reg(s), planned);
+    for s = 1:numel(ids)
+        D{i,s+1} = progressCellText(app, r, stepById(app.reg,ids{s}), planned);
     end
 end
-c.stateTable.Data = D;
+h.Data = D;
 end
 
 function ids = plannedStepsFor(app, r)
-%plannedStepsFor  Which steps THIS FILE's configuration runs on it, in registry
-%   order.  A file sitting on one of its type's product rows gets that row's
-%   selection - what it runs plus what it inherits from the anchor row - so the
-%   cardiac file of a two-pipeline recording never shows the contrast row's steps.
-%   A file with no stage flag (the raw recording, the usual case) stands for the
-%   whole recording and gets the union.  The per-animal steps are added for the
-%   animal, not the row: they span every type by definition.
+%plannedStepsFor  Which steps THIS ROW's configuration runs on it, in registry
+%   order.  The row hands over its BRANCH rather than having one guessed from a file
+%   name: a DERIVED row IS one branch, so it gets exactly that (type,branch) row's
+%   selection - what it runs plus what it inherits from the anchor row - and never
+%   the other pipeline's steps.  A RAW row stands for the whole recording and gets
+%   the union of its type's rows, unless the file itself carries a stage flag (a
+%   product file in the working set), in which case it stands for its own pipeline.
+%   The per-animal steps are added for the animal, not the row: they span every
+%   type by definition.
 ids = animalStepsOn(app);
 if isempty(r.type), ids = orderIds(app.reg, ids); return; end
 brs = wbTypeSelection('rows', app.typeSel, app.reg, r.type);
-if ~isempty(r.branch) && any(strcmp(r.branch, brs)), brs = {r.branch}; end
+if strcmp(r.kind,'derived')
+    brs = brs(strcmp(brs, r.branch));                  % the row IS a branch
+elseif ~isempty(r.branch) && any(strcmp(r.branch, brs))
+    brs = {r.branch};
+end
 for b = 1:numel(brs)
     ids = [ids, wbTypeSelection('steps',     app.typeSel, app.reg, r.type, brs{b}), ...
                 wbTypeSelection('inherited', app.typeSel, app.reg, r.type, brs{b})]; %#ok<AGROW>
@@ -2899,7 +2982,7 @@ if isKey(app.runState,key) && stepTouchesFile(step, r.branch)
         case 'error', txt = 'error'; return
     end
 end
-st = fileStateOf(app, r.path, step.id);
+st = rowStateOf(app, r, step.id);
 if strcmp(st,'done'),                        txt = 'done'; return; end
 if ~any(strcmp(step.id, planned)),           txt = char(183); return; end   % not configured
 if any(strcmp(st,{'ready','stale'})),        txt = 'queued'; return; end
@@ -2907,10 +2990,28 @@ if any(strcmp(st,{'ready','stale'})),        txt = 'queued'; return; end
 have = {};
 req = wbPrereqs('all', step);
 for i = 1:numel(req)
-    rs = fileStateOf(app, r.path, req{i});
+    rs = rowStateOf(app, r, req{i});
     if strcmp(rs,'done') || any(strcmp(req{i}, planned)), have{end+1} = req{i}; end %#ok<AGROW>
 end
 if wbPrereqs('met', step, have), txt = 'queued'; else, txt = 'skipped'; end
+end
+
+function s = rowStateOf(app, r, stepId)
+%rowStateOf  The disk state a monitor row reads for one step.  A RAW row is a file,
+%   so it asks the per-FILE picture (D6's whole point).  A DERIVED row is a
+%   (recording, PIPELINE) pair, so it asks the per-branch picture - which is also
+%   what makes D7 work: a row whose product is not on disk yet simply has no branch
+%   state, reads 'unavailable', and shows what is QUEUED for it instead of nothing.
+if ~strcmp(r.kind,'derived'), s = fileStateOf(app, r.path, stepId); return; end
+s = 'unavailable';
+key = [r.identity '||' r.branch];
+if isKey(app.branchState,key)
+    bs = app.branchState(key);
+    if isfield(bs,stepId), s = bs.(stepId); end
+end
+if strcmp(s,'done') && isKey(app.stale, cellKey(r.identity,stepId))
+    s = 'stale';                                       % an in-session edit re-opened it
+end
 end
 
 function tf = stepTouchesFile(step, fileBranch)
@@ -2935,28 +3036,32 @@ id = path;
 if isKey(app.pRowOf,path), id = app.pRows(app.pRowOf(path)).identity; end
 end
 
-function onProgressSelect(fig, ev)
-%onProgressSelect  Remember which row the user clicked and describe it below.
+function onProgressSelect(fig, kind, ev)
+%onProgressSelect  Remember which row of WHICH table the user clicked, and describe
+%   it below - selecting a row still shows its file, from either half.
 if isempty(ev) || ~isfield(struct(ev),'Indices') || isempty(ev.Indices), return; end
 app = getApp(fig);
-app.pSel = ev.Indices(1,1);
+app.pSel = struct('kind',char(kind),'idx',ev.Indices(1,1));
 setApp(fig,app);
 refreshProgressDetail(fig);
 end
 
 function refreshProgressDetail(fig)
-%refreshProgressDetail  The selected file's identity card: where it is, how it is
-%   labelled, and what went wrong if something did.
+%refreshProgressDetail  The selected row's identity card: where its file is, how it
+%   is labelled, and what went wrong if something did.
 app = getApp(fig); c = app.c.process;
 if ~isfield(c,'detail') || ~isgraphics(c.detail), return; end
-i = 0;
-if isfield(app,'pSel'), i = app.pSel; end
-if i<1 || i>numel(app.pRows)
+sel = struct('kind','raw','idx',0);
+if isfield(app,'pSel') && isstruct(app.pSel), sel = app.pSel; end
+if strcmp(sel.kind,'derived'), rows = app.dRows; else, rows = app.pRows; end
+i = sel.idx;
+if i<1 || i>numel(rows)
     c.detail.Text = 'Select a row to see its file.';
     return
 end
-r = app.pRows(i);
-bits = {sprintf('%s   animal %s | type %s | group %s', r.path, ...
+r = rows(i);
+bits = {sprintf('%s%s   animal %s | type %s | group %s', r.path, ...
+    ternary(isempty(r.flag),'',['   product ' r.flag]), ...
     dashIfEmpty(r.animal), dashIfEmpty(r.type), dashIfEmpty(r.expGroup))};
 blocked = firstSkipped(app, r);
 if ~isempty(blocked)
@@ -3003,76 +3108,6 @@ elseif ~isempty(wbPrereqs('all',step))
 end
 end
 
-%% ===================== check / bulk-select ========================= %%
-% The per-cell queue predates the type model and no longer drives the run - the
-% Constructor's (type,branch) selection does (buildRunOrder).  What survives here
-% is the programmatic surface the API still exposes and the look-ahead it shares
-% with the monitor; Phase 6 retires the map itself along with the old matrix.
-function apiCheck(fig,identity,stepId,tf)
-setChecked(fig,identity,stepId,tf);
-refreshCells(fig,{identity});
-end
-function setChecked(fig,identity,stepId,tf)
-app = getApp(fig);
-key = cellKey(identity,stepId);
-st = resolveCellState(app,identity,stepId);
-if tf
-    if any(strcmp(st,{'ready','stale','checked'})), app.checked(key) = true; end
-else
-    if isKey(app.checked,key), remove(app.checked,key); end
-end
-setApp(fig,app);
-end
-function checkColumn(fig,stepId,tf)
-app = getApp(fig);
-for i = 1:numel(app.rows), setCheckedQuiet(app,app.rows(i).identity,stepId,tf); end
-setApp(fig,app); refreshCells(fig,{});
-end
-function checkAnimal(fig,animalName,tf)
-app = getApp(fig);
-for i = 1:numel(app.rows)
-    if strcmp(app.rows(i).animal,animalName)
-        for s = 1:numel(app.reg), setCheckedQuiet(app,app.rows(i).identity,app.reg(s).id,tf); end
-    end
-end
-setApp(fig,app); refreshCells(fig,{});
-end
-function checkModality(fig,modality,tf)
-app = getApp(fig);
-for i = 1:numel(app.rows)
-    if strcmp(app.rows(i).model.modality,modality)
-        for s = 1:numel(app.reg), setCheckedQuiet(app,app.rows(i).identity,app.reg(s).id,tf); end
-    end
-end
-setApp(fig,app); refreshCells(fig,{});
-end
-function checkAll(fig,tf)
-app = getApp(fig);
-for i = 1:numel(app.rows)
-    for s = 1:numel(app.reg), setCheckedQuiet(app,app.rows(i).identity,app.reg(s).id,tf); end
-end
-setApp(fig,app); refreshCells(fig,{});
-end
-function setCheckedQuiet(app,identity,stepId,tf)
-%setCheckedQuiet  Mutate the checked map on an app struct without saving/rendering.
-key = cellKey(identity,stepId);
-st = resolveCellState(app,identity,stepId);
-if tf
-    if any(strcmp(st,{'ready','stale','checked'})), app.checked(key) = true; end
-else
-    if isKey(app.checked,key), remove(app.checked,key); end
-end
-end
-function L = checkedList(fig)
-app = getApp(fig);
-k = keys(app.checked);
-L = cell(numel(k),2);
-for i = 1:numel(k)
-    parts = strsplit(k{i},'||');
-    L(i,:) = {parts{1}, parts{2}};
-end
-end
-
 %% ===================== settings panel ============================== %%
 function selectStep(fig,stepId)
 %selectStep  Which step the PROGRAMMATIC settings calls act on.  It no longer
@@ -3083,13 +3118,15 @@ if ~any(strcmp(stepId,{app.reg.id})), return; end
 app.selStep = stepId; setApp(fig,app);
 end
 function s = stepInfoText(step)
+%stepInfoText  The one line under the Type/Step pair: what this step needs of you
+%   and of the data, in plain words.  Everything the reader cannot act on - which
+%   settings field gates it, what the wrapper is called - stays out.
 bits = {};
-if ~isempty(step.gatingField), bits{end+1} = ['gates on settings.' step.gatingField];
-else, bits{end+1} = 'done by output (no settings field)'; end
-if strcmp(step.arity,'perAnimal'), bits{end+1} = 'per-animal (reference in column 1)'; end
-if ~isequal(step.interactive,false), bits{end+1} = 'interactive'; end
-if step.needsRaw, bits{end+1} = 'also needs the raw recording'; end
-if ~isempty(wbPrereqs('all',step)), bits{end+1} = ['requires ' wbPrereqs('describe',step)]; end
+if strcmp(step.arity,'perAnimal'), bits{end+1} = 'runs once per animal'; end
+if ~isequal(step.interactive,false), bits{end+1} = 'asks you to draw or click'; end
+if step.needsRaw, bits{end+1} = 'also reads the raw recording'; end
+if ~isempty(wbPrereqs('all',step)), bits{end+1} = ['needs ' wbPrereqs('describe',step) ' first']; end
+if isempty(bits), bits{end+1} = 'runs on its own, once its input exists'; end
 s = strjoin(bits,'  |  ');
 end
 
@@ -3228,7 +3265,7 @@ end
 setApp(fig,app);
 recomputeBase(fig);                                % new fingerprint (edited step may go stale)
 applyInvalidation(fig,seed);                       % forward cascade over done cells
-refreshCells(fig,{});
+renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
 wbLog(fig,sprintf('edit %s.%s -> %s',stepId,field,val2str(value)));
 end
 
@@ -3309,10 +3346,11 @@ app.presetRef = pth; setApp(fig,app);
 recomputeBase(fig);
 % an edit changes fingerprints everywhere; clearest is to reset the stale overlay
 app = getApp(fig); app.stale = containers.Map('KeyType','char','ValueType','any'); setApp(fig,app);
-refreshCells(fig,{});
+renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
 renderConstructor(fig);            % a preset carries the per-type layers too
 refreshPresetDrop(fig);
 wbLog(fig,['loaded preset ' pth]);
+autosaveSession(fig);              % the whole settings bag changed
 end
 function refreshPresetDrop(fig)
 app = getApp(fig); c = app.c.process;
@@ -3332,9 +3370,10 @@ if strcmp(name,'(launcher defaults)')
     app = getApp(fig); app.sm = wbSettingsModel('new'); setApp(fig,app);
     recomputeBase(fig);
     app = getApp(fig); app.stale = containers.Map('KeyType','char','ValueType','any'); setApp(fig,app);
-    refreshCells(fig,{});
+    renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
     renderConstructor(fig);        % every per-type layer went with the bag
     wbLog(fig,'reset to launcher defaults (global AND per-type settings)');
+    autosaveSession(fig);          % the whole settings bag changed
     return
 end
 loadPreset(fig,fullfile(getApp(fig).presetDir,name));
@@ -3343,12 +3382,14 @@ function ensureDir(d), if ~isfolder(d), mkdir(d); end, end
 
 %% ===================== session ===================================== %%
 function uiSaveSession(fig)
-[f,p] = uiputfile('*.mat','Save session','workbench_session.mat');
+%uiSaveSession  Save a NAMED session.  It opens in the workbench sessions folder,
+%   which is also where the last session lives, so the two sit side by side.
+[f,p] = uiputfile('*.mat','Save session',fullfile(sessionDir(),'workbench_session.mat'));
 if isequal(f,0), return; end
 saveSessionTo(fig,fullfile(p,f));
 end
 function uiLoadSession(fig)
-[f,p] = uigetfile('*.mat','Load session');
+[f,p] = uigetfile('*.mat','Load session',sessionDir());
 if isequal(f,0), return; end
 loadSessionFrom(fig,fullfile(p,f));
 end
@@ -3428,22 +3469,27 @@ end
 
 function autosaveSession(fig)
 %autosaveSession  Keep the durable session current WITHOUT being asked (spec §5).
-%   A run that is killed, cancelled or crashes must still leave something
-%   resumable behind, so the session is rewritten on every state change rather
-%   than only when the user remembers to save.  It goes wherever the session was
-%   last saved or loaded from, or beside the scanned root when there is no such
-%   file yet; with neither, there is nowhere to put it and nothing is written.
+%   A run that is killed, cancelled or crashes must still leave something resumable
+%   behind, so the session is rewritten on EVERY state change - a scan, a label, a
+%   reference, a Constructor tick, a settings edit, each finished cell, the end of a
+%   run and the exit itself - rather than only when the user remembers to save.
+%
+%   IT ALWAYS WRITES THE LAST SESSION (lastSessionPath), whatever else it writes.
+%   That file is the workbench's own resume point and does not depend on the user
+%   having chosen a location; when a session HAS been saved or loaded somewhere
+%   else, that copy is kept in step too, so 'Save session...' does not quietly stop
+%   tracking the moment it is used.
 if ~isvalid(fig), return; end
 app = getApp(fig);
-pth = app.sessionPath;
-if isempty(pth)
-    if isempty(app.root) || ~isfolder(app.root), return; end
-    pth = fullfile(app.root,'workbench_session.mat');
-end
+if isempty(app.files) && isempty(app.root), return; end     % nothing to resume yet
 try
+    targets = {lastSessionPath()};
+    if ~isempty(app.sessionPath) && ~strcmp(app.sessionPath,targets{1})
+        targets{end+1} = app.sessionPath;
+    end
     session = wbSession('empty');
-    saveSessionInto(app, session, pth);
-    app.sessionPath = pth; setApp(fig,app);
+    for i = 1:numel(targets), saveSessionInto(app, session, targets{i}); end
+    if isempty(app.sessionPath), app.sessionPath = targets{1}; setApp(fig,app); end
 catch ME
     wbLog(fig,['session autosave failed: ' ME.message]);
 end
@@ -3475,7 +3521,6 @@ session.typeBag       = app.sm.typeBag;
 session.typeOverrides = app.sm.typeOverrides;
 session.typeSel       = app.typeSel;
 session.animalSel     = app.animalSel;
-session.checked       = app.checked;
 session.staleOverlay  = app.stale;
 session.presetRef     = app.presetRef;
 wbSession('save', pth, session);
@@ -3513,7 +3558,6 @@ for i = 1:numel(toK), app.sm.typeOverrides(toK{i}) = toV{i}; end
 % (type,branch) rows existed is upgraded to them instead of being read as empty
 app.typeSel   = wbTypeSelection('fromCells', keys(session.typeSel), app.reg);
 app.animalSel = session.animalSel;
-app.checked   = session.checked;
 app.stale     = session.staleOverlay;
 app.completed = session.completed;                 % what already ran, per file/step
 app.presetRef = session.presetRef;
@@ -3569,7 +3613,32 @@ function entries = buildRunOrder(fig)
 %   animal's own order is kept (reference first), so an interactive step still
 %   walks an animal together.  A step already done on every product it would touch
 %   is left out, so a re-run resumes rather than repeats (spec §5).
-app = getApp(fig); reg = app.reg;
+%
+%   THE FROM/TO RANGE (spec D1/D2) is applied on TOP of that expansion, in
+%   runOrderIn - it filters the entry list by registry column and decides whether
+%   the "already on disk" pruning applies at all.  The expansion itself knows
+%   nothing about it.
+app = getApp(fig);
+entries = runOrderIn(fig, app.rangeFrom, app.rangeTo);
+end
+
+function entries = expandEntries(app, prune)
+%expandEntries  THE expansion proper (see buildRunOrder for what it asks and why).
+%   'prune' is the ONLY thing the range changes about it: with it false the
+%   already-on-disk test is skipped, so a finished column re-runs with new settings
+%   (spec D2).  Everything else stands - one work item per (file,step), the
+%   per-animal steps once per animal - because those are not resume rules, they are
+%   what makes the list correct.
+%
+%   THE PER-ANIMAL STEPS ARE PRUNED TOO (Phase 6).  Until this phase they were
+%   emitted unconditionally, so registration and vessel typing re-ran on every Run,
+%   their column could never read as finished, and 'Last valid' was pinned to it
+%   forever.  That was wrong twice over: vessel typing is an interactive paint step,
+%   so a resume aimed at a late column re-opened its window, and the resume frontier
+%   could never move past it.  They now answer the same question every other step
+%   does - see animalStepAlreadyDone for what 'done' means when the scope is a whole
+%   animal.
+reg = app.reg;
 entries = emptyEntries();
 seenPA  = containers.Map('KeyType','char','ValueType','logical');
 seen    = containers.Map('KeyType','char','ValueType','logical');
@@ -3585,6 +3654,7 @@ for i = 1:numel(app.rows)
         k = [num2str(r.animalIdx) '||' step.id];
         if isKey(seenPA,k), continue; end
         seenPA(k) = true;
+        if prune && animalStepAlreadyDone(app, r.animalIdx, step), continue; end
         entries(end+1) = mkEntry(r.animalIdx, 1, stepIndexOf(reg,step.id), step, ...
             animalRefIdentity(app,r.animalIdx), r.animal, true, ty); %#ok<AGROW>
     end
@@ -3599,7 +3669,7 @@ for i = 1:numel(app.rows)
             if isempty(step) || strcmp(step.arity,'perAnimal'), continue; end
             k = cellKey(r.identity, ids{j});
             if isKey(seen,k), continue; end             % one work item per (file,step)
-            if stepAlreadyDone(app, r.identity, ty, brs{b}, step), continue; end
+            if prune && stepAlreadyDone(app, r.identity, ty, brs{b}, step), continue; end
             seen(k) = true;
             entries(end+1) = mkEntry(r.animalIdx, r.rowInAnimal, stepIndexOf(reg,step.id), ...
                 step, r.identity, r.animal, r.isRef, ty); %#ok<AGROW>
@@ -3610,6 +3680,156 @@ if isempty(entries), return; end
 K = [[entries.stepIdx]', [entries.animalIdx]', [entries.rowInAnimal]'];
 [~,ord] = sortrows(K);                       % step-major: the launcher's order
 entries = entries(ord);
+end
+
+%% ---- the FROM/TO run range (spec D1-D5) ---------------------------- %%
+function [entries, info] = runOrderIn(fig, fromSel, toSel)
+%runOrderIn  The run order for ONE range.  Two readings of the same configuration:
+%   the PLANNED list (everything the configuration would ever run) says which
+%   columns exist and is what a forced re-run executes; the PENDING list (today's
+%   expansion, with the already-done steps pruned) says where the resume frontier
+%   is and is what 'Last valid' executes.
+%
+%   THE RESUME PATH IS UNCHANGED.  With From = 'Last valid' the slice starts at the
+%   frontier, and every column before the frontier is by definition finished - so
+%   it has no pending entries and the slice removes nothing.  'Last valid' to the
+%   last column therefore returns exactly what buildRunOrder returned before this
+%   phase, entry for entry, in the same order (the regression gate).
+app = getApp(fig);
+[info, planned, pending] = runRangeInfo(app, fromSel, toSel);
+if info.forced, src = planned; else, src = pending; end
+entries = wbRunRange('slice', app.reg, src, info.fromId, info.toId);
+end
+
+function [info, planned, pending] = runRangeInfo(app, fromSel, toSel)
+%runRangeInfo  Everything the toolbar and the run headline need about one range:
+%   the configured columns, the resume frontier, the two resolved step ids, and
+%   whether this is a resume or a forced re-run.  The columns come from the PLANNED
+%   expansion on purpose - a finished column is still configured, and dropping it
+%   would take away the only way to ask for it again.
+planned = expandEntries(app, false);
+pending = expandEntries(app, true);
+pendIds = {};
+if ~isempty(pending), pendIds = unique({pending.stepId}); end
+cols = wbRunRange('columns', app.reg, planned);
+fron = wbRunRange('frontier', app.reg, cols, @(id) ~any(strcmp(id, pendIds)));
+[fromId, toId] = wbRunRange('resolve', app.reg, cols, fromSel, toSel, fron);
+info = struct('cols',{cols},'frontier',fron,'fromId',fromId,'toId',toId, ...
+    'forced',wbRunRange('isForced',fromSel));
+end
+
+function info = currentRangeInfo(fig)
+app = getApp(fig);
+info = runRangeInfo(app, app.rangeFrom, app.rangeTo);
+end
+function cols = runRangeColumns(fig)
+%runRangeColumns  The configured columns, in registry order (the dropdowns' items).
+info = currentRangeInfo(fig); cols = info.cols;
+end
+function id = runRangeFrontier(fig)
+%runRangeFrontier  Where 'Last valid' currently resolves to (spec D3).
+info = currentRangeInfo(fig); id = info.frontier;
+end
+
+function refreshRangeControls(fig)
+%refreshRangeControls  Repopulate From/To from buildRunOrder's OWN expansion, so a
+%   Constructor edit is reflected without a second source of truth (spec D5).  To
+%   offers only the columns at or after the resolved From and is clamped when From
+%   moves past it (spec D4).  With nothing configured both read '(nothing
+%   configured)' and Run stays enabled - it says so in the log, as it always did.
+app = getApp(fig); c = app.c.process;
+if ~isfield(c,'fromDrop') || ~isgraphics(c.fromDrop), return; end
+info = runRangeInfo(app, app.rangeFrom, app.rangeTo);
+cols = info.cols;
+if isempty(cols)
+    setDropItems(c.fromDrop, {noRangeItem()}, {''}, '');
+    setDropItems(c.toDrop,   {noRangeItem()}, {''}, '');
+    return
+end
+lastTok = wbRunRange('lastValid');
+fromItems = [{sprintf('Last valid (%s)', wbRunRange('label',cols,info.frontier))}, {cols.label}];
+fromData  = [{lastTok}, {cols.id}];
+fromVal   = lastTok;
+if info.forced, fromVal = info.fromId; end
+setDropItems(c.fromDrop, fromItems, fromData, fromVal);
+
+k = wbRunRange('index', cols, info.fromId);
+if k<1, k = 1; end
+setDropItems(c.toDrop, {cols(k:end).label}, {cols(k:end).id}, info.toId);
+% NOTE the resolved ids are shown but NOT stored back.  An unset To means "to the
+% end", and freezing it to whatever the last column happened to be would pin the
+% range the first time it was painted - the next Constructor tick would then add a
+% column the range silently refused to reach.
+end
+
+function setDropItems(h, items, data, value)
+%setDropItems  Set a dropdown's items and value together, without a transient state
+%   in which the old Value is not in the new Items (which uidropdown rejects).
+if ~isgraphics(h), return; end
+h.Items = items;
+h.ItemsData = data;
+k = find(strcmp(data, char(value)),1);
+if isempty(k), k = 1; end
+h.Value = data{k};
+end
+
+function onRangeEdit(fig, which, value)
+%onRangeEdit  One dropdown moved: store it, clamp the other, repaint.  The rule
+%   itself lives in wbRunRange; this only decides what is remembered.
+app = getApp(fig);
+if strcmp(which,'from'), app.rangeFrom = char(value); else, app.rangeTo = char(value); end
+setApp(fig,app);
+clampStoredTo(fig);
+refreshRangeControls(fig);
+wbLog(fig, rangeHeadline(currentRangeInfo(fig)));
+end
+
+function setRunRange(fig, fromSel, toSel)
+%setRunRange  The programmatic twin of the two dropdowns (headless-testable).  An
+%   empty From means 'Last valid'; an empty To means "to the last column".
+app = getApp(fig);
+if nargin>=2, app.rangeFrom = char(fromSel); end
+if nargin>=3, app.rangeTo   = char(toSel);   end
+if isempty(app.rangeFrom), app.rangeFrom = wbRunRange('lastValid'); end
+setApp(fig,app);
+clampStoredTo(fig);
+refreshRangeControls(fig);
+end
+
+function clampStoredTo(fig)
+%clampStoredTo  Spec D4, made durable: an EXPLICIT To that now sits before From is
+%   moved up to From rather than left to be clamped afresh on every read - the
+%   dropdown would otherwise show one value and remember another.  An unset To is
+%   left alone: it means "to the end" and has nothing to clamp.
+app = getApp(fig);
+if isempty(app.rangeTo), return; end
+info = runRangeInfo(app, app.rangeFrom, app.rangeTo);
+if isempty(info.cols), return; end
+if wbRunRange('index',info.cols,app.rangeTo) < wbRunRange('index',info.cols,info.fromId)
+    app.rangeTo = info.fromId;
+    setApp(fig,app);
+end
+end
+
+function v = runRangeValue(fig)
+%runRangeValue  What the range currently resolves to - the headless view of the two
+%   dropdowns plus the resume/force verdict.
+info = currentRangeInfo(fig);
+v = struct('from',getApp(fig).rangeFrom,'to',getApp(fig).rangeTo, ...
+    'fromId',info.fromId,'toId',info.toId,'frontier',info.frontier,'forced',info.forced);
+end
+
+function s = rangeHeadline(info)
+%rangeHeadline  One line naming the range and whether it resumes or forces.
+if isempty(info.cols)
+    s = 'range: nothing set up yet - tick some steps on the Constructor tab.';
+    return
+end
+s = sprintf('range: %s -> %s.  %s', ...
+    wbRunRange('label',info.cols,info.fromId), wbRunRange('label',info.cols,info.toId), ...
+    ternary(info.forced, ...
+        'These steps will run again even where they are already done.', ...
+        'Carrying on from the last valid step, leaving out what is already done.'));
 end
 
 function e = emptyEntries()
@@ -3655,16 +3875,54 @@ end
 tf = true;
 end
 
+function tf = animalStepAlreadyDone(app, animalIdx, step)
+%animalStepAlreadyDone  The same question as stepAlreadyDone, asked of a step whose
+%   scope is a whole ANIMAL (spec D3) - resolved in Phase 6, where they used to be
+%   emitted unconditionally.
+%
+%   WHAT 'DONE' MEANS HERE.  A per-animal step is handed ONE call covering every
+%   configured product of every recording of the animal (its branchScope fans out
+%   inside the animal's column - wbExecutor>buildFNames), so it is done only when
+%   ALL of them carry its gating field.  Anything less and the call has work left:
+%   a recording added to the animal after the last run, a product the type only
+%   started producing later, or a settings edit that re-opened the step, each puts
+%   the whole animal back in the queue.  That is the same conservative reading
+%   stepAlreadyDone applies to a recording-level per-file step, one scope up.
+%
+%   An animal with nothing configured is never 'done' - there is no product to
+%   judge it on, so it stays queued rather than being silently skipped.
+tf = false;
+seenAny = false;
+for i = 1:numel(app.rows)
+    if app.rows(i).animalIdx ~= animalIdx, continue; end
+    id  = app.rows(i).identity;
+    brs = wbTypeSelection('rows', app.typeSel, app.reg, typeOfIdentity(app,id));
+    for b = 1:numel(brs)
+        key = [id '||' brs{b}];
+        if ~isKey(app.branchState,key), return; end          % nothing produced there yet
+        bs = app.branchState(key);
+        if ~isfield(bs,step.id) || ~strcmp(bs.(step.id),'done'), return; end
+        if isKey(app.stale, cellKey(id,step.id)), return; end % an edit re-opened it
+        seenAny = true;
+    end
+end
+tf = seenAny;
+end
+
 function lines = dryRun(fig)
-entries = buildRunOrder(fig);
-lines = {sprintf('=== DRY RUN: %d step(s) would execute (no wrapper is called) ===',numel(entries))};
+%dryRun  Preview the SLICE the current range would execute, named first so it is
+%   never a mystery why a preview is shorter than the configuration.
+app = getApp(fig);
+[entries, info] = runOrderIn(fig, app.rangeFrom, app.rangeTo);
+lines = {rangeHeadline(info), ...
+    sprintf('=== PREVIEW: %d steps would run.  Nothing is processed. ===',numel(entries))};
 for i = 1:numel(entries)
     e = entries(i);
     if strcmp(e.arity,'perAnimal'), who = ['ANIMAL ' e.animal]; else, who = e.label; end
     lines{end+1} = sprintf('  %2d. [%s] %-26s :: %s', i, e.animal, who, e.stepLabel); %#ok<AGROW>
 end
 if numel(entries)==0
-    lines{end+1} = '  (nothing to do - configure the types on the Constructor tab)';
+    lines{end+1} = '  Nothing to do - set the types up on the Constructor tab, or widen the range.';
 end
 setLog(fig,lines);
 end
@@ -3674,18 +3932,22 @@ function runChecked(fig)
 %runChecked  Run what the per-type configuration says, through wbExecutor.
 app = getApp(fig);
 if isfield(app,'running') && app.running, return; end       % already running
-entries = buildRunOrder(fig);
+[entries, info] = runOrderIn(fig, app.rangeFrom, app.rangeTo);
 if isempty(entries)
-    setLog(fig,{'Nothing to do - configure the types on the Constructor tab.'});
+    setLog(fig,{rangeHeadline(info), ...
+        'Nothing to do - set the types up on the Constructor tab, or widen the range.'});
     return
 end
-if ~confirmRun(fig, entries), return; end
+if ~confirmRun(fig, entries, info), return; end
 % a fresh run starts with a clean transient overlay
 app.runState = containers.Map('KeyType','char','ValueType','any');
 app.cellMsg  = containers.Map('KeyType','char','ValueType','any');
 app.cellPct  = containers.Map('KeyType','char','ValueType','any');
 app.running  = true;  app.cancel = false;
 setApp(fig,app);
+% how many entries each COLUMN of THIS run has - counted from the list about to be
+% executed (a From/To slice), never re-expanded mid-run.  See beginPdfColumns.
+beginPdfColumns(fig, entries);
 setRunningUI(fig,true);
 autosaveSession(fig);                    % a run that never returns still leaves a session
 cleaner = onCleanup(@() finishRun(fig)); % restore UI + fold results even on error
@@ -3693,17 +3955,20 @@ ctx = buildExecContext(fig);
 wbExecutor(entries, ctx);
 end
 
-function ok = confirmRun(fig, entries)
+function ok = confirmRun(fig, entries, info)
 %confirmRun  The pre-run summary.  A type-level tick can expand into hundreds of
 %   file-steps, and the number is the only honest warning about how long this will
-%   take - so it is shown before anything runs, not discovered afterwards.
+%   take - so it is shown before anything runs, not discovered afterwards.  The
+%   RANGE is on the same card: a forced re-run overwrites finished work, and that
+%   has to be visible at the moment of consent, not only in the toolbar.
 ok = true;
 n  = numel(entries);
 tys = unique({entries.type},'stable');
 tys = tys(~cellfun(@isempty,tys));
 sts = unique({entries.stepId},'stable');
-msg = sprintf('About to run %s across %s = %d file-step(s).  Continue?', ...
-    plural(numel(sts),'step'), plural(numel(tys),'type'), n);
+msg = sprintf('%s\nAbout to run %d %s across %d recording %s - %d jobs in all.  Continue?', ...
+    rangeHeadline(info), numel(sts), plural(numel(sts),'step'), ...
+    numel(tys), plural(numel(tys),'type'), n);
 wbLog(fig,msg);
 if ~isvalid(fig) || strcmp(fig.Visible,'off'), return; end   % headless: never block
 sel = uiconfirm(fig, msg, 'Run', 'Options',{'Run','Cancel'}, ...
@@ -3804,8 +4069,9 @@ end
 
 function execAfterDone(fig,identity,stepId,model)
 %execAfterDone  A cell finished: clear its own staleness, push this recording's
-%   downstream done cells to stale, drop it from the queue, and add whatever
-%   report images it wrote to the result list.
+%   downstream done cells to stale, add whatever report images it wrote to the
+%   result list - and tell the column it lost an entry, so the LAST one triggers
+%   that column's PDF (spec D9).
 if ~isvalid(fig), return; end
 app = getApp(fig);
 selfKey = cellKey(identity,stepId);
@@ -3819,9 +4085,9 @@ for i = 1:size(cells,1)
         if isfield(bs,sp) && strcmp(bs.(sp),'done'), app.stale(cellKey(identity,sp)) = true; end
     end
 end
-if isKey(app.checked,selfKey), remove(app.checked,selfKey); end
 setApp(fig,app);
-addResults(fig,identity,stepId,model);
+files = addResults(fig,identity,stepId,model);
+notePdfColumn(fig,stepId,files);
 autosaveSession(fig);
 end
 
@@ -3833,17 +4099,15 @@ app = getApp(fig);
 wasCancel = isfield(app,'cancel') && app.cancel;
 app.running = false; app.cancel = false;
 setApp(fig,app);
+% any column that never reached its last entry - a Stop, an error, a run that ended
+% mid-column - is assembled here, so a PDF is never lost because the run was cut
+% short.  It happens BEFORE the repaint below, which is what puts it in the list.
+flushPdfColumns(fig);
 recomputeBase(fig);
 app = getApp(fig);
 ks = keys(app.runState);
 for i = 1:numel(ks)
     if ~strcmp(app.runState(ks{i}),'error'), remove(app.runState,ks{i}); end
-end
-ck = keys(app.checked);
-for i = 1:numel(ck)
-    parts = strsplit(ck{i},'||');
-    if numel(parts)<2, continue; end
-    if strcmp(resolveCellState(app,parts{1},parts{2}),'done'), remove(app.checked,ck{i}); end
 end
 setApp(fig,app);
 setRunningUI(fig,false);
@@ -3855,6 +4119,9 @@ if isfield(c,'progLabel') && isgraphics(c.progLabel)
     c.progLabel.Text = ternary(wasCancel,'Stopped.','Done.');
 end
 drawnow limitrate;
+% Exit pressed mid-run: the stop it asked for has now happened and the session is
+% written, so this is the first safe moment to close (see requestExit).
+if getfieldOr(getApp(fig),'exitAfterStop',false), onClose(fig); end
 end
 
 function cancelRun(fig)
@@ -3869,6 +4136,98 @@ if isfield(app,'running') && app.running
 end
 end
 
+%% ===================== wipe (start the protocol over) ============== %%
+function files = wipeTargets(app)
+%wipeTargets  Every PROCESSED file of the listed recordings - the _d/_r/_s.mat
+%   triplet members of each file on the Files tab, whatever stage/product flags sit
+%   between the identity and the role.
+%
+%   THE IDENTITY IS THE FENCE, and it is matched as a whole rather than globbed:
+%   'Foo' must not carry away 'Foo2_t_K_d.mat', so the directory listing is filtered
+%   by ^<identity>(_...)?_[drs]\.mat$ .  A raw recording (.rls/.avi/...) can never
+%   match that shape, which is why the raw data is safe by construction rather than
+%   by a list of extensions to spare.
+files = cell(1,0);
+seen = containers.Map('KeyType','char','ValueType','logical');
+for i = 1:numel(app.files)
+    m = app.files(i).model;
+    if isempty(m.folder) || ~isfolder(m.folder), continue; end
+    base = [m.roiPrefix m.stem];
+    rx = ['^' regexptranslate('escape',base) '(_.*)?_[drs]\.mat$'];
+    d = dir(fullfile(m.folder,[base '*.mat']));
+    for k = 1:numel(d)
+        if d(k).isdir || isempty(regexp(d(k).name,rx,'once')), continue; end
+        p = fullfile(m.folder,d(k).name);
+        if isKey(seen,p), continue; end
+        seen(p) = true; files{end+1} = p; %#ok<AGROW>
+    end
+end
+end
+
+function uiWipeAll(fig)
+%uiWipeAll  'Wipe all': throw away the processing and keep the recordings.  A
+%   protocol whose settings turned out wrong is otherwise reprocessed one deleted
+%   folder at a time, which is exactly when the wrong thing gets deleted - so the
+%   list is derived from the curated file set (wipeTargets), COUNTED, and shown
+%   before anything goes.  It refuses outright while a run is in flight.
+app = getApp(fig);
+if isfield(app,'running') && app.running
+    alert(fig,'A run is in progress - stop it before wiping.'); return
+end
+if isempty(app.files)
+    setLog(fig,{'Wipe all: no files are listed - nothing to wipe.'}); return
+end
+victims = wipeTargets(app);
+if isempty(victims)
+    setLog(fig,{'Wipe all: the listed recordings have no processed files on disk.'}); return
+end
+msg = sprintf(['Delete %d processed %s produced from the %d %s listed on the Files tab?\n\n' ...
+    'This removes every _d.mat / _r.mat / _s.mat of those recordings - including any ' ...
+    'listed .mat product itself.  The raw recordings are NOT touched.\n\n' ...
+    'It cannot be undone.'], numel(victims), plural(numel(victims),'file'), ...
+    numel(app.files), plural(numel(app.files),'recording'));
+if isvalid(fig) && strcmp(fig.Visible,'on')
+    sel = uiconfirm(fig,msg,'Wipe all','Options',{'Delete','Cancel'}, ...
+        'DefaultOption',2,'CancelOption',2,'Icon','warning');
+    if ~strcmp(sel,'Delete'), wbLog(fig,'Wipe all: cancelled.'); return; end
+end
+wipeAll(fig,victims);
+end
+
+function [nGone,failed] = wipeAll(fig,victims)
+%wipeAll  Do the deletion and put the workbench back to "nothing has run": the
+%   completion record, the staleness overlay and the run overlay all described files
+%   that no longer exist, so they go with them and the state is re-read from disk.
+app = getApp(fig);
+if nargin<2 || isempty(victims), victims = wipeTargets(app); end
+nGone = 0; failed = cell(1,0);
+for i = 1:numel(victims)
+    try
+        delete(victims{i});                       % a FILE path, not a handle
+        if isfile(victims{i}), failed{end+1} = victims{i}; else, nGone = nGone + 1; end %#ok<AGROW>
+    catch
+        failed{end+1} = victims{i}; %#ok<AGROW>
+    end
+end
+app = getApp(fig);
+app.completed = containers.Map('KeyType','char','ValueType','any');
+app.stale     = containers.Map('KeyType','char','ValueType','any');
+app.runState  = containers.Map('KeyType','char','ValueType','any');
+app.cellMsg   = containers.Map('KeyType','char','ValueType','any');
+app.cellPct   = containers.Map('KeyType','char','ValueType','any');
+setApp(fig,app);
+recomputeBase(fig);
+renderProgress(fig);
+renderConstructor(fig);        % a row's flag can change once its products are gone
+lines = {sprintf('Wipe all: deleted %d processed file(s).',nGone)};
+if ~isempty(failed)
+    lines{end+1} = sprintf('  %d could not be deleted (open elsewhere?):',numel(failed));
+    for i = 1:min(10,numel(failed)), lines{end+1} = ['    ' failed{i}]; end %#ok<AGROW>
+end
+setLog(fig,lines);
+autosaveSession(fig);
+end
+
 function setRunningUI(fig,running)
 %setRunningUI  Toggle the Run/Preview/Stop buttons for a run in progress.
 if ~isvalid(fig), return; end
@@ -3876,7 +4235,10 @@ c = getApp(fig).c.process;
 onoff = ternary(running,'off','on');
 if isfield(c,'runBtn')     && isgraphics(c.runBtn),     c.runBtn.Enable     = onoff; end
 if isfield(c,'previewBtn') && isgraphics(c.previewBtn), c.previewBtn.Enable = onoff; end
+if isfield(c,'fromDrop')   && isgraphics(c.fromDrop),   c.fromDrop.Enable   = onoff; end
+if isfield(c,'toDrop')     && isgraphics(c.toDrop),     c.toDrop.Enable     = onoff; end
 if isfield(c,'stopBtn')    && isgraphics(c.stopBtn),    c.stopBtn.Enable    = ternary(running,'on','off'); end
+if isfield(c,'wipeBtn')    && isgraphics(c.wipeBtn),    c.wipeBtn.Enable    = onoff; end
 drawnow limitrate;
 end
 
@@ -3915,7 +4277,7 @@ if isfield(s,'contrastType'), st = stageOfContrastType(s.contrastType); end
 end
 
 %% ===================== results (artifact links) ==================== %%
-function addResults(fig,identity,stepId,model)
+function files = addResults(fig,identity,stepId,model)
 %addResults  Fold a finished step's report images into the result list (spec D5).
 %   A LIST, NOT THUMBNAILS.  The old panel drew a live uiimage per report of the
 %   cell you happened to click; across a 200-file run that is both unaffordable
@@ -3923,40 +4285,78 @@ function addResults(fig,identity,stepId,model)
 %   viewer.  So the run accumulates links, newest first, and a double-click hands
 %   the file to the desktop (openArtifactViewer), which keeps it zoomable while
 %   the next step is already running.
+%
+%   It RETURNS what it resolved, whether or not the entry was new, so the per-column
+%   PDF is assembled from the same answer the list was painted from - wbArtifacts
+%   stays the ONE place that knows how a report image is named.
+files = cell(1,0);
 if ~isvalid(fig), return; end
 app = getApp(fig);
 step = stepById(app.reg,stepId);
 if nargin<4 || isempty(model), model = modelByIdentity(fig,identity); end
 if isempty(model) || isempty(step), return; end
 files = wbArtifacts(model,step);
-have  = {};
-if ~isempty(app.results), have = {app.results.path}; end
+lbl = @(p) sprintf('%s - %s - %s', shortId(identity), step.label, shortName(p));
+if ~pushResults(fig, files, stepId, lbl), return; end
+refreshResultList(fig);
+end
+
+function added = pushResults(fig, files, stepId, labelFcn)
+%pushResults  Append paths to the result STORE (no repaint), skipping what is
+%   already there.  One door for both kinds of result - the images a step wrote and
+%   the PDF a column was assembled into - so an entry can never exist without its
+%   stepId and its kind.
 added = false;
+if isempty(files), return; end
+app = getApp(fig);
+have = {};
+if ~isempty(app.results), have = {app.results.path}; end
 stamp = datetime('now');
 for i = 1:numel(files)
     if any(strcmp(files{i},have)), continue; end
-    app.results(end+1) = struct('path',files{i}, ...
-        'label',sprintf('%s - %s - %s', shortId(identity), step.label, shortName(files{i})), ...
-        'when',stamp);
+    app.results(end+1) = struct('path',files{i},'label',labelFcn(files{i}), ...
+        'when',stamp,'stepId',char(stepId),'kind',artifactKind(files{i}));
+    have{end+1} = files{i}; %#ok<AGROW>
     added = true;
 end
-if ~added, return; end
-setApp(fig,app);
+if added, setApp(fig,app); end
+end
+
+function r = shownResults(app)
+%shownResults  The result entries the panel currently shows: the whole store,
+%   newest first, minus what the kind filter hides.  The store itself is never
+%   touched - a filter is a view (spec D10).
+r = app.results;
+if isempty(r), return; end
+[~,ord] = sort([r.when],'descend');
+r = r(ord);
+switch app.resultFilter
+    case 'images', r = r(strcmp({r.kind},'image'));
+    case 'pdfs',   r = r(strcmp({r.kind},'pdf'));
+end
+end
+
+function setResultFilter(fig,kind)
+%setResultFilter  Pick what the list shows ('all' | 'images' | 'pdfs').
+kind = char(kind);
+if ~any(strcmp(kind,resultKindIds())), kind = 'all'; end
+app = getApp(fig); app.resultFilter = kind; setApp(fig,app);
+c = app.c.process;
+if isfield(c,'kindDrop') && isgraphics(c.kindDrop), c.kindDrop.Value = kind; end
 refreshResultList(fig);
 end
 
 function refreshResultList(fig)
-%refreshResultList  Repaint the link list, newest first.
+%refreshResultList  Repaint the link list, newest first, through the kind filter.
 if ~isvalid(fig), return; end
 app = getApp(fig); c = app.c.process;
 if ~isfield(c,'resultList') || ~isgraphics(c.resultList), return; end
-if isempty(app.results)
-    c.resultList.Items = {'(no report images yet)'};
+r = shownResults(app);
+if isempty(r)
+    c.resultList.Items = {emptyResultItem()};
     c.resultList.ItemsData = {''};
     return
 end
-[~,ord] = sort([app.results.when],'descend');
-r = app.results(ord);
 c.resultList.Items     = {r.label};
 c.resultList.ItemsData = {r.path};
 c.resultList.Value     = r(1).path;
@@ -3974,6 +4374,20 @@ if isempty(step), return; end
 txt = progressCellText(app, r, step, plannedStepsFor(app,r));
 end
 
+function txt = derivedCellOf(fig,identity,branch,stepId)
+%derivedCellOf  The bottom table's word for one ((recording,product), step) - the
+%   headless view of the derived monitor, so a test can assert what a watcher reads
+%   for a product that does not exist on disk yet (spec D7).
+txt = '';
+app = getApp(fig);
+key = [char(identity) '||' char(branch)];
+if ~isKey(app.dRowOf,key), return; end
+r = app.dRows(app.dRowOf(key));
+step = stepById(app.reg,stepId);
+if isempty(step), return; end
+txt = progressCellText(app, r, step, plannedStepsFor(app,r));
+end
+
 function ids = plannedStepsOf(fig,path)
 %plannedStepsOf  Which steps the configuration runs on one file (headless view).
 ids = {};
@@ -3983,27 +4397,40 @@ ids = plannedStepsFor(app, app.pRows(app.pRowOf(path)));
 end
 
 function L = resultLinks(fig)
-%resultLinks  The result list as {label, path} - the programmatic view of D5.
-app = getApp(fig);
+%resultLinks  The result list as {label, path} - the programmatic view of D5, and
+%   the SHOWN one: it answers with what the panel is displaying, filter and all.
+r = shownResults(getApp(fig));
 L = cell(0,2);
-if isempty(app.results), return; end
-[~,ord] = sort([app.results.when],'descend');
-r = app.results(ord);
+if isempty(r), return; end
 L = [{r.label}', {r.path}'];
 end
 
-function openArtifactViewer(pth)
-%openArtifactViewer  Open one report image full-size, preferring the DESKTOP's
-%   own image viewer (winopen on Windows, open/xdg-open elsewhere).  That viewer
-%   is a separate process, so the report stays resizable, zoomable and scrollable
-%   while the workbench is busy inside a wrapper - a MATLAB window would only
-%   repaint when the main thread yields, and uiimage offers no zoom at all.
-%   Falls back to an in-MATLAB figure (axes toolbar = zoom/pan) if the hand-off
-%   fails, e.g. no file association.
-if isempty(pth) || ~isfile(pth), return; end
-if ~openInDesktopViewer(pth)
-    showArtifactInMatlab(pth);
+function k = resultKinds(fig)
+%resultKinds  The kind of every SHOWN entry, parallel to resultLinks - the headless
+%   view of the filter.
+r = shownResults(getApp(fig));
+k = cell(1,0);
+if ~isempty(r), k = {r.kind}; end
 end
+
+function openArtifactViewer(fig, pth)
+%openArtifactViewer  Open one report full-size, preferring the DESKTOP's own
+%   viewer (winopen on Windows, open/xdg-open elsewhere).  That viewer is a
+%   separate process, so the report stays resizable, zoomable and scrollable while
+%   the workbench is busy inside a wrapper - a MATLAB window would only repaint
+%   when the main thread yields, and uiimage offers no zoom at all.
+%
+%   A PDF takes exactly the same road (spec D10): the hand-off is by file
+%   association and does not care what the file is.  Only the in-MATLAB FALLBACK
+%   is image-only - so when the desktop refuses a PDF the log says so, rather than
+%   imread throwing behind an empty figure.
+if isempty(pth) || ~isfile(pth), return; end
+if openInDesktopViewer(pth), return; end
+if strcmp(artifactKind(pth),'pdf')
+    wbLog(fig,sprintf('  cannot open %s here - no PDF viewer is associated with it', pth));
+    return
+end
+showArtifactInMatlab(pth);
 end
 
 function ok = openInDesktopViewer(pth)
@@ -4026,7 +4453,8 @@ end
 
 function showArtifactInMatlab(pth)
 %showArtifactInMatlab  Fallback viewer: a classic figure sized to the image, so
-%   the axes toolbar's zoom/pan are available (uiimage has neither).
+%   the axes toolbar's zoom/pan are available (uiimage has neither).  It is only
+%   ever handed an IMAGE - openArtifactViewer diverts a PDF to the log (D10).
 [~,nm,ex] = fileparts(pth);
 try
     img = imread(pth);
@@ -4042,6 +4470,128 @@ f = figure('Name',['Report - ' nm ex],'NumberTitle','off','Color','w', ...
     'Position',[140 140 max(320,w) max(240,h)]);
 ax = axes('Parent',f,'Position',[0 0 1 1]);
 image(ax,img); axis(ax,'image','off');
+end
+
+%% ===================== per-column PDF reports (spec D9) ============= %%
+function setPdfReports(fig,tf)
+%setPdfReports  The 'Create PDF reports' switch.  A WINDOW PREFERENCE: it changes
+%   nothing about what runs, what is written by a wrapper or what the session
+%   carries (spec D9 - no schema bump), only whether a column's report images are
+%   also collected into one document when the column ends.
+app = getApp(fig); app.pdfReports = logical(tf); setApp(fig,app);
+c = app.c.process;
+if isfield(c,'pdfCheck') && isgraphics(c.pdfCheck), c.pdfCheck.Value = app.pdfReports; end
+end
+
+function beginPdfColumns(fig, entries)
+%beginPdfColumns  Stash, once, how many entries each COLUMN of THIS run has.
+%
+%   THE COUNT MUST COME FROM THE LIST THE RUN IS EXECUTING.  The run order is
+%   step-major, so a column ends when its last entry lands - but since Phase 7 the
+%   list is a From/To SLICE, and re-expanding it mid-run would answer differently
+%   as steps complete on disk, so the column would either never reach its end or
+%   reach it twice.  It is therefore counted here from the entries runChecked
+%   already holds, and never asked for again.  A column outside the range simply
+%   never appears in the map, and so never fires.
+app = getApp(fig);
+app.colTotal = containers.Map('KeyType','char','ValueType','double');
+app.colDone  = containers.Map('KeyType','char','ValueType','double');
+app.colArt   = containers.Map('KeyType','char','ValueType','any');
+for i = 1:numel(entries)
+    id = entries(i).stepId;
+    if isKey(app.colTotal,id)
+        app.colTotal(id) = app.colTotal(id) + 1;
+    else
+        app.colTotal(id) = 1; app.colDone(id) = 0; app.colArt(id) = cell(1,0);
+    end
+end
+setApp(fig,app);
+end
+
+function notePdfColumn(fig, stepId, files)
+%notePdfColumn  One entry of a column finished: keep its report images and tick the
+%   column's counter; when the last entry lands, assemble.  A report is a
+%   BY-PRODUCT - nothing in here may reach the run loop, so the whole thing is
+%   defended and a failure costs a log line, never the step's state.
+try
+    app = getApp(fig);
+    if ~isKey(app.colTotal,stepId), return; end     % not a column of this run
+    if ~isempty(files)
+        app.colArt(stepId) = uniqueStable([app.colArt(stepId), files(:)']);
+    end
+    app.colDone(stepId) = app.colDone(stepId) + 1;
+    ended = app.colDone(stepId) >= app.colTotal(stepId);
+    setApp(fig,app);
+    if ended, flushPdfColumn(fig, stepId); end
+catch ME
+    wbLog(fig,['  PDF report bookkeeping failed: ' ME.message]);
+end
+end
+
+function flushPdfColumns(fig)
+%flushPdfColumns  Assemble every column still pending - what finishRun calls, so a
+%   Stop, an error or a run that ended mid-column still leaves the PDFs it earned.
+%   It runs BEFORE the tables are repainted and does not depend on them.
+app = getApp(fig);
+if ~isa(app.colArt,'containers.Map') || app.colArt.Count==0, return; end
+for id = orderIds(app.reg, keys(app.colArt))
+    flushPdfColumn(fig, id{1});
+end
+end
+
+function flushPdfColumn(fig, stepId)
+%flushPdfColumn  ONE column -> ONE PDF, then the column is forgotten (so it can
+%   never be written twice).  The document joins the result list like any other
+%   artifact and the log records what was written or why it was not.
+app = getApp(fig);
+if ~isKey(app.colArt,stepId), return; end
+files = app.colArt(stepId);
+remove(app.colArt,stepId);
+if isKey(app.colTotal,stepId), remove(app.colTotal,stepId); end
+if isKey(app.colDone,stepId),  remove(app.colDone,stepId);  end
+setApp(fig,app);
+if ~app.pdfReports || isempty(files), return; end
+
+step = stepById(app.reg,stepId);
+lbl  = char(stepId); if ~isempty(step), lbl = step.label; end
+try
+    root = pdfReportRoot(app, files);
+    if isempty(root)
+        wbLog(fig,sprintf('  no PDF for %s - nowhere to put it', lbl));
+        return
+    end
+    stamp = char(datetime('now','Format','yyyyMMdd_HHmmss'));
+    out = wbReportPdf(files, fullfile(root,'workbenchReports',[char(stepId) '_' stamp '.pdf']));
+    for i = 1:numel(out.skipped)
+        wbLog(fig,sprintf('  skipped %s (not a readable report image)', out.skipped{i}));
+    end
+    if isempty(out.path)
+        wbLog(fig,sprintf('  no PDF for %s - none of its %d report image(s) could be read', ...
+            lbl, numel(files)));
+        return
+    end
+    wbLog(fig,sprintf('  wrote %s (%d page(s) of %s)', out.path, out.pages, lbl));
+    app = getApp(fig); app.reportPdfs{end+1} = out.path; setApp(fig,app);
+    pushResults(fig, {out.path}, stepId, @(p) sprintf('PDF - %s - %s', lbl, shortName(p)));
+    refreshResultList(fig);
+catch ME
+    wbLog(fig,sprintf('  PDF report for %s failed: %s', lbl, ME.message));
+end
+end
+
+function root = pdfReportRoot(app, files)
+%pdfReportRoot  Where a column's PDF lands: the SCAN ROOT when there is one, so a
+%   project keeps all of its reports together; otherwise the folder of that
+%   column's first artifact - which is what keeps a working set assembled by hand
+%   out of several folders writing beside the images each report is made of.
+root = '';
+if ~isempty(app.root) && isfolder(app.root), root = app.root; return; end
+if ~isempty(files), root = fileparts(files{1}); end
+end
+
+function p = reportPdfList(fig)
+%reportPdfList  The per-column PDFs assembled this session (headless view).
+p = getApp(fig).reportPdfs;
 end
 
 function s = shortId(identity)
@@ -4073,14 +4623,22 @@ end
 
 %% ===================== exit ======================================== %%
 function requestExit(fig)
+%requestExit  Leaving is ONE decision, not three.  Exit stops the run itself - the
+%   user should never have to press Stop first, and pressing it twice was only ever
+%   a way of saying "yes, I meant it" - saves the session to the last session, and
+%   closes.  A run cannot be torn down mid-step, so while one is in flight this
+%   requests the same cooperative stop the Stop button does and hands the close to
+%   finishRun, which is the moment the executor has actually let go.
 if ~isvalid(fig), return; end
 app = getApp(fig);
 if isfield(app,'running') && app.running
-    app.cancel = true; setApp(fig,app);
-    wbLog(fig,'Stopping... click Exit again to close.');
-else
-    onClose(fig);
+    app.exitAfterStop = true; setApp(fig,app);
+    cancelRun(fig);
+    wbLog(fig,'Exit: stopping after the current step - the window closes when it does.');
+    return
 end
+autosaveSession(fig);
+onClose(fig);
 end
 function onClose(fig)
 if isvalid(fig), delete(fig); end
@@ -4098,7 +4656,8 @@ function o = ternary(c,a,b), if c, o = a; else, o = b; end, end
 function v = getfieldOr(s,f,d), if isstruct(s)&&isfield(s,f), v = s.(f); else, v = d; end, end
 function t = headerTip(step)
 t = step.label;
-if ~isempty(step.gatingField), t = [t ' (gates on settings.' step.gatingField ')']; end
+req = wbPrereqs('describe',step);
+if ~isempty(req), t = [t '.  It needs ' req ' first.']; end
 end
 function s = val2str(v)
 if ischar(v), s = v;

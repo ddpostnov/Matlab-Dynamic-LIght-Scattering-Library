@@ -68,13 +68,19 @@
 %    * Steps whose prerequisite input file cannot be located are logged and
 %      skipped (left for a later run), not errored.
 %    * ONE ROW = ONE RECORDING, several files.  A step with branchScope 'all'
-%      (splitRegions, BFI, dynamicSegmentation, export) receives every branch of the
+%      (splitRegions, BFI, dynamicSegmentation) receives every branch of the
 %      recording in a single call and its own per-file loop covers them; a step with
 %      'copy' (setRegions, segmentation) runs on the contrast branch only and the
 %      wrapper propagates the result to the rest through s.fNamesCopyTo.  Without
 %      this the executor picked ONE file per recording and the first dir() match won
 %      - which quietly ran the interactive region editor on '_c' and never touched
 %      '_t' (dir sorts '_c_K_d.mat' before '_t_K_d.mat').
+%    * THE SAME APPLIES INSIDE AN ANIMAL ROW (Phase 6).  A perAnimal step's
+%      branchScope says how many products EACH member contributes to the one column
+%      it gets: registration and vesselTypes are 'all', so an animal's column is
+%      every branch product of every one of its recordings - the launcher's
+%      'Roi*_K_d.mat' / 'Roi*_BFI_d.mat' cell - with the pinned reference's declared
+%      branch first.  At 'one' they hit the same first-dir()-match trap as above.
 %
 % See also: guiWorkbench, wbStepRegistry, wbSettingsModel, wbModalGuard,
 %           wbArtifacts, wbInvalidate, wbRefBranch, guiMyograph
@@ -82,7 +88,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 29-July-2026
 
 %------------- BEGIN CODE --------------
 function wbExecutor(entries, ctx)
@@ -172,11 +178,15 @@ end
 % =====================================================================
 function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cstage, refPath)
 %buildFNames  Concrete wrapper inputs for a step.
-%   perAnimal: one file per animal member, Nx1 column, reference first (the branch
-%   fan-out below is a perFile concern - an animal row already carries one file
-%   per recording).  refPath, when the host supplied one, IS column 1: the branch
-%   of the pinned reference recording the step declared through refBranch, already
-%   resolved by wbRefBranch.  Without it column 1 stays the glob's first match.
+%   perAnimal: an Nx1 column over the animal's members, reference FIRST.  How many
+%   files each member contributes is that step's branchScope, exactly as for a
+%   perFile step - 'one' takes the member's stage-preferred product alone, 'all'
+%   takes every branch product it owns, which is what the launcher's branch-wide
+%   cell ('Roi*_K_d.mat') hands the wrapper.  It stays ONE work item either way:
+%   the fan-out lengthens the column, it never adds an animal row.  refPath, when
+%   the host supplied one, IS column 1: the branch of the pinned reference
+%   recording the step declared through refBranch, already resolved by wbRefBranch.
+%   Without it column 1 stays the glob's first match.
 %   perFile:  ONE recording, whose several co-registered branch products ('_t_K',
 %   '_c_K', '_e_K', ...) are resolved according to step.branchScope -
 %     'one'  -> the stage-preferred file alone (1x1),
@@ -189,16 +199,21 @@ fNames = {}; rawNames = {}; refName = ''; copyTo = {}; ok = false;
 if nargin<4, refPath = ''; end
 
 if strcmp(step.arity,'perAnimal')
-    n = numel(models);
-    paths = cell(n,1); raws = cell(n,1);
-    for k = 1:n
-        p = resolveStepInputs(models(k), step, cstage);
-        if k==1 && ~isempty(refPath) && isfile(refPath), p = {refPath}; end
+    wide  = ~strcmp(scopeOf(step),'one');                 % 'all'/'copy': every product
+    paths = {}; raws = {};
+    for k = 1:numel(models)
+        p = resolveStepInputs(models(k), step, cstage);   % stage-preferred first
+        if k==1 && ~isempty(refPath) && isfile(refPath)
+            p = [{refPath}, p(~strcmp(p,refPath))];       % the pinned reference leads
+        end
         if isempty(p), return; end                       % a member has no input -> not ready
-        paths{k} = p{1};
-        if step.needsRaw, raws{k} = rawPathFor(models(k)); end
+        if ~wide, p = p(1); end
+        paths = [paths, p]; %#ok<AGROW>
+        if step.needsRaw
+            raws = [raws, repmat({rawPathFor(models(k))},1,numel(p))]; %#ok<AGROW>
+        end
     end
-    fNames = paths; rawNames = raws; refName = paths{1};
+    fNames = paths(:); rawNames = raws(:); refName = paths{1};
     ok = true; return
 end
 

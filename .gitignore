@@ -1,0 +1,12 @@
+# Processing Workbench sessions (guiWorkbench > sessionDir).  These are LOCAL
+# working state - one lastSession.mat that is rewritten on every state change,
+# plus whatever the user saves by hand - and belong to a machine, not to the
+# library.
+/workbench-sessions/
+
+# Claude Code working folders - test harnesses, fixtures, goldens and scratch
+# notes.  They exist to verify changes locally and are read by no one else, so
+# they never ship with the library.
+/claude-tests/
+/claude-docs/
+

@@ -27,7 +27,7 @@
 %    files - 1xK cellstr of full paths to the artifact images that exist on disk
 %            (empty 1x0 when the step declares none or none are present yet).
 %
-% See also: wbStepRegistry, wbFileModel, wbExecutor, guiWorkbench
+% See also: wbStepRegistry, wbFileModel, wbExecutor, wbReportPdf, guiWorkbench
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

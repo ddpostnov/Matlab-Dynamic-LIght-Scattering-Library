@@ -22,14 +22,16 @@
 %   and/or a sequence of recordings across many files, then export the figure at a
 %   chosen resolution for a paper or a talk.
 %
+%   It is STANDALONE. It does not need - and never loads - the Processing
+%   Workbench: the hand-off between them is the SESSION file (wbSession), read
+%   through wbSession('read',...), which carries the curated file list together
+%   with each file's ANIMAL, recording TYPE and experimental GROUP, and a record of
+%   which steps actually ran. Its peer on the export side is guiExport.
+%
 % HOW TO USE IT
-%   1. Normally you do NOT call this directly: open  guiWorkbench  and switch to its
-%      Explore tab, which hosts this app and seeds it with the workbench's loaded
-%      recordings and groups. To browse results without the workbench, run
-%      guiExplore  standalone (with the library on the path) and continue from 2.
-%   2. Click "Choose Folder / File".
-%        - Pick a FILE  -> everything is plotted for that single recording.
-%        - Pick a FOLDER -> the folder is searched recursively; then use the three
+%   1. Get files in, three ways:
+%        - "Choose Folder / File" -> a FILE: everything is plotted for that single
+%          recording; a FOLDER: searched recursively, then labelled by the three
 %          regular-expression boxes:
 %            (a) Include  : keep only files whose NAME matches this regexp
 %                           (default '_r\.mat$' = results files).
@@ -42,27 +44,32 @@
 %                           If the match contains a number, indices are ordered
 %                           ASCENDING by that number. Group and Rec.index are
 %                           independent - either can be the x-axis or the colour.
-%      Click "Scan / apply" to (re)build the file list. Hover any of the three
-%      regexp boxes for a popup with worked pattern examples.
+%          Click "Scan / apply" to (re)build the file list. Hover any of the three
+%          regexp boxes for a popup with worked pattern examples.
+%        - "Load session..." -> a workbench session. Its curated recordings are
+%          resolved to their *_r.mat RESULTS, and every file arrives with its
+%          ANIMAL, recording TYPE, experimental GROUP and recording INDEX already
+%          decided, so nothing is re-derived from the file name: the session's
+%          expGroup IS this tool's "group". The regexp boxes are switched off
+%          because there is nothing left for them to guess, and "Scan / apply"
+%          re-reads the session. The session also says which steps actually ran, so
+%          a result tree that was never computed is not offered as a plot.
 %      Prefer to group by hand? Select files in the list (Ctrl/Shift-click), type a
 %      name in "New group" and press "Create group from selected files". Hand-made
-%      groups override the Group pattern and survive a re-scan.
-%   3. Choose WHAT to plot with the dropdowns (data type -> variable), pick one or
+%      groups override BOTH the Group pattern and the session, and survive a re-scan.
+%   2. Choose WHAT to plot with the dropdowns (data type -> variable), pick one or
 %      more SELECTIONS (arteries / veins / parenchyma / all / a named label), tweak
 %      titles / labels / legend, then "Plot". Labels that span several segments are
-%      area-weighted into one trace/value automatically.
-%   4. Set DPI + format and click "Export image".
+%      area-weighted into one trace/value automatically. "Organise by" stratifies on
+%      any of the FOUR independent axes - group, recording index, animal, type -
+%      which do not nest: an animal may span groups and a group may span animals.
+%   3. Set DPI + format and click "Export image".
 %
-% EMBEDDING
-%   guiExplore('Parent',container) builds the whole app INTO an existing uitab or
-%   uipanel instead of its own window (used by the Processing Workbench's Explore
-%   tab, seeded with the workbench's file set / groups via the programmatic API);
-%   with no 'Parent' it opens standalone exactly as described above.
-%
-%   This file therefore lives in GUIs/workbench/ next to the other workbench
-%   components: it is the implementation of guiWorkbench's Explore tab rather than
-%   a separate entry point. It stays fully usable standalone (genpath puts the whole
-%   tree on the path), but guiWorkbench is the documented way in.
+% PROGRAMMATIC USE
+%   getappdata(fig,'exploreAPI') exposes the same logic as a struct of handles -
+%   .loadPaths .loadSession .setState .createGroup .render .export .getApp - so the
+%   tool is fully headless-testable (claude-tests/Workbench/testExploreTool.m),
+%   exactly like guiExport's API.
 %
 % NOTES
 %   - Only category-5 (lumen) segments are used for Artery/Vein/All-vessel selections
@@ -94,24 +101,28 @@
 %    editable title, a single editable legend pattern with tokens, tight/padded axes
 %    per plot type, a white background, and high-resolution export via exportgraphics."
 %
+% Syntax:
+%    guiExplore                         % open the tool (folder / file route)
+%    guiExplore(sessionPath)            % open it ON a workbench session
+%    h = guiExplore('Visible','off')    % headless (programmatic drive / tests)
+%
+% See also: wbSession, guiExport, guiWorkbench, exportToExcel
+%
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 29-July-2026
 
 function h = guiExplore(varargin)
 
-% ---- optional host container: with 'Parent',<uitab/uipanel> the whole app is
-%      built INTO that container (e.g. the Processing Workbench's Explore tab)
-%      instead of a standalone window; dialogs and figure-scoped lookups target
-%      the host figure.  With no 'Parent' the behaviour is unchanged.
-parent = parseParent(varargin);
+% ---- inputs: an optional leading SESSION path, plus 'Visible' -------------
+[sessionArg, vis] = parseArgs(varargin);
 
 % ---- shared application state (seen by all nested functions) --------------
 app = struct();
-app.mode        = '';        % 'file' | 'folder'
+app.mode        = '';        % 'file' | 'folder' | 'session'
 app.root        = '';        % chosen folder, or the folder of the chosen file
-app.files       = struct('path',{},'name',{},'group',{},'rec',{},'recnum',{});
+app.files       = emptyEntries();
 app.cache       = containers.Map('KeyType','char','ValueType','any');
 app.cacheOrder  = {};        % LRU order of cached paths
 app.cacheLimit  = 6;         % max fully-loaded files kept in memory
@@ -119,22 +130,20 @@ app.sizeLimitGB = 3;         % above this a file is read field-by-field (HDF5)
 app.labels      = {};        % union of vessel/ROI labels across the file list
 app.groupOverride = containers.Map('KeyType','char','ValueType','char'); % hand-made groups (path->name)
 app.manual      = struct('title',false,'xlab',false,'ylab',false); % user-edited?
+app.sessionPath = '';        % the session this file list came from ('' = none)
 
 CAT = struct('PARENCHYMA',1,'UNSEG',2,'WALL',3,'INNER',4,'LUMEN',5);
 
-% ---- build the window (standalone) or host inside the given container ------
-if isempty(parent)
-    fig = uifigure('Name','guiExplore - LSCI results explorer', ...
-        'Color','w','Position',[80 60 1440 860]);
-    try, fig.WindowState = 'maximized'; catch, end
-    root = fig;                              % standalone: build on the figure
-else
-    root = parent;                           % hosted: build on the given container
-    fig  = ancestor(parent,'figure');        % dialogs / findobj target the host figure
+% ---- build the window (single instance, like guiExport) --------------------
+delete(findall(groot,'Type','figure','Tag','guiExplore'));
+fig = uifigure('Name','guiExplore - LSCI results explorer', ...
+    'Color','w','Position',[80 60 1440 860],'Visible',vis,'Tag','guiExplore');
+if strcmpi(vis,'on')
+    try, fig.WindowState = 'maximized'; catch, end   %#ok<NOCOM> not every host allows it
 end
 app.fig = fig;
 
-outer = uigridlayout(root,[1 2],'ColumnWidth',{'2.4x','1x'}, ...
+outer = uigridlayout(fig,[1 2],'ColumnWidth',{'2.4x','1x'}, ...
     'Padding',[6 6 6 6],'ColumnSpacing',8,'BackgroundColor','w');
 
 % left: the single large plotting axes
@@ -157,7 +166,13 @@ c = struct();   % control handles
 % --- section 1: data source ---
 s1 = section(stack,'1 - Data source',12);
 c.sourceBtn = uibutton(s1,'Text','Choose Folder / File','ButtonPushedFcn',@onChooseSource);
-c.sourceBtn.Layout.Row = 1; c.sourceBtn.Layout.Column = [1 2];
+c.sourceBtn.Layout.Row = 1; c.sourceBtn.Layout.Column = 1;
+c.sessionBtn = uibutton(s1,'Text','Load session...','ButtonPushedFcn',@onLoadSession, ...
+    'BackgroundColor',[0.90 0.94 1.0], ...
+    'Tooltip',['read a Processing Workbench session: its recordings arrive as their ' ...
+               '*_r.mat results, with animal / recording type / experimental group / ' ...
+               'index already resolved and only the plots it actually computed offered']);
+c.sessionBtn.Layout.Row = 1; c.sessionBtn.Layout.Column = 2;
 c.sourceLbl = uilabel(s1,'Text','(nothing selected)','FontColor',[0.35 0.35 0.35], ...
     'WordWrap','on'); c.sourceLbl.Layout.Row = 2; c.sourceLbl.Layout.Column = [1 2];
 c.includeF = labelledField(s1,3,'Include',  '_r\.mat$');
@@ -182,13 +197,14 @@ c.createBtn.Layout.Row = 12; c.createBtn.Layout.Column = [1 2];
 
 % --- section 2: what to plot ---
 s2 = section(stack,'2 - What to plot',5);
-c.dataType = labelledDrop(s2,1,'Data type', ...
-    {'Time series','Scalar metric','Vasomotion spectrum','Vasomotion time-freq', ...
-     'Vasomotion percentile spectra','Vasomotion amplitude percentiles','Image map'}, ...
-    @onDataType);
+c.dataType = labelledDrop(s2,1,'Data type', allDataTypes(), @onDataType);
 c.variable = labelledDrop(s2,2,'Variable',{'(none)'},@(~,~)onVariable());
 c.organize = labelledDrop(s2,3,'Organise by', ...
-    {'Auto','Group','Recording index','Group x Index','Pool all'},@(~,~)requestRender());
+    {'Auto','Group','Recording index','Animal','Type','Group x Index','Pool all'}, ...
+    @(~,~)requestRender());
+c.organize.Tooltip = ['The four stratification axes are INDEPENDENT: an animal may span ' ...
+    'experimental groups and a group may span animals.  Animal and Type are filled by ' ...
+    'a loaded session; Auto uses whichever of them actually varies.'];
 c.points   = labelledDrop(s2,4,'Points are', ...
     {'Auto (files if >1)','Files','Segments'},@(~,~)requestRender());
 c.stat     = labelledDrop(s2,5,'Centre / error', ...
@@ -213,7 +229,7 @@ c.legendChk = uicheckbox(s4,'Text','Show legend','Value',true, ...
 c.legendChk.Layout.Row = 4; c.legendChk.Layout.Column = [1 2];
 c.legendF = labelledField(s4,5,'Legend fmt','%s%g%r');
 c.legendF.ValueChangedFcn = @(~,~)requestRender();
-c.legHelp = uilabel(s4,'Text','tokens: %s sel  %g group  %r index  %f file  %v var', ...
+c.legHelp = uilabel(s4,'Text','tokens: %s sel  %g group  %r index  %a animal  %t type  %f file  %v var', ...
     'FontColor',[0.5 0.5 0.5],'FontSize',10,'WordWrap','on');
 c.legHelp.Layout.Row = 6; c.legHelp.Layout.Column = [1 2];
 c.cmap = labelledDrop(s4,7,'Image cmap',{'parula','turbo','hot','gray','jet'},@(~,~)requestRender());
@@ -243,11 +259,23 @@ onDataType();                       % initialise variable/selection item lists
 % expose a small API so the tool can be driven programmatically (used for tests)
 setappdata(fig,'exploreAPI',struct( ...
     'loadPaths',   @loadPathsProgrammatic, ...
+    'loadSession', @(p) loadSessionFile(p), ...
+    'sessionPath', @sessionPathLive, ...
+    'dataTypes',   @dataTypesLive, ...
     'setState',    @setStateProgrammatic, ...
     'createGroup', @createGroupProgrammatic, ...
     'render',      @doRender, ...
     'export',      @exportTo, ...
     'getApp',      @getAppLive));
+
+% ---- a leading argument is a SESSION: the hand-off from the workbench ------
+if ~isempty(sessionArg)
+    try
+        loadSessionFile(sessionArg);
+    catch ME
+        setStatus(['Session could not be read: ' ME.message]);
+    end
+end
 
 if nargout>0, h = fig; end
 
@@ -260,23 +288,90 @@ if nargout>0, h = fig; end
             case 'Folder (many files)'
                 d = uigetdir(pwd,'Select the folder that contains your *_r.mat files');
                 if isequal(d,0), return; end
-                app.mode = 'folder'; app.root = d;
+                app.mode = 'folder'; app.root = d; app.sessionPath = '';
                 c.sourceLbl.Text = ['Folder: ' d];
-                c.includeF.Enable='on'; c.groupF.Enable='on'; c.recF.Enable='on'; c.scanBtn.Enable='on';
+                setPatternFields('on');
                 onScan();
             case 'Single file'
                 [f,p] = uigetfile({'*_r.mat;*.mat','LSCI results (*_r.mat)'}, ...
                     'Select a results file');
                 if isequal(f,0), return; end
-                app.mode = 'file'; app.root = p;
+                app.mode = 'file'; app.root = p; app.sessionPath = '';
                 app.files = makeEntry(fullfile(p,f),'all','1');
                 c.sourceLbl.Text = ['File: ' f];
-                c.includeF.Enable='off'; c.groupF.Enable='off'; c.recF.Enable='off'; c.scanBtn.Enable='off';
+                setPatternFields('off');
                 refreshFileList(); refreshLabelsAndItems(); doRender();
         end
     end
 
+    function onLoadSession(~,~)
+        [f,p] = uigetfile({'*.mat','Workbench session (*.mat)'}, ...
+            'Select a Processing Workbench session', app.root);
+        if isequal(f,0), return; end
+        try
+            loadSessionFile(fullfile(p,f));
+        catch ME
+            uialert(fig,ME.message,'Session');
+        end
+    end
+
+    function loadSessionFile(pth)
+        %loadSessionFile  THE hand-off from the workbench (spec §5).  Read through
+        %   wbSession('read',...) - never by reaching into the file layout - so the
+        %   curated list arrives with its animal / type / index / experimental group
+        %   already resolved, and with the record of what actually ran.  Each session
+        %   recording is expanded to the *_r.mat RESULTS products it owns, which is
+        %   what this tool plots; hand-made groups still win over the session's.
+        pth = char(pth);
+        S = wbSession('read', pth);
+        entries = sessionEntries(S);
+        app.mode = 'session'; app.sessionPath = pth;
+        app.root = fileparts(pth);
+        app.files = applyGroupOverrides(entries);
+        c.sourceLbl.Text = sprintf('Session: %s   (%d recording(s) -> %d results file(s))', ...
+            shortName(pth), numel(S.files), numel(app.files));
+        setPatternFields('off');
+        c.scanBtn.Enable = 'on';                 % re-reads the session (see onScan)
+        c.scanBtn.Tooltip = 'Re-read the session file and rebuild the list.';
+        refreshFileList(); refreshLabelsAndItems();
+        if isempty(app.files)
+            setStatus('The session has no *_r.mat results yet - process it first.');
+            return
+        end
+        setStatus(sprintf('Session: %d results file(s), %d group(s), %d animal(s), %d type(s).', ...
+            numel(app.files), nUnique('group'), nUnique('animal'), nUnique('type')));
+        doRender();
+    end
+
+    function e = sessionEntries(S)
+        %sessionEntries  Session -> file-list entries.  Every label is the SESSION's
+        %   (expGroup IS this tool's group - spec §2/D1), never re-derived from the
+        %   name, and every entry remembers which steps that recording completed so
+        %   the plot menus can stop probing for trees that were never computed.
+        e = emptyEntries();
+        for i = 1:numel(S.files)
+            f = S.files(i);
+            done = completedSteps(S, f.path);
+            rp = resolveResultFiles(f.path);
+            for k = 1:numel(rp)
+                x = makeEntryStruct(rp{k}, '', '');
+                x.group  = labelOr(f.expGroup,'all');
+                x.rec    = labelOr(f.index,'1');
+                x.recnum = recToNum(x.rec);
+                x.animal = charOf(f.animal);
+                x.type   = charOf(f.type);
+                x.steps  = done;
+                e(end+1) = x; %#ok<AGROW>
+            end
+        end
+        e = sortEntries(e);
+    end
+
     function onScan(~,~)
+        if strcmp(app.mode,'session')
+            loadSessionFile(app.sessionPath);   % "apply" for a session = re-read it
+            return
+        end
         if ~strcmp(app.mode,'folder'), return; end
         setStatus('Scanning folder...');
         try
@@ -297,8 +392,8 @@ if nargout>0, h = fig; end
 
     function onCreateGroup(~,~)
         % Assign the files currently selected in the list to a hand-typed group.
-        if ~strcmp(app.mode,'folder')
-            uialert(fig,'Manual groups apply when a folder is loaded.','Create group'); return;
+        if ~any(strcmp(app.mode,{'folder','session'}))
+            uialert(fig,'Manual groups apply when a folder or a session is loaded.','Create group'); return;
         end
         name = strtrim(c.groupNameF.Value);
         if isempty(name), uialert(fig,'Type a group name first.','Create group'); return; end
@@ -357,8 +452,12 @@ if nargout>0, h = fig; end
     function refreshFileList()
         items = cell(1,numel(app.files));
         for i=1:numel(app.files)
-            items{i} = sprintf('%s   [%s | %s]', app.files(i).name, ...
-                app.files(i).group, app.files(i).rec);
+            % the bracket carries whichever axes are actually labelled: group and
+            % index always, animal and type only when a session supplied them
+            bits = {app.files(i).group, app.files(i).rec, ...
+                    app.files(i).animal, app.files(i).type};
+            bits = bits(~cellfun(@isempty,bits));
+            items{i} = sprintf('%s   [%s]', app.files(i).name, strjoin(bits,' | '));
         end
         c.fileList.Items = items;
         c.fileList.ItemsData = 1:numel(app.files);
@@ -388,9 +487,43 @@ if nargout>0, h = fig; end
             end
         end
         app.labels = unique(L);
+        refreshDataTypeItems();
         refreshVariableItems();
         refreshSelectionItems();
         autofillCosmetics();
+    end
+
+    function refreshDataTypeItems()
+        %refreshDataTypeItems  Offer only the plot families the loaded files can
+        %   actually produce.  With a session loaded that answer is KNOWN - the
+        %   completion record says which steps ran - so a result tree that was never
+        %   computed is dropped from the menu instead of being probed for and then
+        %   found empty.  Without a session nothing is known and the full list stays,
+        %   which is the behaviour the folder / file routes have always had.
+        items = allDataTypes();
+        spec  = dataTypeSteps();
+        for k = 1:size(spec,1)
+            if ~sessionOffers(spec{k,2})
+                items = items(~strcmp(items, spec{k,1}));
+            end
+        end
+        if isempty(items), items = allDataTypes(); end
+        keep = c.dataType.Value;
+        c.dataType.Items = items;
+        if ismember(keep,items), c.dataType.Value = keep; else, c.dataType.Value = items{1}; end
+    end
+
+    function tf = sessionOffers(stepId)
+        %sessionOffers  Did ANY loaded file complete this step?  Tri-state: a file
+        %   with no completion record contributes no knowledge, and when nothing is
+        %   known at all the answer is yes (probe as before).
+        known = false;
+        for i = 1:numel(app.files)
+            if isempty(app.files(i).steps), continue; end
+            known = true;
+            if any(strcmp(stepId, app.files(i).steps)), tf = true; return; end
+        end
+        tf = ~known;
     end
 
 %% ==================== DYNAMIC DROPDOWN ITEMS ============================ %%
@@ -485,7 +618,8 @@ if nargout>0, h = fig; end
         idx  = selectedFileIdx();
         sels = c.selList.Value; if ischar(sels), sels = {sels}; end
         pooledPerFile = pointsAreFiles(numel(idx));
-        obs = struct('x',{},'y',{},'sel',{},'group',{},'rec',{},'file',{});
+        obs = struct('x',{},'y',{},'sel',{},'group',{},'rec',{}, ...
+            'animal',{},'type',{},'file',{});
         meta = struct('xlabel','','ylabel','','xlog',false);
         for s = 1:numel(sels)
             for i = idx
@@ -509,7 +643,9 @@ if nargout>0, h = fig; end
 
     function o = mkObs(x,y,sel,i)
         o = struct('x',x(:),'y',y(:),'sel',prettySel(sel), ...
-            'group',app.files(i).group,'rec',app.files(i).rec,'file',app.files(i).name);
+            'group',app.files(i).group,'rec',app.files(i).rec, ...
+            'animal',app.files(i).animal,'type',app.files(i).type, ...
+            'file',app.files(i).name);
     end
 
     function [vals,tags] = gatherScalarObservations()
@@ -517,7 +653,8 @@ if nargout>0, h = fig; end
         sels = c.selList.Value; if ischar(sels), sels = {sels}; end
         [colDom,colName] = parseMetricVar(c.variable.Value);
         pooledPerFile = pointsAreFiles(numel(idx));
-        vals = []; tags = struct('sel',{},'group',{},'rec',{},'file',{});
+        vals = []; tags = struct('sel',{},'group',{},'rec',{}, ...
+            'animal',{},'type',{},'file',{});
         for s = 1:numel(sels)
             for i = idx
                 R = tryLoad(app.files(i).path);
@@ -545,7 +682,8 @@ if nargout>0, h = fig; end
 
     function t = mkTag(sel,i)
         t = struct('sel',prettySel(sel),'group',app.files(i).group, ...
-            'rec',app.files(i).rec,'file',app.files(i).name);
+            'rec',app.files(i).rec,'animal',app.files(i).animal, ...
+            'type',app.files(i).type,'file',app.files(i).name);
     end
 
 %% ==================== RENDERERS ========================================= %%
@@ -583,8 +721,7 @@ if nargout>0, h = fig; end
     function renderMetric(ax)
         [vals,tags] = gatherScalarObservations();
         if isempty(vals), title(ax,'No data for this selection'); legend(ax,'off'); return; end
-        nSel=numel(unique({tags.sel})); nGrp=numel(unique({tags.group})); nRec=numel(unique({tags.rec}));
-        dims = activeDims(nSel,nGrp,nRec);
+        dims = activeDims(tags);
         xName = dims{1}; colDims = dims(2:end);
         xc  = arrayfun(@(t) t.(xName), tags, 'uni',0);
         xcats = orderedCats(xc);
@@ -778,39 +915,47 @@ if nargout>0, h = fig; end
         end
     end
 
-    function dims = activeDims(nSel,nGrp,nRec)
+    function dims = activeDims(tg)
         % Ordered list of the tag dimensions that separate the data, given the
         % "Organise by" choice. The first is the natural x-axis (box plots) and the
         % combination defines a series (curves). Selection is always kept separate
         % when several are shown so different vessel types are never pooled together.
+        % GROUP, INDEX, ANIMAL and TYPE are four INDEPENDENT axes (spec §2) - they
+        % never nest, so Auto simply takes whichever of them actually varies.  Animal
+        % and type are empty unless a session filled them, which is why a folder scan
+        % behaves exactly as it always did.
         switch c.organize.Value
             case 'Group',           prim={'group'};
             case 'Recording index', prim={'rec'};
+            case 'Animal',          prim={'animal'};
+            case 'Type',            prim={'type'};
             case 'Group x Index',   prim={'rec','group'};
             case 'Pool all',        prim={};
             otherwise                                  % Auto: use whatever varies
                 prim={};
-                if nRec>1, prim{end+1}='rec';   end
-                if nGrp>1, prim{end+1}='group'; end
+                if nDim(tg,'rec')>1,    prim{end+1}='rec';    end
+                if nDim(tg,'group')>1,  prim{end+1}='group';  end
+                if nDim(tg,'animal')>1, prim{end+1}='animal'; end
+                if nDim(tg,'type')>1,   prim{end+1}='type';   end
         end
         dims=prim;
-        if nSel>1, dims{end+1}='sel'; end
+        if nDim(tg,'sel')>1, dims{end+1}='sel'; end
         if isempty(dims), dims={'sel'}; end            % single group -> one x category
     end
 
     function nm = legendDyn(val)
         % Apply the legend pattern to a single dynamic category (box colour groups).
-        nm = legendName(struct('sel','','group','','rec','','file','','dyn',val));
+        L = emptyLegendTag(); L.dyn = val;
+        nm = legendName(L);
     end
 
     function [key,leg] = seriesKeys(obs)
         % A series (one line+band) = unique combination of the ACTIVE dimensions.
-        nSel=numel(unique({obs.sel})); nGrp=numel(unique({obs.group})); nRec=numel(unique({obs.rec}));
-        dims=activeDims(nSel,nGrp,nRec);
+        dims=activeDims(obs);
         key=cell(1,numel(obs)); leg=cell(1,numel(obs));
         for i=1:numel(obs)
             key{i}=strjoin(cellfun(@(d) obs(i).(d), dims,'uni',0),'|');
-            L=struct('sel','','group','','rec','','file',obs(i).file);
+            L=emptyLegendTag(); L.file=obs(i).file;
             for d=1:numel(dims), L.(dims{d})=obs(i).(dims{d}); end
             leg{i}=L;
         end
@@ -840,15 +985,18 @@ if nargout>0, h = fig; end
         pat = c.legendF.Value; if isempty(pat), pat='%s%g%r'; end
         if isfield(tagLike,'dyn') && ~isempty(tagLike.dyn)
             % dynamic single-dimension legend (box colour groups)
-            nm = strtrim(strrep(strrep(strrep(strrep(strrep(pat, ...
-                '%s',''),'%g',''),'%r',''),'%f',''),'%v',''));
-            nm = strtrim([nm ' ' tagLike.dyn]); if isempty(strtrim(nm)), nm=tagLike.dyn; end
+            nm = pat;
+            for tk = {'%s','%g','%r','%a','%t','%f','%v'}, nm = strrep(nm,tk{1},''); end
+            nm = strtrim([strtrim(nm) ' ' tagLike.dyn]);
+            if isempty(strtrim(nm)), nm=tagLike.dyn; end
             return;
         end
         nm = pat;
         nm = strrep(nm,'%s', pad0(tagLike.sel));
         nm = strrep(nm,'%g', pad0(tagLike.group));
         nm = strrep(nm,'%r', pad0(tagLike.rec));
+        nm = strrep(nm,'%a', pad0(tagLike.animal));
+        nm = strrep(nm,'%t', pad0(tagLike.type));
         nm = strrep(nm,'%f', pad0(tagLike.file));
         nm = strrep(nm,'%v', c.variable.Value);
         nm = strtrim(regexprep(nm,'\s+',' '));
@@ -933,9 +1081,9 @@ if nargout>0, h = fig; end
         if nargin<2||isempty(includePat), includePat='_r\.mat$'; end
         if nargin<3, groupPat=''; end
         if nargin<4, recPat=''; end
-        app.mode='folder';
+        app.mode='folder'; app.sessionPath='';
         if ~isempty(paths), app.root = fileparts(paths{1}); end
-        e = struct('path',{},'name',{},'group',{},'rec',{},'recnum',{});
+        e = emptyEntries();
         for i=1:numel(paths)
             [~,nm,ex]=fileparts(paths{i});
             if ~isempty(includePat) && isempty(regexp([nm ex],includePat,'once')), continue; end
@@ -943,13 +1091,16 @@ if nargout>0, h = fig; end
         end
         app.files = applyGroupOverrides(sortEntries(e));
         c.includeF.Value=includePat; c.groupF.Value=groupPat; c.recF.Value=recPat;
+        setPatternFields('on');
         refreshFileList(); refreshLabelsAndItems();
     end
 
     function createGroupProgrammatic(name, idx)
         c.fileList.Value = idx; c.groupNameF.Value = name; onCreateGroup();
     end
-    function a = getAppLive(), a = app; end
+    function a = getAppLive(),      a = app;              end
+    function p = sessionPathLive(), p = app.sessionPath;  end
+    function d = dataTypesLive(),   d = c.dataType.Items; end
 
     function setStateProgrammatic(varargin)
         for k=1:2:numel(varargin)
@@ -1001,6 +1152,24 @@ if nargout>0, h = fig; end
 
 %% ==================== small nested helpers ============================= %%
     function setStatus(msg), c.status.Text = msg; drawnow limitrate; end
+
+    function setPatternFields(state)
+        %setPatternFields  The three regexp boxes guess labels from file NAMES, so
+        %   they are switched off whenever the labels came from somewhere better - a
+        %   single picked file, or a session that already resolved them.
+        c.includeF.Enable=state; c.groupF.Enable=state; c.recF.Enable=state;
+        c.scanBtn.Enable=state;
+    end
+
+    function n = nUnique(field)
+        if isempty(app.files), n = 0; return; end
+        v = {app.files.(field)};
+        n = numel(unique(v(~cellfun(@isempty,v))));
+    end
+
+    function n = nDim(tg,field)
+        n = numel(unique({tg.(field)}));
+    end
 
     function [statFun,loFun,hiFun,name] = statFuns()
         % Centre + lower/upper band generators chosen from the "Centre/error" box.
@@ -1086,8 +1255,8 @@ if nargout>0, h = fig; end
     end
 
     function e = makeEntry(path,grp,rec)
-        [~,nm,ex]=fileparts(path);
-        e = struct('path',path,'name',[nm ex],'group',grp,'rec',rec,'recnum',recToNum(rec));
+        e = makeEntryStruct(path,'','');
+        e.group = grp; e.rec = rec; e.recnum = recToNum(rec);
     end
 end
 
@@ -1152,7 +1321,7 @@ function entries = buildFileEntries(root, includePat, groupPat, recPat)
 % then tag each with an experimental group and a recording index via regexp.
 if isempty(includePat), includePat='_r\.mat$'; end
 d = dir(fullfile(root,'**','*.mat')); d = d(~[d.isdir]);
-entries = struct('path',{},'name',{},'group',{},'rec',{},'recnum',{});
+entries = emptyEntries();
 for i=1:numel(d)
     if isempty(regexp(d(i).name, includePat, 'once')), continue; end
     entries(end+1) = makeEntryStruct(fullfile(d(i).folder,d(i).name), groupPat, recPat); %#ok<AGROW>
@@ -1160,11 +1329,104 @@ end
 entries = sortEntries(entries);
 end
 
+function e = emptyEntries()
+%emptyEntries  The 0x0 shape of the file list.  Declared ONCE so every input route
+%   - folder scan, single file, programmatic paths, session - produces the same
+%   fields and the struct arrays concatenate.  animal / type / steps are empty
+%   unless a session filled them.
+e = struct('path',{},'name',{},'group',{},'rec',{},'recnum',{}, ...
+    'animal',{},'type',{},'steps',{});
+end
+
 function e = makeEntryStruct(path, groupPat, recPat)
 [~,nm,ex]=fileparts(path); name=[nm ex];
 grp = regexpMatch(name, groupPat, 'all');
 rec = regexpMatch(name, recPat,  '1');
-e = struct('path',path,'name',name,'group',grp,'rec',rec,'recnum',recToNum(rec));
+e = struct('path',path,'name',name,'group',grp,'rec',rec,'recnum',recToNum(rec), ...
+    'animal','','type','','steps',{{}});
+end
+
+function rp = resolveResultFiles(pth)
+%resolveResultFiles  The *_r.mat RESULTS a session recording owns.  A session lists
+%   the RECORDINGS the workbench curated (often raw .rls), and this tool plots the
+%   RESULTS - so one recording expands to every result product it carries ('_t_BFI_r',
+%   '_c_BFI_r', ...).  Identity comes from wbFileModel, so a 'Roi2_' crop of the same
+%   stem stays a different recording.  Mirrors guiExport>resolveProducts on the '_r'
+%   side of the triplet.
+rp = {};
+pth = char(pth);
+if isempty(pth), return; end
+if endsWith(pth,'_r.mat')
+    if isfile(pth), rp = {pth}; end
+    return
+end
+if endsWith(pth,'_d.mat') && isfile(strrep(pth,'_d.mat','_r.mat'))
+    rp = {strrep(pth,'_d.mat','_r.mat')};
+    return
+end
+m = wbFileModel(pth);
+if isempty(m.folder) || ~isfolder(m.folder), return; end
+d = dir(fullfile(m.folder,[m.roiPrefix m.stem '*_r.mat']));
+for k = 1:numel(d)
+    p = fullfile(d(k).folder,d(k).name);
+    cm = wbFileModel(p);
+    if ~strcmp(cm.identity, m.identity), continue; end
+    rp{end+1} = p; %#ok<AGROW>
+end
+end
+
+function done = completedSteps(S, path)
+%completedSteps  The step ids a session records as FINISHED for one recording.
+%   The record is keyed 'path||stepId' (wbSession); anything that errored, was
+%   skipped or never ran is simply not in the answer.  An empty answer means "this
+%   session knows nothing about that file", which the caller reads as "probe".
+done = {};
+if ~isfield(S,'completed') || ~isa(S.completed,'containers.Map'), return; end
+pre = [char(path) '||'];
+k = keys(S.completed);
+for i = 1:numel(k)
+    if ~startsWith(k{i}, pre), continue; end
+    v = S.completed(k{i});
+    if isstruct(v) && isfield(v,'state') && ~strcmpi(char(v.state),'done'), continue; end
+    done{end+1} = k{i}(numel(pre)+1:end); %#ok<AGROW>
+end
+done = unique(done);
+end
+
+function items = allDataTypes()
+%allDataTypes  Every plot family this tool can draw, in menu order.
+items = {'Time series','Scalar metric','Vasomotion spectrum','Vasomotion time-freq', ...
+         'Vasomotion percentile spectra','Vasomotion amplitude percentiles','Image map'};
+end
+
+function spec = dataTypeSteps()
+%dataTypeSteps  Which PIPELINE STEP each plot family needs (wbStepRegistry ids).
+%   Only families whose data is a whole result TREE are listed: a session that never
+%   ran that step cannot offer them.  Families read straight off the standard
+%   RESULTS members (time series, scalar metrics, image maps) are always offered.
+spec = {'Vasomotion spectrum',              'vasomotion'; ...
+        'Vasomotion time-freq',             'vasomotion'; ...
+        'Vasomotion percentile spectra',    'vasomotion'; ...
+        'Vasomotion amplitude percentiles', 'vasomotion'};
+end
+
+function L = emptyLegendTag()
+%emptyLegendTag  The blank legend record: one field per token legendName expands.
+L = struct('sel','','group','','rec','','animal','','type','','file','');
+end
+
+function s = labelOr(v, dflt)
+s = charOf(v);
+if isempty(s), s = dflt; end
+end
+
+function s = charOf(v)
+if ischar(v), s = v; elseif isstring(v), s = char(v);
+elseif isnumeric(v) || islogical(v), s = num2str(v); else, s = ''; end
+end
+
+function s = shortName(p)
+[~,n,e] = fileparts(char(p)); s = [n e];
 end
 
 function m = regexpMatch(str, pat, dflt)
@@ -1345,7 +1607,13 @@ for m=1:numel(uk), i(m)=find(strcmp(key,uk{m}),1); end
 end
 
 function xl = xLabelFor(name)
-switch name, case 'rec', xl='recording index'; case 'group', xl='group'; otherwise, xl='selection'; end
+switch name
+    case 'rec',    xl='recording index';
+    case 'group',  xl='group';
+    case 'animal', xl='animal';
+    case 'type',   xl='recording type';
+    otherwise,     xl='selection';
+end
 end
 
 function cats = orderedCats(vals)
@@ -1452,12 +1720,20 @@ end
 end
 function s = pad0(x), if isempty(x), s=''; else, s=char(string(x)); end, end
 
-function p = parseParent(args)
-% Pull an optional 'Parent',<container> pair out of varargin ([] if absent).
-p = [];
-for i = 1:2:numel(args)-1
-    if (ischar(args{i}) || isstring(args{i})) && strcmpi(args{i},'Parent')
-        p = args{i+1};
+function [sess, vis] = parseArgs(args)
+% guiExplore(sessionPath) / guiExplore('Visible',v) / both.  A LEADING char that is
+% not an option name is the session path - the shape guiWorkbench hands over and the
+% shape guiExport takes, so the two tools are called the same way.
+sess = ''; vis = 'on'; first = 1;
+if ~isempty(args) && (ischar(args{1}) || isstring(args{1})) && ~isOptionName(args{1})
+    sess = char(args{1}); first = 2;
+end
+for i = first:2:numel(args)-1
+    if (ischar(args{i}) || isstring(args{i})) && strcmpi(args{i},'Visible')
+        vis = char(string(args{i+1}));
     end
 end
+end
+function tf = isOptionName(x)
+tf = any(strcmpi(char(string(x)), {'Visible'}));
 end
