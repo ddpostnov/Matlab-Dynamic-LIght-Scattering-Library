@@ -46,6 +46,8 @@
 %                    column belongs to; wbFileModel also derives 'epoch'/'bolus')
 %       branchScope  'one' | 'all' | 'copy'  - HOW MANY of a recording's branch
 %                    products the step consumes (see below)
+%       fanOut       'flat' | 'animal' - the SHAPE of the fNames a call gets when
+%                    several recordings are batched into it (see below)
 %       refBranch    'contrast' | 'cardiac' | '' - which BRANCH of the animal's
 %                    REFERENCE RECORDING this step prefers (see below)
 %
@@ -111,6 +113,23 @@
 %     therefore registered on its cardiac product only, and never got vessel types
 %     onto '_t_BFI' - which is exactly where vasomotion's per-segment table lives.
 %     This is the same trap the 'copy' note above records for setRegions.
+%   * FANOUT - branchScope says how many files ONE recording contributes; fanOut
+%     says how the files of SEVERAL recordings are laid out once the workbench
+%     batches them into a single call (wbBatchPlan does the shaping):
+%       'flat'   - the default: a COLUMN of every file of every recording in the
+%                  call, and s.fNamesCopyTo in the runSegmentation convention (one
+%                  ROW of targets per source file).  It is what every wrapper that
+%                  simply loops its file list wants.
+%       'animal' - a 2-D list whose ROWS ARE ANIMALS, and s.fNamesCopyTo in the
+%                  setRegions ELEMENTWISE convention (the same size as fNames).
+%     Only setRegions declares 'animal', and the reason is its carry-forward: the
+%     ROIs drawn on a file are re-offered as editable objects on the NEXT file of
+%     the same row and reset at the next row, so the row has to BE the animal.
+%     That is exactly the launcher's list -
+%     getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+') - whose grouping
+%     pattern is the animal token.  Left flat, every recording would arrive as its
+%     own row and the drawn region could never persist from one recording of an
+%     animal to the next, which is the whole point of the step (author, 2026-07-29).
 %   * RAW PRODUCER vs DERIVED CONSUMER (author, 2026-07-28).  A step whose inGlob
 %     is NOT a '*.mat' glob reads the raw recording and writes a NEW, independent
 %     triplet: contrast writes '_t_K' (or '_s_K' when the type's contrastType is
@@ -260,6 +279,7 @@ s.gatingField='setRegions'; s.requires={}; s.requiresAny={'contrast','internalCy
 s.produces={'regionsMask'};
 s.interactive=true;                                   % always opens the ROI editor
 s.branch=''; s.branchScope='copy';                    % draw on _t, inherit onto _c/_e
+s.fanOut='animal';                                    % rows = animals: ROIs carry along a row
 s.settingGroups={};                                   % fully interactive, no numeric params
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct());
@@ -468,5 +488,6 @@ s = struct( ...
     'interactive',false, 'needsRaw',false, 'artifacts',{{}}, ...
     'settingGroups',{{}}, 'basicFields',{{}}, 'sharedKeys',{{}}, ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
-    'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'refBranch','');
+    'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'fanOut','flat', ...
+    'refBranch','');
 end

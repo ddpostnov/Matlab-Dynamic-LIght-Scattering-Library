@@ -81,7 +81,7 @@ end
 % mutated and the hooks are stripped from the settings before saving.
 [progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
 
-for fidx=1:1:length(fNames)
+for fidx=1:1:numel(fNames)
     if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic

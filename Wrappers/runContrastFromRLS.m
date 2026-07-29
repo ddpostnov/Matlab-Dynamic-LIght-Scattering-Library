@@ -66,7 +66,7 @@ end
 % mask (roipoly) branch, cancel is only checked between files.
 [progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
 
-for fidx=1:1:length(fNames)
+for fidx=1:1:numel(fNames)
     if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         %set file name to load data

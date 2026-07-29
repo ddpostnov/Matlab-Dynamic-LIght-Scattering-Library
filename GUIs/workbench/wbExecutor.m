@@ -1,30 +1,31 @@
 %wbExecutor - Serial, ordered run loop for the Processing Workbench.
 %
-%   Executes an ordered list of checked (file,step) cells by calling the REAL
-%   pipeline wrappers - it ORCHESTRATES, it never reimplements any science.  It
-%   is the guiMyograph runList pattern generalised to the file x step matrix:
-%   serial, on the main thread, streaming progress through the Phase-1 hook seam
-%   (s.progressFcn / s.stageFcn / s.cancelFcn), with continue-on-error and
-%   cooperative cancel.
+%   Executes the checked work of a run by calling the REAL pipeline wrappers - it
+%   ORCHESTRATES, it never reimplements any science.  It is the guiMyograph runList
+%   pattern generalised to the file x step matrix: serial, on the main thread,
+%   streaming progress through the Phase-1 hook seam (s.progressFcn / s.stageFcn /
+%   s.cancelFcn), with continue-on-error and cooperative cancel.
 %
-%   For each entry it:
-%     1. looks up the step spec and the recording model,
-%     2. resolves the settings struct s (wbSettingsModel, via ctx.resolve),
-%     3. resolves the concrete input _d.mat (or raw) file(s) the wrapper consumes
-%        for this recording - perAnimal = the animal's files as a column, the
-%        reference's declared branch (ctx.refFile) first; perFile = as many of the
-%        recording's co-registered BRANCH products
-%        ('_t_K', '_c_K', '_e_K', ...) as the step's branchScope asks for, so a
-%        workbench row reproduces what the launcher's file list covers,
-%     4. injects the progress/stage/cancel hooks bound to this cell, and - for a
-%        'copy'-scope step - the derived s.fNamesCopyTo sibling list,
-%     5. marks the cell running, calls the wrapper (interactive steps go through
-%        ctx.modalGuard so the parent window is parked), then marks it done or
-%        error and surfaces its report artifacts + invalidates downstream.
+%   ONE CALL IS A BATCH, NOT A CELL.  Every wrapper in Wrappers/ is a multi-file
+%   routine and the launchers call it with a whole getFileNamesList cell; anything
+%   a wrapper does BETWEEN files is unreachable when it is handed one recording at
+%   a time.  So the entry list is first translated into WRAPPER CALLS by
+%   wbBatchPlan, which folds the entries of one step whose resolved settings agree
+%   and shapes their files the way that step declares (registry fanOut).  This
+%   module then does one thing per call:
+%     1. mark every recording of the call 'running',
+%     2. inject the progress/stage/cancel hooks and, when the step inherits its
+%        result onto co-registered siblings, s.fNamesCopyTo,
+%     3. invoke the wrapper once (an interactive step goes through ctx.modalGuard
+%        so the parent window is parked),
+%     4. mark every recording 'done', or every recording 'error' with the message,
+%     5. call ctx.afterDone ONCE PER FOLDED ENTRY, so per-recording artifact
+%        collection, downstream invalidation and the per-column PDF accounting are
+%        exactly what they were when a call was a single cell (spec D6).
 %
 %   The executor is decoupled from the figure through a CONTEXT struct of
 %   callbacks (ctx), so it can be unit-tested headlessly (drive it with recording
-%   callbacks and assert the call order) as well as from the live uifigure.
+%   callbacks and assert the calls) as well as from the live uifigure.
 %
 % Syntax:
 %    wbExecutor(entries, ctx)
@@ -36,8 +37,9 @@
 %              whole fNames list, so every recording reaches a level before
 %              anything moves past it - which is what the cross-file steps
 %              (registration, vessel typing, split regions) rely on.  The executor
-%              does not re-sort: it runs the list as given.  Each entry has at
-%              least: stepId, identity, animalIdx, arity, label, animal.
+%              does not re-sort, and batching only ever merges NEIGHBOURS, so the
+%              list still runs as given.  Each entry has at least: stepId,
+%              identity, animalIdx, arity, label, animal.
 %    ctx     - struct of callbacks / handles the host supplies:
 %       .reg              the wbStepRegistry array
 %       .modelOf(id)      -> the wbFileModel for a recording identity
@@ -60,30 +62,29 @@
 %                         reference recording the step's input glob finds first.
 %
 % Notes:
-%    * Cancel is checked between cells and, via s.cancelFcn, between files inside
-%      a wrapper (the Phase-1 seam only cancels on file boundaries).  A cancelled
-%      cell is reverted (not marked done) and the batch stops cleanly.
-%    * Any error in one cell is caught -> that cell goes 'error' and the batch
-%      CONTINUES with the next cell (never aborts the whole run).
-%    * Steps whose prerequisite input file cannot be located are logged and
-%      skipped (left for a later run), not errored.
-%    * ONE ROW = ONE RECORDING, several files.  A step with branchScope 'all'
-%      (splitRegions, BFI, dynamicSegmentation) receives every branch of the
-%      recording in a single call and its own per-file loop covers them; a step with
-%      'copy' (setRegions, segmentation) runs on the contrast branch only and the
-%      wrapper propagates the result to the rest through s.fNamesCopyTo.  Without
-%      this the executor picked ONE file per recording and the first dir() match won
-%      - which quietly ran the interactive region editor on '_c' and never touched
-%      '_t' (dir sorts '_c_K_d.mat' before '_t_K_d.mat').
-%    * THE SAME APPLIES INSIDE AN ANIMAL ROW (Phase 6).  A perAnimal step's
-%      branchScope says how many products EACH member contributes to the one column
-%      it gets: registration and vesselTypes are 'all', so an animal's column is
-%      every branch product of every one of its recordings - the launcher's
-%      'Roi*_K_d.mat' / 'Roi*_BFI_d.mat' cell - with the pinned reference's declared
-%      branch first.  At 'one' they hit the same first-dir()-match trap as above.
+%    * WHICH FILES A CALL GETS IS NOT DECIDED HERE.  wbBatchPlan owns the whole of
+%      it - the input glob, the branch fan-out (branchScope), the copy targets, the
+%      raw partner, the per-animal reference, and the shape (fanOut: a flat column,
+%      or one row per animal for a wrapper that carries state across a row).  This
+%      module knows only that a batch has an fNames and a list of recordings.
+%    * STATE IS REPORTED PER BATCH (spec D4).  Every recording of a call reads
+%      'running' from the moment it starts until it returns, and then 'done' or
+%      'error' together; the percent rides on the call's first recording, and the
+%      per-file detail comes from the wrappers' own disp / stageFcn lines.  No
+%      wrapper was modified to report progress.
+%    * Cancel is checked between calls and, via s.cancelFcn, between files inside a
+%      wrapper (the Phase-1 seam only cancels on file boundaries).  A cancel that
+%      lands mid-call reverts THAT call's recordings - they may be partly processed
+%      - and the run stops cleanly.
+%    * Any error in one call is caught -> that call's recordings go 'error' and the
+%      run CONTINUES with the next call.  The remainder of the failed call is lost,
+%      exactly as it is inside a launcher cell (spec D1, accepted).
+%    * A recording whose prerequisite input cannot be located never reaches a
+%      wrapper: it is reported before the run starts and left for a later one.  It
+%      does not take the rest of its call down with it.
 %
-% See also: guiWorkbench, wbStepRegistry, wbSettingsModel, wbModalGuard,
-%           wbArtifacts, wbInvalidate, wbRefBranch, guiMyograph
+% See also: wbBatchPlan, guiWorkbench, wbStepRegistry, wbSettingsModel,
+%           wbModalGuard, wbArtifacts, wbInvalidate, wbRefBranch, guiMyograph
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -94,239 +95,103 @@
 function wbExecutor(entries, ctx)
 
 if isempty(entries), ctx.log('Nothing checked - nothing to run.'); return; end
-ctx.log(sprintf('=== RUN: %d step(s) ===', numel(entries)));
 
-for i = 1:numel(entries)
+[batches, skipped] = wbBatchPlan('build', entries, ctx);
+reportSkipped(ctx, skipped);
+ctx.log(sprintf('=== RUN: %d job(s) in %d call(s) ===', numel(entries), numel(batches)));
+
+for i = 1:numel(batches)
     if ctx.isCancelled(), ctx.log('Stopped.'); break; end
-    e    = entries(i);
-    step = stepById(ctx.reg, e.stepId);
-    if isempty(step), ctx.log(['skip: unknown step ' e.stepId]); continue; end
+    b   = batches(i);
+    sid = b.stepId;
 
-    % ---- resolve the recording model(s) + the concrete input file(s) ----------
-    if strcmp(e.arity,'perAnimal')
-        models = ctx.animalModels(e.animalIdx);
-        who    = ['ANIMAL ' e.animal];
-    else
-        models = ctx.modelOf(e.identity);
-        who    = e.label;
-    end
-    if isempty(models)
-        ctx.log(['skip: no recording for ' who ' :: ' step.label]); continue;
-    end
-    mHead = models(1);                                   % perFile: the file; perAnimal: the reference
-    s     = ctx.resolve(step, mHead);
-    cstage = ctx.contrastStage(mHead);
-
-    [fNames, rawNames, refName, copyTo, okInput] = ...
-        buildFNames(step, models, cstage, refFileFor(ctx, e, step));
-    if ~okInput
-        ctx.setState(e.identity, step.id, 'error', 'input file not found');
-        ctx.log(sprintf('skip %s :: %s - input file not found', who, step.label));
-        continue
-    end
-
-    % ---- inject the hooks bound to THIS cell ----------------------------------
-    id = e.identity; sid = step.id;
-    s.progressFcn = @(f,l) ctx.progress(id, sid, f, hookLabel(l));
+    % ---- the hooks, bound to the CALL (its first recording carries the percent) ---
+    s = b.s;
+    s.progressFcn = @(f,l) ctx.progress(b.heads(1).identity, sid, f, hookLabel(l));
     s.stageFcn    = @(st,d) ctx.log(sprintf('  [%s] %s', char(st), hookLabel(d)));
     s.cancelFcn   = @() ctx.isCancelled();
-    if strcmp(step.id,'vesselTypes') && ~isempty(refName)
-        s.refFName = refName;                            % per-animal paint reference (launcher idiom)
+    if strcmp(sid,'vesselTypes') && ~isempty(b.refName)
+        s.refFName = b.refName;                          % per-animal paint reference (launcher idiom)
     end
-    if ~isempty(copyTo)
-        s.fNamesCopyTo = copyTo;                         % 'copy' scope: the other branches inherit
-        ctx.log(sprintf('  copy to %d sibling(s): %s', numel(copyTo), ...
-            strjoin(cellfun(@shortName,copyTo,'UniformOutput',false),', ')));
+    if ~isempty(b.copyTo)
+        s.fNamesCopyTo = b.copyTo;                       % the other branches inherit the result
+        tg = copyTargetList(b.copyTo);
+        ctx.log(sprintf('  copy to %d sibling(s): %s', numel(tg), ...
+            strjoin(cellfun(@shortName,tg,'UniformOutput',false),', ')));
     end
 
-    % ---- run it (a perAnimal step marks EVERY of the animal's cells) ----------
-    markCells(ctx, sid, models, 'running', '');
-    ctx.log(sprintf('run %s :: %s', who, step.label));
-    call = @() invokeWrapper(step, s, fNames, rawNames);
+    % ---- run it (every recording of the call is marked together) ------------------
+    markCells(ctx, sid, b.models, 'running', '');
+    % the count is of REAL files: a per-animal shape pads its ragged rows with ''
+    ctx.log(sprintf('run %s :: %s (%d file(s))', b.label, b.step.label, ...
+        nnz(~cellfun(@isempty, b.fNames(:)))));
+    call = @() invokeWrapper(b.step, s, b.fNames, b.rawNames);
     try
-        if isInteractiveStep(step, s)
+        if isInteractiveStep(b.step, s)
             ctx.modalGuard(call);
         else
             call();
         end
     catch ME
         if isCancelErr(ME)
-            markCells(ctx, sid, models, '', '');         % revert; may be partial
+            markCells(ctx, sid, b.models, '', '');       % revert; may be partial
             ctx.log('Stopped by user.');
             break
         end
-        markCells(ctx, sid, models, 'error', ME.message);
-        ctx.log(sprintf('ERROR %s :: %s - %s', who, step.label, ME.message));
+        markCells(ctx, sid, b.models, 'error', ME.message);
+        ctx.log(sprintf('ERROR %s :: %s - %s', b.label, b.step.label, ME.message));
         continue                                         % continue-on-error
     end
 
-    % cooperative cancel can fire mid-batch without throwing (checked between
-    % files inside the wrapper): if it did, do NOT mark this cell done.
+    % cooperative cancel can fire mid-call without throwing (checked between files
+    % inside the wrapper): if it did, do NOT mark this call done.
     if ctx.isCancelled()
-        markCells(ctx, sid, models, '', '');
+        markCells(ctx, sid, b.models, '', '');
         ctx.log('Stopped.');
         break
     end
 
-    markCells(ctx, sid, models, 'done', '');
-    ctx.afterDone(mHead.identity, sid, mHead);
+    markCells(ctx, sid, b.models, 'done', '');
+    for k = 1:numel(b.entries)                           % once per FOLDED ENTRY (spec D6)
+        ctx.afterDone(b.heads(k).identity, sid, b.heads(k));
+    end
 end
 
 ctx.log('=== RUN complete ===');
 end
 
 % =====================================================================
-function [fNames, rawNames, refName, copyTo, ok] = buildFNames(step, models, cstage, refPath)
-%buildFNames  Concrete wrapper inputs for a step.
-%   perAnimal: an Nx1 column over the animal's members, reference FIRST.  How many
-%   files each member contributes is that step's branchScope, exactly as for a
-%   perFile step - 'one' takes the member's stage-preferred product alone, 'all'
-%   takes every branch product it owns, which is what the launcher's branch-wide
-%   cell ('Roi*_K_d.mat') hands the wrapper.  It stays ONE work item either way:
-%   the fan-out lengthens the column, it never adds an animal row.  refPath, when
-%   the host supplied one, IS column 1: the branch of the pinned reference
-%   recording the step declared through refBranch, already resolved by wbRefBranch.
-%   Without it column 1 stays the glob's first match.
-%   perFile:  ONE recording, whose several co-registered branch products ('_t_K',
-%   '_c_K', '_e_K', ...) are resolved according to step.branchScope -
-%     'one'  -> the stage-preferred file alone (1x1),
-%     'all'  -> every branch as an Nx1 column, the wrapper's own loop covers them,
-%     'copy' -> the stage-preferred file (1x1) plus the rest returned in copyTo, to
-%               be handed to the wrapper as s.fNamesCopyTo.
-%   rawNames parallels fNames for needsRaw steps; refName is the reference file
-%   (perAnimal vesselTypes paint target).
-fNames = {}; rawNames = {}; refName = ''; copyTo = {}; ok = false;
-if nargin<4, refPath = ''; end
-
-if strcmp(step.arity,'perAnimal')
-    wide  = ~strcmp(scopeOf(step),'one');                 % 'all'/'copy': every product
-    paths = {}; raws = {};
-    for k = 1:numel(models)
-        p = resolveStepInputs(models(k), step, cstage);   % stage-preferred first
-        if k==1 && ~isempty(refPath) && isfile(refPath)
-            p = [{refPath}, p(~strcmp(p,refPath))];       % the pinned reference leads
-        end
-        if isempty(p), return; end                       % a member has no input -> not ready
-        if ~wide, p = p(1); end
-        paths = [paths, p]; %#ok<AGROW>
-        if step.needsRaw
-            raws = [raws, repmat({rawPathFor(models(k))},1,numel(p))]; %#ok<AGROW>
-        end
-    end
-    fNames = paths(:); rawNames = raws(:); refName = paths{1};
-    ok = true; return
+function reportSkipped(ctx, skipped)
+%reportSkipped  Entries that never became part of a call.  A missing input has
+%   always marked its own cell, so it still does - but it is settled BEFORE the run
+%   starts, because a call now spans several recordings and one absent file may not
+%   decide the fate of the others.
+for i = 1:numel(skipped)
+    sk = skipped(i);
+    if sk.mark, ctx.setState(sk.entry.identity, sk.stepId, 'error', sk.reason); end
+    ctx.log(sprintf('skip %s :: %s - %s', sk.who, sk.stepLabel, sk.reason));
 end
-
-p = resolveStepInputs(models(1), step, cstage);           % stage-preferred first
-if isempty(p), return; end
-switch scopeOf(step)
-    case 'all'
-        fNames = p(:);                                   % every branch, one cell for the lot
-    case 'copy'
-        fNames = p(1);                                   % run here...
-        copyTo = p(2:end);                               % ...the other branches inherit
-    otherwise
-        fNames = p(1);
-end
-if step.needsRaw
-    rawNames = repmat({rawPathFor(models(1))}, size(fNames));
-end
-ok = true;
-end
-
-% =====================================================================
-function p = refFileFor(ctx, e, step)
-%refFileFor  The host's resolved reference FILE for this entry ('' when there is
-%   none).  Only a per-animal step has a reference column, and only the host knows
-%   which recording is pinned, so this is a pure look-up through ctx - the branch
-%   rule itself lives in wbRefBranch and is never re-derived here.
-p = '';
-if ~strcmp(step.arity,'perAnimal'), return; end
-if ~isfield(ctx,'refFile') || ~isa(ctx.refFile,'function_handle'), return; end
-try
-    p = char(ctx.refFile(e.animalIdx, step.id));
-catch
-    p = '';
-end
-end
-
-% =====================================================================
-function p = resolveStepInputs(model, step, cstage)
-%resolveStepInputs  EVERY concrete _d.mat (or raw) file this step could consume for
-%   this recording, ORDERED with the stage-preferred branch first.  Located by base
-%   name + the step's input glob and filtered to this recording's identity; mirrors
-%   getFileNamesList scoped to one recording, so it is robust to the BFI rename and
-%   the t|s|c|e branches.  Callers take p{1} for a single-branch step and the whole
-%   list (or its tail) for the 'all' / 'copy' scopes - see buildFNames.  {} = the
-%   step has no input on disk yet.
-p = {};
-
-% entry step consuming the raw recording (contrast / internalCycle)
-if isempty(step.requires) && ~contains(step.inGlob,'.mat')
-    [~,~,ext] = fileparts(step.inGlob);
-    cand = fullfile(model.folder,[model.stem ext]);
-    if isfile(cand), p = {cand}; end
-    return
-end
-
-tail = regexprep(step.inGlob,'^\*','');                  % '_K_d.mat' | '_BFI_d.mat' | '_c_BFI_d.mat'
-base = [model.roiPrefix model.stem];
-d = dir(fullfile(model.folder,[base '*' tail]));
-if isempty(d), return; end
-
-want = desiredStage(step, cstage);                       % 't'|'s'|'c' or '' (any)
-exact = {}; rest = {};
-for i = 1:numel(d)
-    fp = fullfile(d(i).folder, d(i).name);
-    cm = wbFileModel(fp);
-    if ~strcmp(cm.identity, model.identity), continue; end
-    if ~isempty(want) && strcmp(cm.stage, want)
-        exact{end+1} = fp; %#ok<AGROW>
-    else
-        rest{end+1} = fp; %#ok<AGROW>
-    end
-end
-p = [exact, rest];                                       % preferred branch first, then the others
-end
-
-% =====================================================================
-function st = desiredStage(step, cstage)
-%desiredStage  Which stage flag the step's input should carry - the branch it runs
-%   on when a base-name glob matches several.  For a 'copy'-scope step this also
-%   picks the branch the work is DONE on (the others inherit), and for 'all' it only
-%   fixes the order.  '' = no preference.
-switch step.branch
-    case 'cardiac', st = 'c';
-    case 'contrast', st = cstage;
-    otherwise
-        % A branch-agnostic column can still be anchored to the contrast side: the
-        % 'copy' steps (setRegions, segmentation) draw/compute there and hand the
-        % result to the cycle branches, and guided needs the contrast product.
-        if strcmp(scopeOf(step),'copy') || strcmp(step.id,'guided')
-            st = cstage;
-        else
-            st = '';
-        end
-end
-end
-
-% =====================================================================
-function r = rawPathFor(model)
-%rawPathFor  The raw recording beside a processed product (guided steps).
-for ext = {'.rls','.cxd'}
-    cand = fullfile(model.folder,[model.stem ext{1}]);
-    if isfile(cand), r = cand; return; end
-end
-r = fullfile(model.folder,[model.stem '.rls']);          % derived default (may not exist yet)
 end
 
 % =====================================================================
 function markCells(ctx, sid, models, state, msg)
-%markCells  Set the run-state of one step across every recording it touched
-%   (one file for perFile; the whole animal for perAnimal), so the matrix reflects
-%   the animal together.
+%markCells  Set the run-state of one step across every recording the call touched,
+%   so the matrix reflects the whole call together (spec D4).
 for k = 1:numel(models)
     ctx.setState(models(k).identity, sid, state, msg);
+end
+end
+
+% =====================================================================
+function t = copyTargetList(copyTo)
+%copyTargetList  The copy targets as one flat cellstr, for the log line only.  Both
+%   accepted shapes are flattened here: the row-per-source-file list and the
+%   elementwise one, whose entries may themselves be nested cellstr.
+t = {};
+for i = 1:numel(copyTo)
+    e = copyTo{i};
+    if isempty(e), continue; end
+    if ischar(e) || isstring(e), t{end+1} = char(e); else, t = [t, e(:)']; end %#ok<AGROW>
 end
 end
 
@@ -363,21 +228,6 @@ function tf = isCancelErr(ME)
 tf = contains(lower(ME.identifier),'cancel') || ...
      contains(lower(ME.message),'stopped by user') || ...
      contains(lower(ME.message),'cancelled');
-end
-
-% =====================================================================
-function s = stepById(reg, id)
-s = reg(strcmp({reg.id}, id));
-if ~isempty(s), s = s(1); end
-end
-
-% =====================================================================
-function sc = scopeOf(step)
-%scopeOf  A step's branchScope, defaulting to 'one' when the field is absent - a
-%   hand-built step struct (tests, a trimmed registry) keeps the old single-file
-%   behaviour rather than erroring.
-sc = 'one';
-if isfield(step,'branchScope') && ~isempty(step.branchScope), sc = step.branchScope; end
 end
 
 % =====================================================================

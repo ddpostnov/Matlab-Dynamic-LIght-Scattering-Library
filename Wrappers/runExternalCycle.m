@@ -99,7 +99,7 @@ end
 % block on an epoch-rejection GUI, so cancel is only checked between files.
 [progressFcn,stageFcn,cancelFcn]=resolveHooks(s);
 
-for fidx=1:1:length(fNames)
+for fidx=1:1:numel(fNames)
     if cancelFcn(), break; end                  % cooperative cancel between files
     if ~isempty(fNames{fidx})
         tic

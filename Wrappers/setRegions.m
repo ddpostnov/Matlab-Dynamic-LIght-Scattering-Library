@@ -11,7 +11,9 @@
 %   CARRY-FORWARD WITHIN A GROUP, RESET ACROSS GROUPS.  For each row, files are visited
 %   left to right.  On the first file the user draws the region(s); on every subsequent
 %   file the SAME ROIs are re-offered as editable objects (nudge / add / delete / reset
-%   / draw more).  At the next row the ROIs reset to empty.
+%   / draw more).  At the next row the ROIs reset to empty.  A carried ROI that does not
+%   fit entirely inside the next file's field of view (files of a group need not share
+%   an image size) is DROPPED rather than re-offered off-image.
 %
 %   THE EDITOR (one window per file).  ROIs are drawn on the display-enhanced image
 %   (enhanceForDisplay), in the native image orientation so createMask aligns with the
@@ -83,7 +85,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 27-July-2026
+% Last revision: 29-July-2026
 
 function setRegions(s,fNames)
 
@@ -245,6 +247,10 @@ hint=uicontrol(fig,'Style','text','Units','normalized','Position',[0.04 0.02 0.6
     'String','','HorizontalAlignment','left','BackgroundColor','w','FontSize',9);
 
 % Pre-populate the carried ROIs (editable) - empty on the first file of a group.
+% Files within a group need not share a field of view, so an ROI drawn on a larger
+% image can fall (partly) outside a smaller one; such an ROI is dropped rather than
+% recreated off-image, where it would silently mask nothing and break downstream use.
+carried=dropOutsideFOV(carried,size(imgIni));
 for i=1:1:numel(carried)
     rois{end+1}=recreateROI(axDraw,carried(i)); %#ok<AGROW>
 end
@@ -392,6 +398,45 @@ switch spec.type
         r=drawcircle(ax,'Center',spec.a,'Radius',spec.b,'Color','w','StripeColor','b','FaceAlpha',0);
     otherwise   % polygon
         r=drawpolygon(ax,'Position',spec.a,'Color','w','StripeColor','b','FaceAlpha',0);
+end
+end
+
+% =====================================================================
+function carried=dropOutsideFOV(carried,sz)
+%dropOutsideFOV  Keep only the carried ROI specs that fit entirely inside an sz =
+%   [rows cols] field of view, discarding (with a note) the ones that do not.  ROIs are
+%   carried across files of a group, which may differ in size; an ROI that does not fit
+%   is deleted here so nothing downstream sees a region hanging off the image.
+keep=true(1,numel(carried));
+for i=1:1:numel(carried)
+    [xLim,yLim]=roiExtent(carried(i));
+    keep(i)= xLim(1)>=0.5 && xLim(2)<=sz(2)+0.5 && yLim(1)>=0.5 && yLim(2)<=sz(1)+0.5;
+end
+if any(~keep)
+    disp(['setRegions: ',num2str(sum(~keep)),' carried ROI(s) do not fit in this ', ...
+          'file''s ',num2str(sz(2)),'x',num2str(sz(1)),' field of view - dropped.']);
+    carried=carried(keep);
+end
+end
+
+% =====================================================================
+function [xLim,yLim]=roiExtent(spec)
+%roiExtent  Bounding box [min max] in x (columns) and y (rows) of one ROI spec, in the
+%   image coordinates ROIs are drawn in (pixel centres at 1..N, so the image spans
+%   0.5..N+0.5).  Ellipses use the bounding box of the ROTATED ellipse.
+switch spec.type
+    case {'rectangle','square'}
+        p=spec.a;                                  % [x y w h]
+        xLim=[p(1),p(1)+p(3)]; yLim=[p(2),p(2)+p(4)];
+    case 'ellipse'
+        th=deg2rad(spec.c); a=spec.b(1); b=spec.b(2);
+        hx=hypot(a*cos(th),b*sin(th)); hy=hypot(a*sin(th),b*cos(th));
+        xLim=spec.a(1)+[-hx,hx]; yLim=spec.a(2)+[-hy,hy];
+    case 'circle'
+        xLim=spec.a(1)+[-spec.b,spec.b]; yLim=spec.a(2)+[-spec.b,spec.b];
+    otherwise                                      % polygon: [x y] vertices
+        xLim=[min(spec.a(:,1)),max(spec.a(:,1))];
+        yLim=[min(spec.a(:,2)),max(spec.a(:,2))];
 end
 end
 
