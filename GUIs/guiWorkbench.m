@@ -36,6 +36,15 @@
 %   the desktop exactly the same way.  None of it is part of the run: it cannot
 %   change what a wrapper writes, cannot mark a step in error, and is a window
 %   preference the session does not carry.
+%   THE COLUMN OWNS THE DOCUMENT, NOT THE WRAPPER.  A wrapper run from a launcher
+%   assembles a PDF of its own pages, because there the call IS the step; a column
+%   here spans several batched calls, so wbExecutor switches that off
+%   (s.reportPdf=false) and this is the only assembly.  A second switch,
+%   'Delete the images once the PDF is written', is off by default: every entry in
+%   this list is a path resolved from disk (wbArtifacts), so deleting the images
+%   empties the list of them, and the PDF becomes the only copy of a page that
+%   exists.  When it is on, the deletion and the removal of the matching links
+%   happen in the same step (flushPdfColumn > dropSourceImages).
 %
 %   FROM / TO IS A RANGE OVER THAT LIST, NOT A SECOND SELECTION (spec D1/D2).  The
 %   two dropdowns beside Run slice the expansion by registry column, so a protocol
@@ -193,6 +202,7 @@ app.rangeTo      = '';                             % Process tab: To ('' = the l
 app.results      = emptyResults();                 % report artifacts this session produced
 app.resultFilter = 'all';                          % result list: 'all' | 'images' | 'pdfs'
 app.pdfReports   = false;                          % Create PDF reports (UI ONLY - spec D9)
+app.deleteAfterPdf = false;                        % ... and then remove the images (Q3: default OFF)
 app.colTotal     = containers.Map('KeyType','char','ValueType','double'); % stepId -> entries THIS run
 app.colDone      = containers.Map('KeyType','char','ValueType','double'); % stepId -> entries finished
 app.colArt       = containers.Map('KeyType','char','ValueType','any');    % stepId -> its artifact paths
@@ -334,6 +344,8 @@ api = struct( ...
     ... % ---- Process tab: the reports panel (spec D9/D10) ----
     'setPdfReports',@(tf) setPdfReports(fig,tf), ...
     'pdfReports',  @() getApp(fig).pdfReports, ...
+    'setDeleteAfterPdf',@(tf) setDeleteAfterPdf(fig,tf), ...
+    'deleteAfterPdf',@() getApp(fig).deleteAfterPdf, ...
     'resultKinds', @() resultKinds(fig), ...
     'setResultFilter',@(kind) setResultFilter(fig,kind), ...
     'resultFilter',@() getApp(fig).resultFilter, ...
@@ -1735,8 +1747,8 @@ c.derivedTable = uitable(prodBox,'Data',{},'ColumnName',{'Recording and result'}
     'Tooltip',derivedLegend());
 c.detail = uilabel(left,'Text','Select a row to see its file.','WordWrap','on','FontAngle','italic');
 
-% -- RIGHT: the report links (spec D5), what to show, the PDF switch (D9), Exit --
-right = uigridlayout(gl,[5 1],'RowHeight',{'fit','fit','1x','fit','fit'},'RowSpacing',6);
+% -- RIGHT: the report links (spec D5), what to show, the PDF switches (D9), Exit --
+right = uigridlayout(gl,[6 1],'RowHeight',{'fit','fit','fit','1x','fit','fit'},'RowSpacing',6);
 head = uigridlayout(right,[1 2],'ColumnWidth',{'1x','fit'}, ...
     'Padding',[0 0 0 0],'ColumnSpacing',4);
 uilabel(head,'Text','Reports (newest first)','FontWeight','bold');
@@ -1745,6 +1757,9 @@ c.kindDrop = uidropdown(head,'Items',resultKindItems(),'ItemsData',resultKindIds
     'Tooltip',tipResultKind());
 c.pdfCheck = uicheckbox(right,'Text','Create PDF reports','Value',false, ...
     'ValueChangedFcn',@(s,~)setPdfReports(fig,s.Value),'Tooltip',tipPdfReports());
+c.delCheck = uicheckbox(right,'Text','Delete the images once the PDF is written', ...
+    'Value',false,'Enable','off', ...
+    'ValueChangedFcn',@(s,~)setDeleteAfterPdf(fig,s.Value),'Tooltip',tipDeleteAfterPdf());
 c.resultList = uilistbox(right,'Items',{emptyResultItem()},'ItemsData',{''}, ...
     'Tooltip',['Every report the run has produced, newest first.  Double-click one to ' ...
                'open it in your image viewer, where you can zoom while processing ' ...
@@ -1825,6 +1840,16 @@ t = ['With this on, all the report images one step produces are collected into a
      'PDFs go into a "workbenchReports" folder beside the folder you scanned, or ' ...
      'beside the images themselves if you added files by hand, and they appear in ' ...
      'this list.  Stopping a run still leaves you the PDFs it already finished.'];
+end
+function t = tipDeleteAfterPdf()
+t = ['With this on, the report images that went into a PDF are deleted once that ' ...
+     'PDF has been written, so a folder keeps one document per step instead of ' ...
+     'hundreds of JPGs.  Off by default, and worth thinking about before you turn ' ...
+     'it on: their links leave this list with them, the PDF becomes the only copy ' ...
+     'you have, and anything that goes looking for the images later - this list ' ...
+     'when you come back to the recordings, or your own scripts - will not find ' ...
+     'them.  Only images that really made it into the document are removed, and ' ...
+     'nothing is removed at all while PDFs are off.'];
 end
 
 %% ===================== hand-off to the standalone tools ============ %%
@@ -4296,7 +4321,7 @@ step = stepById(app.reg,stepId);
 if nargin<4 || isempty(model), model = modelByIdentity(fig,identity); end
 if isempty(model) || isempty(step), return; end
 files = wbArtifacts(model,step);
-lbl = @(p) sprintf('%s - %s - %s', shortId(identity), step.label, shortName(p));
+lbl = @(p) resultLabel(shortId(identity), step.label, p);
 if ~pushResults(fig, files, stepId, lbl), return; end
 refreshResultList(fig);
 end
@@ -4481,6 +4506,24 @@ function setPdfReports(fig,tf)
 app = getApp(fig); app.pdfReports = logical(tf); setApp(fig,app);
 c = app.c.process;
 if isfield(c,'pdfCheck') && isgraphics(c.pdfCheck), c.pdfCheck.Value = app.pdfReports; end
+% deleting the images is a consequence of assembling them, so it is only offerable
+% while there is a document to assemble
+if isfield(c,'delCheck') && isgraphics(c.delCheck)
+    c.delCheck.Enable = ternary(app.pdfReports,'on','off');
+end
+end
+
+function setDeleteAfterPdf(fig,tf)
+%setDeleteAfterPdf  The 'Delete the images once the PDF is written' switch (Q3).
+%   A WINDOW PREFERENCE like the PDF switch itself, and OFF by default: every entry
+%   in the result list is an image resolved from disk (wbArtifacts), so removing
+%   the images removes the links, and the PDF is then the only copy of a page there
+%   is - nothing rebuilds a deleted JPG except running the step again.  That is
+%   what makes it opt-in.  Nothing is ever deleted by a WRAPPER - wbExecutor pins
+%   s.reportKeepImages true - so this switch is the only door.
+app = getApp(fig); app.deleteAfterPdf = logical(tf); setApp(fig,app);
+c = app.c.process;
+if isfield(c,'delCheck') && isgraphics(c.delCheck), c.delCheck.Value = app.deleteAfterPdf; end
 end
 
 function beginPdfColumns(fig, entries)
@@ -4572,11 +4615,59 @@ try
     end
     wbLog(fig,sprintf('  wrote %s (%d page(s) of %s)', out.path, out.pages, lbl));
     app = getApp(fig); app.reportPdfs{end+1} = out.path; setApp(fig,app);
-    pushResults(fig, {out.path}, stepId, @(p) sprintf('PDF - %s - %s', lbl, shortName(p)));
+    % 'PDF : Contrast : 18:15:03' - the kind first because that is what the reader
+    % is scanning for, and the clock because a column can be re-run in one session
+    % and two documents of the same step must be told apart.
+    pdfLbl = strjoin({'PDF', lbl, stampClock(stamp)}, sep());
+    pushResults(fig, {out.path}, stepId, @(~) pdfLbl);
+    dropSourceImages(fig, files, out, lbl);
     refreshResultList(fig);
 catch ME
     wbLog(fig,sprintf('  PDF report for %s failed: %s', lbl, ME.message));
 end
+end
+
+function dropSourceImages(fig, files, out, lbl)
+%dropSourceImages  The optional cleanup (Q3), and it is TWO removals, not one: the
+%   file goes from the disk AND its entry goes from the result list, in the same
+%   step.  Leaving the entry behind would hand the user a link to a file that is no
+%   longer there - and since the list is repainted from disk anyway, a stale entry
+%   would not even survive the next repaint.
+%
+%   Only images that really reached a page are removed: wbReportPdf names what it
+%   could not read, and an image that was skipped is the one image the PDF cannot
+%   stand in for.  Like every other part of the report path this is a by-product -
+%   a failure costs a log line and never the column's state.
+if isempty(files) || out.pages<=0, return; end
+app = getApp(fig);
+if ~app.deleteAfterPdf, return; end
+gone = cell(1,0);
+for i = 1:numel(files)
+    f = files{i};
+    if any(strcmp(f,out.skipped)), continue; end        % not in the document
+    try
+        if isfile(f), delete(f); gone{end+1} = f; end %#ok<AGROW>
+    catch ME
+        wbLog(fig,sprintf('  could not remove %s (%s)', shortName(f), ME.message));
+    end
+end
+if isempty(gone), return; end
+dropResults(fig, gone);
+wbLog(fig,sprintf('  removed %d report image(s) of %s - they are in the PDF', ...
+    numel(gone), lbl));
+end
+
+function dropResults(fig, paths)
+%dropResults  Take entries out of the result STORE by path (no repaint).  The only
+%   remover there is: an entry exists because its file does, so the two are dropped
+%   together (see dropSourceImages).
+if isempty(paths), return; end
+app = getApp(fig);
+if isempty(app.results), return; end
+keep = ~ismember({app.results.path}, paths);
+if all(keep), return; end
+app.results = app.results(keep);
+setApp(fig,app);
 end
 
 function root = pdfReportRoot(app, files)
@@ -4601,6 +4692,48 @@ end
 function s = shortName(p)
 [~,n,e] = fileparts(char(p));
 s = [n e];
+end
+
+function lbl = resultLabel(recording, stepLabel, pth)
+%resultLabel  How one report reads in the list: the recording, the step, the page.
+%
+%   It used to read 'Mouse1 - Segmentation - Mouse1_t_K_rep_segments.jpg', which
+%   says the recording twice and then spells out a file name whose every token the
+%   line has already given.  What distinguishes one entry from another is the
+%   RECORDING and the PAGE, so those are what is left: 'Mouse1 : Segmentation :
+%   segments'.  The full path stays in ItemsData, so a double-click still opens
+%   exactly the file it always did.
+lbl = strjoin({char(recording), char(stepLabel), reportTail(pth)}, sep());
+end
+
+function t = reportTail(pth)
+%reportTail  The page's own name: whatever follows '_rep_' in a report written by
+%   Core/Reporting ('Mouse1_t_K_rep_segments.jpg' -> 'segments').  A page from
+%   before the rename has no such marker, so its last name token is used instead
+%   ('Mouse1_t_K_cm.jpg' -> 'cm') - cryptic, but it is what that file is called.
+[~,n] = fileparts(char(pth));
+k = strfind(n,'_rep_');
+if ~isempty(k)
+    t = n(k(end)+5:end);
+    return
+end
+p = strfind(n,'_');
+if isempty(p), t = n; else, t = n(p(end)+1:end); end
+end
+
+function t = stampClock(stamp)
+%stampClock  'yyyymmdd_HHMMSS' -> 'HH:MM:SS', the only half of it a reader needs
+%   inside one session.  Anything unexpected is handed back untouched.
+t = char(stamp);
+if numel(t)==15 && t(9)=='_'
+    t = [t(10:11) ':' t(12:13) ':' t(14:15)];
+end
+end
+
+function s = sep()
+%sep  The separator between the parts of a result label.  A middle dot, built from
+%   its code point so the source file stays plain ASCII (as progressLegend does).
+s = [' ' char(183) ' '];
 end
 
 %% ===================== log ========================================= %%

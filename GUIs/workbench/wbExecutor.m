@@ -70,8 +70,15 @@
 %    * STATE IS REPORTED PER BATCH (spec D4).  Every recording of a call reads
 %      'running' from the moment it starts until it returns, and then 'done' or
 %      'error' together; the percent rides on the call's first recording, and the
-%      per-file detail comes from the wrappers' own disp / stageFcn lines.  No
-%      wrapper was modified to report progress.
+%      per-file detail comes from the wrapper, which narrates through
+%      Core/Reporting.
+%    * THE LOG IS A LIST OF RECORDINGS, NOT A TRANSCRIPT.  Core/Reporting routes by
+%      CLASS: the per-file banner, the save line and any warning reach s.stageFcn
+%      and so this log; the stage detail and the progress ticks do not - the ticks
+%      go to s.progressFcn, which paints the progress label and the cell percent
+%      and never appends.  A 60-file column is therefore ~2 lines per recording,
+%      inside wbLog's 400-line cap, instead of the ~7 it would be if every class
+%      were appended.
 %    * Cancel is checked between calls and, via s.cancelFcn, between files inside a
 %      wrapper (the Phase-1 seam only cancels on file boundaries).  A cancel that
 %      lands mid-call reverts THAT call's recordings - they may be partly processed
@@ -106,10 +113,27 @@ for i = 1:numel(batches)
     sid = b.stepId;
 
     % ---- the hooks, bound to the CALL (its first recording carries the percent) ---
+    %
+    % NO TAG ON THE LOG LINE.  Core/Reporting already filters by class, so only the
+    % lines that name a recording reach here (banner, save, warning, error); the
+    % stage detail and the progress ticks never do.  What arrives is a finished
+    % sentence, and the executor knows which step is running without being told -
+    % the tag it used to prepend was the WRAPPER's name, which is not a word the
+    % operator has ever seen.  The step is named once, in the call header below,
+    % and everything the call says is indented under it.
     s = b.s;
     s.progressFcn = @(f,l) ctx.progress(b.heads(1).identity, sid, f, hookLabel(l));
-    s.stageFcn    = @(st,d) ctx.log(sprintf('  [%s] %s', char(st), hookLabel(d)));
+    s.stageFcn    = @(~,d) ctx.log(['  ' hookLabel(d)]);
     s.cancelFcn   = @() ctx.isCancelled();
+    % THE DOCUMENT IS THE COLUMN'S, NOT THE CALL'S.  A wrapper assembles a PDF of
+    % its own report images when it is run from a launcher, where the call IS the
+    % step; here a column spans several batched calls, so the wrapper must not
+    % assemble one and flushPdfColumn does it for the whole column instead.  The
+    % images are likewise never the wrapper's to delete - wbArtifacts re-resolves
+    % them from disk to paint the result list, and a call is only part of a column,
+    % so the only place that may remove them is flushPdfColumn, after its own PDF.
+    s.reportPdf        = false;
+    s.reportKeepImages = true;
     if strcmp(sid,'vesselTypes') && ~isempty(b.refName)
         s.refFName = b.refName;                          % per-animal paint reference (launcher idiom)
     end
@@ -122,8 +146,10 @@ for i = 1:numel(batches)
 
     % ---- run it (every recording of the call is marked together) ------------------
     markCells(ctx, sid, b.models, 'running', '');
-    % the count is of REAL files: a per-animal shape pads its ragged rows with ''
-    ctx.log(sprintf('run %s :: %s (%d file(s))', b.label, b.step.label, ...
+    % ONE HEADER PER CALL, and the wrapper's own per-file banners are the indented
+    % lines under it.  The step comes first because that is what the column is; the
+    % count is of REAL files (a per-animal shape pads its ragged rows with '').
+    ctx.log(sprintf('%s - %s (%d file(s))', b.step.label, b.label, ...
         nnz(~cellfun(@isempty, b.fNames(:)))));
     call = @() invokeWrapper(b.step, s, b.fNames, b.rawNames);
     try
@@ -139,7 +165,7 @@ for i = 1:numel(batches)
             break
         end
         markCells(ctx, sid, b.models, 'error', ME.message);
-        ctx.log(sprintf('ERROR %s :: %s - %s', b.label, b.step.label, ME.message));
+        ctx.log(sprintf('ERROR %s - %s: %s', b.step.label, b.label, ME.message));
         continue                                         % continue-on-error
     end
 
@@ -169,7 +195,7 @@ function reportSkipped(ctx, skipped)
 for i = 1:numel(skipped)
     sk = skipped(i);
     if sk.mark, ctx.setState(sk.entry.identity, sk.stepId, 'error', sk.reason); end
-    ctx.log(sprintf('skip %s :: %s - %s', sk.who, sk.stepLabel, sk.reason));
+    ctx.log(sprintf('skip %s - %s: %s', sk.stepLabel, sk.who, sk.reason));
 end
 end
 

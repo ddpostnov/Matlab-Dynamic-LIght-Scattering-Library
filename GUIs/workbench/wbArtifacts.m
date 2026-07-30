@@ -1,17 +1,24 @@
 %wbArtifacts - Resolve a step's on-disk report images for one recording.
 %
-%   The pipeline wrappers emit preview JPG/PNGs next to the data triplet
-%   (_c.jpg from contrast, _cm.jpg/_vs.jpg from segmentation, _registration.png
-%   from registration, ...).  A step's expected report globs are declared in its
-%   wbStepRegistry spec (step.artifacts, a set of file-name TAILS).  This helper
-%   resolves those tails against a recording's base name and returns the ones
-%   that actually exist on disk, so the workbench can surface a finished cell's
-%   reports as clickable links.  It never creates a new artifact format - it only
-%   locates the images the wrappers already write (01-pipeline-map.md §7).
+%   The pipeline wrappers emit a report page next to the data triplet, named
+%   '<stem>_rep_<stage>.jpg' by Core/Reporting (_rep_contrast from contrast,
+%   _rep_categories/_rep_segments from segmentation, ...).  A step's expected
+%   report tails are declared in its wbStepRegistry spec (step.artifacts).  This
+%   helper resolves those tails against a recording's base name and returns the
+%   ones that actually exist on disk, so the workbench can surface a finished
+%   cell's reports as clickable links.  It never creates a new artifact format -
+%   it only locates the images the wrappers already write (01-pipeline-map.md §7).
+%
+%   BOTH GENERATIONS ARE LOOKED FOR.  Before unified reporting the same pages had
+%   cryptic tails ('_c.jpg', '_cm.jpg', '_vs.jpg', '_registration.png'); those live
+%   on in step.legacyArtifacts and are asked for in the same pass, so a folder
+%   processed last month still lists its reports.  Both lists are matched over ONE
+%   directory listing, so the second generation costs an endsWith pass and no I/O.
 %
 %   Matching is by base name + TAIL (endsWith), so the stage/product flags that
-%   sit between them ('_t_K' in 'Foo_t_K_cm.jpg') do not have to be spelled out:
-%   a '_cm.jpg' tail finds 'Foo_t_K_cm.jpg' and a 'Roi2_' crop's variant alike.
+%   sit between them ('_t_K' in 'Foo_t_K_rep_segments.jpg') do not have to be
+%   spelled out: a '_rep_segments.jpg' tail finds 'Foo_t_K_rep_segments.jpg' and a
+%   'Roi2_' crop's variant alike.
 %
 % Syntax:
 %    files = wbArtifacts(model, step)      % existing artifacts for one step
@@ -20,8 +27,9 @@
 % Inputs:
 %    model - a wbFileModel struct (supplies folder + roiPrefix + stem = the
 %            recording identity the images are named after).
-%    step  - one wbStepRegistry element (uses step.artifacts), OR the whole
-%            registry array (every element's artifacts are unioned).
+%    step  - one wbStepRegistry element (uses step.artifacts and
+%            step.legacyArtifacts), OR the whole registry array (every element's
+%            tails are unioned).
 %
 % Outputs:
 %    files - 1xK cellstr of full paths to the artifact images that exist on disk
@@ -32,7 +40,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 29-July-2026
 
 %------------- BEGIN CODE --------------
 function files = wbArtifacts(model, step)
@@ -41,11 +49,12 @@ files = cell(1,0);
 if isempty(model) || ~isstruct(model), return; end
 if isempty(model.folder) || ~isfolder(model.folder), return; end
 
-% collect the requested tails (one step, or every step in a registry array)
+% collect the requested tails (one step, or every step in a registry array).  The
+% tails a run WRITES and the ones it used to write are asked for together, so a
+% folder processed before the reporting rename still lists its reports.
 tails = cell(1,0);
 for k = 1:numel(step)
-    a = step(k).artifacts;
-    if ~isempty(a), tails = [tails, a(:)']; end %#ok<AGROW>
+    tails = [tails, tailsOf(step(k),'artifacts'), tailsOf(step(k),'legacyArtifacts')]; %#ok<AGROW>
 end
 if isempty(tails), return; end
 tails = unique(tails,'stable');
@@ -67,4 +76,16 @@ for t = 1:numel(tails)
         end
     end
 end
+end
+
+% =====================================================================
+function t = tailsOf(step, field)
+%tailsOf  One tail list of a step spec as a row cellstr, tolerating a spec that
+%   predates the field (an old registry struct read back from somewhere else).
+t = cell(1,0);
+if ~isfield(step,field), return; end
+a = step.(field);
+if isempty(a), return; end
+if ischar(a), a = {a}; end
+t = a(:)';
 end

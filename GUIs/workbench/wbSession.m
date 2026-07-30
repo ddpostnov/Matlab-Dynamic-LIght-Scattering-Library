@@ -35,7 +35,7 @@
 %   key/value cell arrays so the file is Map-free on disk (the trick
 %   wbSettingsModel uses for its preset), and the whole payload is swept for
 %   function handles before it is written (stripHandles, mirroring the wrappers'
-%   stripHooks / stripFcnHandles discipline) - a session must never serialise a
+%   reportSettings / stripFcnHandles discipline) - a session must never serialise a
 %   closure over a dead figure.
 %
 %   SCHEMA.  wbSessionData.schema names the layout version (currently 6; a file
@@ -353,11 +353,11 @@ end
 % =====================================================================
 function v = stripHandles(v)
 %stripHandles  Recursively replace every function handle by its char text.
-%   The wrappers already drop their transport hooks before writing a settings
-%   file (stripHooks) and the myograph does the same for its GUI callbacks
-%   (stripFcnHandles); a session is read by other programs entirely, so it gets
-%   the same treatment for the whole payload - one place, no exceptions.  The
-%   text is kept rather than deleted so a stray handle is visible in the file
+%   The wrappers already drop their transport hooks before writing a settings file
+%   (Core/Reporting > reportSettings) and the myograph does the same for its GUI
+%   callbacks (stripFcnHandles); a session is read by other programs entirely, so
+%   it gets the same treatment for the whole payload - one place, no exceptions.
+%   The text is kept rather than deleted so a stray handle is visible in the file
 %   instead of silently vanishing.
 if isa(v,'function_handle')
     v = ['<fcn:' func2str(v) '>'];

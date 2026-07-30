@@ -33,7 +33,10 @@
 %       produces     logical product tokens          ({'contrast_t'})
 %       interactive  false | @(s)tf                  (blocks for user input?)
 %       needsRaw     true for runGuided*             (also passes the raw file)
-%       artifacts    report-image globs              ({'_c.jpg'})
+%       artifacts    report-image tails a run WRITES ({'_rep_contrast.jpg'})
+%       legacyArtifacts  the tails the same step wrote BEFORE the unified reporting
+%                    rename, kept so images from earlier runs are still listed
+%                    ({'_c.jpg'}); see the note below
 %       settingGroups Nx2 cell {label,{fields}}      (param-editor groups)
 %       basicFields  the fields a protocol actually tunes  ({'contrastType',...});
 %                    everything else in settingGroups is ADVANCED (see below)
@@ -164,6 +167,23 @@
 %     chains (splitRegions after setRegions, pulsatility after BFI+internalCycle)
 %     stay in 'requires'.  wbPrereqs is the single definition of "satisfied".
 %
+%   * ARTIFACTS, AND WHY THE TAIL LIST SURVIVED THE RENAME (2026-07-29).  Unified
+%     reporting gave every report image a legible name, '<stem>_rep_<stage>.jpg',
+%     so 'artifacts' now reads like the pages it finds ('_rep_segments.jpg' rather
+%     than '_vs.jpg').  legacyArtifacts carries the pre-rename tails alongside, so a
+%     folder processed before the rename still lists its reports; wbArtifacts unions
+%     the two over ONE directory listing, so recognising the old names costs an
+%     endsWith pass and nothing else.
+%     The tempting next move - drop the per-step lists for a single '_rep_*' glob,
+%     after which a wrapper that starts writing a new page would need no registry
+%     edit at all - DOES NOT WORK, and the reason is worth writing down.
+%     wbArtifacts resolves against the RECORDING's base name ('Mouse1*'), not
+%     against a product, so every report of a recording matches that glob whatever
+%     step wrote it: 'Mouse1_rep_contrast.jpg' and 'Mouse1_t_K_rep_segments.jpg'
+%     alike.  The stage token in the tail is the ONLY thing that attributes an image
+%     to a column.  With a bare '_rep_*' every column would claim every report, the
+%     result list would name the wrong step, and each per-column PDF would be the
+%     same document.  The list stays; the rename bought legibility, not brevity.
 %   * BASIC vs ADVANCED (author, 2026-07-28).  Most users never touch most of a
 %     step's settings.  basicFields names the handful a protocol is actually
 %     written around - the ones the launchers' %Example blocks comment on - and the
@@ -193,7 +213,7 @@ s.inGlob='*.rls'; s.outSuffix={'_t_K_d','_t_K_r','_t_K_s'}; s.outKind='new';
 s.outTransform=struct('from','.rls','to','_t_K_d.mat');   % spatial: '_s_K_d'
 s.gatingField='runContrastFromRLS'; s.requires={}; s.produces={'contrast'};
 s.interactive=@(ss) isfield(ss,'manualMask') && isequal(ss.manualMask,1);
-s.artifacts={'_c.jpg'}; s.branch='contrast';
+s.artifacts={'_rep_contrast.jpg'}; s.legacyArtifacts={'_c.jpg'}; s.branch='contrast';
 s.settingGroups={ 'Contrast calculation',{'contrastType','contrastKernel','decimFactor','decimMethod'};
                   'Performance',{'procType'};
                   'Initial masking',{'trustLimitsK','trustLimitsI','minTrust','manualMask'} };
@@ -221,7 +241,8 @@ s.id='internalCycle'; s.label='Internal cycle'; s.wrapper=@runInternalCycle;
 s.inGlob='*.rls'; s.outSuffix={'_c_K_d','_c_K_r','_c_K_s'}; s.outKind='new';
 s.outTransform=struct('from','.rls','to','_c_K_d.mat');
 s.gatingField='runInternalCycle'; s.requires={}; s.produces={'cardiac'};
-s.artifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='cardiac';
+s.artifacts={'_rep_cycle-detect.jpg','_rep_cycle-average.jpg'};
+s.legacyArtifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='cardiac';
 s.settingGroups={ 'Contrast calculation',{'trustLimitsK','trustLimitsI','contrastKernelS'};
                   'Frequency band',{'maxFrqIni','minFrqIni','rangeFrq'};
                   'Exclusion criteria',{'excludeFirstNCycles','coeffsSTD','coeffsRel','coeffsAbs'};
@@ -252,7 +273,8 @@ s.outTransform=struct('from','_t_K_d.mat','to','_e_K_d.mat');   % replaces the t
 s.gatingField='externalCycle';                       % REAL field (differs from fn name)
 s.requires={'contrast'}; s.produces={'epochAvg'};
 s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
-s.artifacts={'_ec.jpg','_ec2.jpg'}; s.branch='contrast';
+s.artifacts={'_rep_epochs.jpg','_rep_epoch-average.jpg'};
+s.legacyArtifacts={'_ec.jpg','_ec2.jpg'}; s.branch='contrast';
 s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDurationSec', ...
                      'epochBaselineSec','epochStimStartSec','epochFinaleSec'};
                   'Masking',{'maskType','enablelRejectionModification'};
@@ -277,6 +299,9 @@ s.id='setRegions'; s.label='Regions'; s.wrapper=@setRegions;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setRegions'; s.requires={}; s.requiresAny={'contrast','internalCycle'};
 s.produces={'regionsMask'};
+s.artifacts={'_rep_regions.jpg'};                     % NEW in Session 3: the drawn
+                                                      % regions, drawn or copied - no
+                                                      % legacy tail, it wrote none
 s.interactive=true;                                   % always opens the ROI editor
 s.branch=''; s.branchScope='copy';                    % draw on _t, inherit onto _c/_e
 s.fanOut='animal';                                    % rows = animals: ROIs carry along a row
@@ -305,7 +330,8 @@ s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runSegmentation'; s.requires={}; s.requiresAny={'contrast','internalCycle'};
 s.produces={'segmentation'};
-s.artifacts={'_cm.jpg','_vs.jpg'};
+s.artifacts={'_rep_categories.jpg','_rep_segments.jpg'};
+s.legacyArtifacts={'_cm.jpg','_vs.jpg'};              % '_vs' came from showSegmentsPreview
 s.branch=''; s.branchScope='copy';                % computed on contrast side, copied to cardiac
 s.settingGroups={ 'Contrast',{'trustLimitsK'};
                   'Categorization',{'lSizeN','sSizeN','sens','sSizeScale','deSens','lThinN','imOpen','iEdge','eEdge'};
@@ -331,7 +357,8 @@ s = base();
 s.id='dynamicSegmentation'; s.label='Dynamic segmentation'; s.wrapper=@runDynamicSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runDynamicSegmentation'; s.requires={'segmentation'}; s.produces={'dynamicSeg'};
-s.artifacts={'_vs.jpg'}; s.branch=''; s.branchScope='all';
+s.artifacts={'_rep_segments.jpg'};                    % re-emitted, overwriting the static one
+s.legacyArtifacts={'_vs.jpg'}; s.branch=''; s.branchScope='all';
 s.settingGroups={ 'Labelling (match segmentation)',{'sMinL','prchNSize','correctNodes','simR','difR'};
                   'Dynamic segmentation',{'sMinP2R2','sMaxLBI','sMaxCLR','sMaxKK','iniNSize','sMaxP2D'};
                   'Quality & interpolation',{'gSizeN','minOverlapMask','minOverlapSelf','pInterpF'} };
@@ -364,7 +391,9 @@ s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runRegistration';                      % code writes runRegistration (header drift A4)
 s.requires={}; s.requiresAny={'contrast','internalCycle'}; s.produces={'registered'};
 s.interactive=@(ss) ~(isfield(ss,'silent') && isscalar(ss.silent) && isequal(ss.silent,true));
-s.artifacts={'_registration.png'}; s.branch=''; s.refBranch='contrast';   % template = the reference's _t|_s
+s.artifacts={'_rep_registration.jpg'};                % was a .png; now a report page
+s.legacyArtifacts={'_registration.png'};
+s.branch=''; s.refBranch='contrast';                  % template = the reference's _t|_s
 s.branchScope='all';                                   % EVERY product of every member (launcher: 'Roi*_K_d.mat')
 s.settingGroups={ 'Registration',{'tFormType','matchSegmentation','prchNSize','silent','forceMethod','rotationLimit'} };
 s.basicFields={'tFormType','silent','forceMethod'};
@@ -443,6 +472,9 @@ s.id='vesselTypes'; s.label='Vessel types'; s.wrapper=@setVesselTypes;
 s.arity='perAnimal';                                   % 2-D fNames row; col 1 = reference
 s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVesselTypes'; s.requires={'BFI','segmentation'}; s.produces={'vesselTypes'};
+s.artifacts={'_rep_vesseltypes.jpg'};                 % NEW in Session 3: the artery/vein
+                                                      % map, painted or inherited - no
+                                                      % legacy tail, it wrote none
 s.interactive=true;                                   % paint GUI (per-file skipped under useReference)
 s.branch=''; s.refBranch='cardiac';                   % paint target = the reference's _c
 s.branchScope='all';                                  % EVERY product of every member (launcher: 'Roi*_BFI_d.mat')
@@ -485,7 +517,7 @@ s = struct( ...
     'id','', 'label','', 'wrapper',[], 'arity','perFile', ...
     'inGlob','', 'outSuffix',{{}}, 'outKind','inplace', 'outTransform',[], ...
     'gatingField','', 'requires',{{}}, 'requiresAny',{{}}, 'produces',{{}}, ...
-    'interactive',false, 'needsRaw',false, 'artifacts',{{}}, ...
+    'interactive',false, 'needsRaw',false, 'artifacts',{{}}, 'legacyArtifacts',{{}}, ...
     'settingGroups',{{}}, 'basicFields',{{}}, 'sharedKeys',{{}}, ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
     'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'fanOut','flat', ...
