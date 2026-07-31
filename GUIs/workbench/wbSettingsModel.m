@@ -23,7 +23,7 @@
 %
 %   KEYS.  Per-step overrides are keyed by STEP ID and the type layer by
 %   'type||stepId' - never by field name alone.  Several steps read a field of the
-%   same name (deleteOriginal lives on both splitRegions and BFI, trustLimitsK on
+%   same name ('method' lives on both the internal cycle and BFI, trustLimitsK on
 %   three steps), so a field-keyed store would silently couple them and their
 %   staleness cascades.
 %

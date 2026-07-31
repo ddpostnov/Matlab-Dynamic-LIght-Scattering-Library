@@ -79,8 +79,7 @@
 %                                 they exist.  Default {'t','s'}; {} disables.
 %     fNames   cell array of *_BFI_d.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
-%     s.cancelFcn()->tf (between files).  s.progressFcn is not used - the step is
-%     interactive (unless s.autoOnly).
+%     s.cancelFcn()->tf (between files).
 %
 %   SIDE-EFFECTS (per file)
 %     *_BFI_r.mat   RESULTS – new sMetrics columns parentIdx, daughterIdx
@@ -187,7 +186,6 @@ for fidx=1:1:numel(fNames)
             % ---- reference mode: inherit hierarchy from the reference ----
             % (the reference must share the segmentation - guaranteed within a
             % registered group; parent/daughter ids are segment idx, valid as-is)
-            reportStage(rep,'Propagating the hierarchy from the reference');
             ref=load(strrep(s.refFName,'_d.mat','_r.mat'),'results');
             if ~isfield(ref.results,'hierarchy')
                 error('Reference file has no results.hierarchy - run setVascularTree on the reference first.');
@@ -197,16 +195,10 @@ for fidx=1:1:numel(fNames)
                 error('Reference segmentation size differs from this file - propagation needs a matched segmentation.');
             end
             results=applyHierarchy(results,Href);
-            reportStage(rep,[num2str(numel(Href.nodeIds)),' nodes, ', ...
-                num2str(size(Href.edges,1)),' edges inherited']);
         else
             % ---- automatic derivation (headless-testable) ---------------
-            reportStage(rep,'Deriving the vascular hierarchy');
             H = getVascularTree(results,s);
             results = applyHierarchy(results,H);
-            reportStage(rep,[num2str(numel(H.nodeIds)),' nodes, ', ...
-                num2str(size(H.edges,1)),' edges, ',num2str(numel(H.roots)), ...
-                ' roots, ',num2str(numel(H.outlets)),' outlets']);
 
             % ---- interactive correction ---------------------------------
             if ~s.autoOnly
@@ -215,15 +207,15 @@ for fidx=1:1:numel(fNames)
         end
 
         settings.setVascularTree=reportSettings(s);
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-        reportSaved(rep,2);
+        reportSaved(rep);
 
         % auto-propagate the hierarchy to registered partner recordings
         % (same base name, different variant letter: _c_BFI -> _t_BFI/_s_BFI)
         if ~s.useReference && isfield(results,'hierarchy') && contains(s.fName,'_c_BFI')
-            propagateToPartners(results.hierarchy,s,rep);
+            propagateToPartners(results.hierarchy,s);
         end
     end
 end
@@ -232,9 +224,11 @@ end
 
 
 %% ====================  PARTNER PROPAGATION  ========================= %%
-function propagateToPartners(H,s,rep)
+function propagateToPartners(H,s)
 % Copy the hierarchy onto sibling recordings that share the segmentation
 % (same base name, different variant letter, e.g. _c_BFI -> _t_BFI / _s_BFI).
+% Silent: a partner is the SAME acquisition in another contrast branch, not
+% another recording, so it is part of this file's work and not a file of its own.
 parts=s.propagatePartners; if ischar(parts), parts={parts}; end
 for i=1:numel(parts)
     L=parts{i};
@@ -243,11 +237,9 @@ for i=1:numel(parts)
     partnerR=strrep(partnerD,'_d.mat','_r.mat');
     partnerS=strrep(partnerD,'_d.mat','_s.mat');
     if exist(partnerR,'file')~=2, continue; end
-    [~,pStem]=fileparts(partnerR);
-    reportStage(rep,['Propagating the hierarchy onto ',pStem]);
     pr=load(partnerR,'results'); presults=pr.results;
     if ~isequal(size(presults.sMap),H.imgSize)
-        reportWarn(rep,[pStem,' has a different segmentation - skipped.']); continue;
+        continue;               % a different segmentation - the partner is skipped
     end
     presults=applyHierarchy(presults,H);
     tmp.results=presults; save(partnerR,'-struct','tmp','-v7.3'); clear tmp

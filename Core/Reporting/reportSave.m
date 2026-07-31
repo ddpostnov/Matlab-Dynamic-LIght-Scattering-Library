@@ -5,12 +5,15 @@
 %   report with its data when a folder is copied, and it is how wbArtifacts finds
 %   report images at all - it globs on the stem and matches by tail.
 %
-%   A REPORT IS A BY-PRODUCT AND MUST NEVER KILL A RUN.  A failed export costs a
-%   warning line and nothing else, and THE FIGURE IS DELETED ON EVERY PATH - the
-%   cleanup object below fires whether the export succeeded, failed or threw
-%   something nobody anticipated.  The wrappers this replaces printed a maximised
-%   window per file and never closed it, which left sixty windows behind a
-%   sixty-file column and made close all look necessary.
+%   A REPORT IS A BY-PRODUCT AND MUST NEVER KILL A RUN - NOR NARRATE ONE.  A
+%   failed export costs nothing at all: no line, no warning, no entry in the
+%   ledger, and THE FIGURE IS DELETED ON EVERY PATH - the cleanup object below
+%   fires whether the export succeeded, failed or threw something nobody
+%   anticipated.  The three lines a wrapper emits per recording are the entire
+%   text surface, and a page that did not get written is not one of them.  The
+%   wrappers this replaces printed a maximised window per file and never closed
+%   it, which left sixty windows behind a sixty-file column and made close all
+%   look necessary.
 %
 %   RESOLUTION IS SPECIFIED AS OUTPUT PIXELS, NOT AS DPI.  exportgraphics scales
 %   a pixel-sized figure against MATLAB's nominal 96 dpi, so 150 dpi on the
@@ -42,7 +45,8 @@
 %            written outside the per-file loop (runRegistration's overlays).
 %
 % Outputs:
-%    None - the path is appended to rep's ledger for reportClose to assemble.
+%    None - the path is appended to rep's ledger, which reportClose hands back for
+%    whoever assembles the document between the steps.
 %
 % Example:
 %    fh = reportFigure(rep,'segments');
@@ -50,12 +54,12 @@
 %    reportSave(rep,fh,'segments');            % -> Mouse1_t_K_d_rep_segments.jpg
 %    reportSave(rep,fh,'regions',targetName);  % -> the SIBLING's _rep_regions.jpg
 %
-% See also: reportFigure, reportOpen, reportClose, wbReportPdf, exportgraphics
+% See also: reportFigure, reportOpen, reportClose, makeReportPdf, exportgraphics
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function reportSave(rep, fh, tag, fName)
@@ -75,26 +79,22 @@ if nargin<4 || isempty(fName)
     fName = st('fName');
 end
 if isempty(fName)
-    rep.emit('warn', sprintf('  report image "%s" not written (no current file)', tag));
-    return
+    return                      % nothing to name the page after - silently, see above
 end
 
 [fPath,stem] = fileparts(char(fName));
-imgName      = [stem '_rep_' tag '.jpg'];
-outFile      = fullfile(fPath, imgName);
+outFile      = fullfile(fPath, [stem '_rep_' tag '.jpg']);
 
 try
     anchorPage(fh);
     exportgraphics(fh, outFile, 'ContentType','image', 'Resolution', min(DPI,DPI_MAX));
-catch ME
-    rep.emit('warn', sprintf('  report image "%s" not written (%s)', tag, ME.message));
-    return
+catch
+    return                      % a page is a by-product; the run does not hear about it
 end
 
 imgs         = st('images');
 imgs{end+1}  = outFile;
 st('images') = imgs; %#ok<NASGU>  % st is a handle Map, so this lands in rep's ledger
-rep.emit('report', ['  report  ' imgName]);
 end
 
 % =====================================================================

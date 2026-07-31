@@ -2,7 +2,7 @@
 %
 %   sClean = stripFcnHandles(s) returns s with every field that holds a
 %   function_handle removed.  Anonymous functions can capture graphics objects in
-%   their closure (e.g. the workbench sets s.progressFcn/s.cancelFcn/s.stageFcn to
+%   their closure (e.g. the workbench sets s.cancelFcn/s.stageFcn to
 %   callbacks that reference its uifigure); saving such a struct serialises the whole
 %   captured figure into the .mat, and loading it later spawns a stray "ghost"
 %   window.  Stripping the handles keeps the saved s to plain data so it round-trips

@@ -2,18 +2,20 @@
 %
 %   setRegions(s,fNames) opens an ROI editor for every file in fNames and writes the
 %   labelled region mask (results.regionsMask) that runSegmentation / splitRegions
-%   later use to restrict processing to user-chosen parts of the field of view.  It is
-%   FULLY INTERACTIVE - there is NO count / headless parameter: the number of regions
-%   is simply however many the user draws.  fNames is TWO-DIMENSIONAL (rows = groups,
-%   e.g. one animal / FOV per row, exactly as getFileNamesList returns when grouped)
-%   and setRegions iterates every file itself - there is no launcher for-loop.
+%   later use to restrict processing to user-chosen parts of the field of view.  The
+%   regions are DRAWN, never computed - the only thing a protocol fixes in advance is
+%   HOW MANY of them there may be (s.nRegions, default unlimited).  fNames is
+%   TWO-DIMENSIONAL (rows = groups, e.g. one animal / FOV per row, exactly as
+%   getFileNamesList returns when grouped) and setRegions iterates every file itself -
+%   there is no launcher for-loop.
 %
 %   CARRY-FORWARD WITHIN A GROUP, RESET ACROSS GROUPS.  For each row, files are visited
 %   left to right.  On the first file the user draws the region(s); on every subsequent
-%   file the SAME ROIs are re-offered as editable objects (nudge / add / delete / reset
-%   / draw more).  At the next row the ROIs reset to empty.  A carried ROI that does not
-%   fit entirely inside the next file's field of view (files of a group need not share
-%   an image size) is DROPPED rather than re-offered off-image.
+%   file the SAME ROIs are re-offered as editable objects (nudge / add / delete / draw
+%   more).  At the next row the ROIs reset to empty.  A carried ROI that does not fit
+%   entirely inside the next file's field of view (files of a group need not share an
+%   image size) is DROPPED rather than re-offered off-image, and no more than
+%   s.nRegions of the survivors are re-offered, so the editor never opens over budget.
 %
 %   THE EDITOR (one window per file).  ROIs are drawn on the display-enhanced image
 %   (enhanceForDisplay), in the native image orientation so createMask aligns with the
@@ -22,31 +24,35 @@
 %     * a shape selector - polygon / rectangle / square / ellipse / circle
 %       (drawpolygon / drawrectangle (+FixedAspectRatio for square) / drawellipse /
 %       drawcircle);
-%     * Add ROI     - draw one more region of the selected shape;
+%     * Add ROI     - draw one more region of the selected shape.  DISABLED once
+%                     s.nRegions regions are on the image, and enabled again as soon
+%                     as one is deleted;
 %     * Delete ROI  - remove the selected ROI (or, if none is selected, the most recent
 %                     one).  The Delete key also removes the currently selected ROI(s);
-%     * Reset ROIs  - clear every ROI on this file;
 %     * Done        - accept the current ROIs, save, and advance to the next file.
 %
 %   WHOLE WINDOW == NO MASK.  If the user draws NO ROIs (or skips setRegions entirely),
 %   NO results.regionsMask is written - any stale one is removed.  Downstream readers
 %   (runSegmentation, splitRegions) treat a MISSING regionsMask as the whole window (an
-%   all-true mask the size of the image), so "draw nothing" == "use everything".  With
+%   all-true mask the size of the image), so "draw nothing" == "use everything".  This
+%   is true whatever s.nRegions says: the field is a CEILING, never a quota.  With
 %   k ROIs drawn, regionsMask = sum_k createMask(roi_k).*k (k = the ROI index), identical
 %   to the old runCategories math, so downstream (splitRegions, getPixelCategories) is
 %   unchanged.
 %
 %   INPUTS
-%     s        parameter structure.  Carried through into settings.setRegions untouched
-%              (setRegions itself reads no numeric fields; the region count is drawn,
-%              not configured).  s.fNamesCopyTo (optional, default {}) copies the drawn
-%              mask onto co-registered siblings - see below.
+%     s        parameter structure.  Carried through into settings.setRegions untouched.
+%       .nRegions      (optional, default Inf) the largest number of regions that may be
+%                      drawn on one file.  A positive integer scalar, or Inf / [] for
+%                      unlimited - which is what a launcher that never sets it gets, so
+%                      the field changes nothing until it is asked for.
+%       .fNamesCopyTo  (optional, default {}) copies the drawn mask onto co-registered
+%                      siblings - see below.
 %     fNames   2-D cell array of *_K_d.mat / *_I_d.mat paths.  Rows = groups; each file
 %              must have matching *_s.mat and *_r.mat siblings.  Empty cells are skipped
 %              (ragged rows from getFileNamesList are fine).
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
-%     s.cancelFcn()->tf (checked between files).  s.progressFcn is not used - the step
-%     is fully interactive.
+%     s.cancelFcn()->tf (checked between files).
 %
 %   s.fNamesCopyTo - draw ONCE, apply to every branch of the same recording
 %     A recording usually exists as several co-registered products of ONE raw file -
@@ -77,6 +83,7 @@
 %     % draw on the temporal contrast, inherit onto the paired internal-cycle files
 %     fNames = getFileNamesList(root,'*_t_K_d.mat','[A-Z]+\d+');   % grouped, rows=animals
 %     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+%     s.nRegions     = 1;      % one region per recording (omit for as many as you like)
 %     setRegions(s,fNames);
 %     % (skip this call entirely, or draw nothing, to segment the whole window)
 %
@@ -90,7 +97,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 function setRegions(s,fNames)
 
@@ -98,12 +105,11 @@ if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.ma
     error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
 end
 if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
+s.nRegions=validNRegions(s);
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
 % are resolved to no-ops when absent and ride in rep.  s is never mutated, and
-% reportSettings strips the hooks from the settings before saving.  This step is
-% fully interactive, so only stageFcn (file boundaries) and cancelFcn (between files)
-% are wired - progress is not threaded through the ROI editor.
+% reportSettings strips the hooks from the settings before saving.
 rep=reportOpen(s,'Regions',fNames(~cellfun(@isempty,fNames(:))));
 
 nGroups=size(fNames,1);
@@ -136,8 +142,7 @@ for g=1:1:nGroups
         end
 
         % --- interactive ROI editor (always opens); empty mask => whole window ---
-        reportStage(rep,'Drawing the regions');
-        [regionsMask,carried]=editRegions(imgIni,isK,carried,rep);
+        [regionsMask,carried]=editRegions(imgIni,isK,carried,s.nRegions);
 
         if isempty(regionsMask)
             % no regions drawn: whole window - remove any stale mask, write none, so
@@ -152,21 +157,40 @@ for g=1:1:nGroups
         writeRegionsReport(rep,fName,imgIni,regionsMask);
 
         settings.setRegions=reportSettings(s);
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
         save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
-        reportSaved(rep,2);
+        reportSaved(rep);
 
         % --- inherit the same regions on the co-registered siblings (s.fNamesCopyTo) ---
         tgts=copyTargets(s,fNames,g,c);
         for t=1:1:numel(tgts)
             if ~isempty(tgts{t})
-                copyRegionsOnto(s,tgts{t},regionsMask,rep);
+                copyRegionsOnto(s,tgts{t},regionsMask,rep,fIdx);
             end
         end
     end
 end
 reportClose(rep);
+end
+
+% =====================================================================
+function n=validNRegions(s)
+%validNRegions  s.nRegions as a usable ceiling: a positive integer, or Inf for
+%   unlimited.  ABSENT OR EMPTY MEANS UNLIMITED, which is what every launcher that
+%   predates the field gets, and Inf rather than [] is the point - the editor then
+%   compares with a plain >= and needs no special case for "no limit".
+if ~isfield(s,'nRegions') || isempty(s.nRegions), n=Inf; return; end
+n=s.nRegions;
+% Stated as what a ceiling IS, not as the ways of being wrong: NaN passes every
+% negative test ever written for it (NaN<1 is false, so is NaN>1), and a NaN ceiling
+% would then compare false against every count and silently mean "unlimited".
+ok=isnumeric(n) && isscalar(n) && isreal(n) && n>=1 && (isinf(n) || mod(n,1)==0);
+if ~ok
+    error(['s.nRegions must be a positive whole number (the largest number of ' ...
+           'regions that may be drawn on one file), or Inf / [] for unlimited.']);
+end
+n=double(n);
 end
 
 % =====================================================================
@@ -190,12 +214,12 @@ end
 end
 
 % =====================================================================
-function copyRegionsOnto(s,targetName,regionsMask,rep)
+function copyRegionsOnto(s,targetName,regionsMask,rep,fIdx)
 %copyRegionsOnto  Give a co-registered sibling the SAME regions (verbatim mask, or the
 %   removal of a stale one when nothing was drawn) plus the settings stamp.  Nothing
 %   else on the target is touched - it is a different recording of the same FOV.
-[~,tgtStem]=fileparts(targetName);
-reportStage(rep,['Copying regions onto ',tgtStem]);
+%   It is a RECORDING OF ITS OWN, so it gets its own three lines.
+reportFile(rep,fIdx,targetName);
 clearvars results settings
 load(strrep(targetName,'_d.mat','_s.mat'),'settings');
 load(strrep(targetName,'_d.mat','_r.mat'),'results');
@@ -214,8 +238,10 @@ writeRegionsReport(rep,targetName,targetImage(targetName,results),regionsMask);
 
 sT=s; sT.fName=targetName;
 settings.setRegions=reportSettings(sT);
+reportWriting(rep);
 save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
 save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
+reportSaved(rep);
 end
 
 % =====================================================================
@@ -244,9 +270,9 @@ function writeRegionsReport(rep,fName,imgIni,regionsMask)
 %   point of the page is to check that the region sits where the operator meant it
 %   to, which needs the vessels under it to be visible.  The number is the label
 %   index, so the page and results.regionsMask can be compared directly.
-%   A FAILURE HERE COSTS A LINE, NOT THE RUN.  This page is new: before it existed
-%   setRegions saved its mask and moved on, and it must still do that if the drawing
-%   goes wrong on some image nobody anticipated.
+%   A FAILURE HERE COSTS NOTHING BUT THE PAGE.  This page is new: before it existed
+%   setRegions saved its mask and moved on, and it must still do that - silently -
+%   if the drawing goes wrong on some image nobody anticipated.
 f=reportFigure(rep,'regions','single');
 try
     t=tiledlayout(f,1,1,'TileSpacing','compact','Padding','compact');
@@ -268,9 +294,8 @@ try
         hold(ax,'off')
         title(ax,[num2str(max(regionsMask(:))) ' region(s)'])
     end
-catch ME
-    delete(f);
-    reportWarn(rep,['  regions report page not drawn (' ME.message ')']);
+catch
+    delete(f);              % no page, no line: a report is a by-product
     return
 end
 reportSave(rep,f,'regions',fName);
@@ -286,10 +311,12 @@ clim(ax,lims);
 end
 
 % =====================================================================
-function [regionsMask,carried]=editRegions(imgIni,isK,carried,rep)
+function [regionsMask,carried]=editRegions(imgIni,isK,carried,nRegions)
 %editRegions  ROI editor for one file: draw/edit labelled regions on the enhanced
 %   image, return the labelled mask (EMPTY when no ROI is drawn = whole window) plus
-%   the ROI geometry to carry to the next file.
+%   the ROI geometry to carry to the next file.  nRegions is the ceiling (Inf =
+%   unlimited): Add ROI is greyed out at the limit, and drawing FEWER is always
+%   allowed - the limit says how many the operator MAY draw, not how many they must.
 
 % Display-enhanced background the user draws on (mirrors the old runCategories prep).
 if isK
@@ -323,12 +350,12 @@ uicontrol(fig,'Style','text','Units','normalized','Position',[0.04 0.105 0.09 0.
 shapePop=uicontrol(fig,'Style','popupmenu','Units','normalized', ...
     'Position',[0.13 0.11 0.14 0.035], ...
     'String',{'polygon','rectangle','square','ellipse','circle'});
-uicontrol(fig,'Style','pushbutton','Units','normalized','Position',[0.29 0.105 0.10 0.045], ...
+% Two buttons now that Reset ROIs is gone, sharing the width the three used to have -
+% Done keeps its own place on the right, where it has always been held apart.
+addBtn=uicontrol(fig,'Style','pushbutton','Units','normalized','Position',[0.29 0.105 0.13 0.045], ...
     'String','Add ROI','Callback',@onAdd);
-uicontrol(fig,'Style','pushbutton','Units','normalized','Position',[0.40 0.105 0.10 0.045], ...
+uicontrol(fig,'Style','pushbutton','Units','normalized','Position',[0.43 0.105 0.13 0.045], ...
     'String','Delete ROI','Callback',@onDelete);
-uicontrol(fig,'Style','pushbutton','Units','normalized','Position',[0.51 0.105 0.10 0.045], ...
-    'String','Reset ROIs','Callback',@onReset);
 uicontrol(fig,'Style','pushbutton','Units','normalized','Position',[0.76 0.10 0.13 0.055], ...
     'String','Done (next file)','FontWeight','bold','Callback',@onDone);
 
@@ -339,7 +366,12 @@ hint=uicontrol(fig,'Style','text','Units','normalized','Position',[0.04 0.02 0.6
 % Files within a group need not share a field of view, so an ROI drawn on a larger
 % image can fall (partly) outside a smaller one; such an ROI is dropped rather than
 % recreated off-image, where it would silently mask nothing and break downstream use.
-carried=dropOutsideFOV(carried,size(imgIni),rep);
+% The ceiling applies to what is carried in as much as to what is drawn: a group whose
+% first file was given three ROIs must not re-open at a limit of one already over
+% budget, with an Add button greyed out and no explanation.  Truncation is AFTER the
+% out-of-FOV drop, so the ROIs that survive are the first nRegions that still fit.
+carried=dropOutsideFOV(carried,size(imgIni));
+if numel(carried)>nRegions, carried=carried(1:nRegions); end
 for i=1:1:numel(carried)
     rois{end+1}=recreateROI(axDraw,carried(i)); %#ok<AGROW>
 end
@@ -347,7 +379,7 @@ end
 fig.UserData='editing';                       % private wait sentinel (see waitfor below)
 fig.WindowKeyPressFcn=@onKey;                 % Delete key removes the selected ROI(s)
 fig.CloseRequestFcn=@(~,~) set(fig,'UserData','done');   % closing the window == Done
-updateHint();
+refreshControls();                            % hint + Add's enable state, from the ROI count
 % Block until Done / close.  We deliberately do NOT use uiwait/uiresume here: the
 % interactive drawpolygon / drawrectangle / drawellipse / drawcircle calls run their
 % OWN uiwait/uiresume on THIS figure while a shape is being drawn, and that internal
@@ -374,14 +406,15 @@ if isvalid(fig)
     delete(fig);
 end
 
-    % ---- nested callbacks (share rois / axDraw / shapePop / hint) ----
+    % ---- nested callbacks (share rois / axDraw / shapePop / hint / addBtn) ----
     function onAdd(~,~)
+        if nLive()>=nRegions, return; end   % the button is greyed, but never trust that alone
         shapes={'polygon','rectangle','square','ellipse','circle'};
         r=drawNewROI(axDraw,shapes{shapePop.Value});
         if ~isempty(r) && isvalid(r)
             rois{end+1}=r;
         end
-        updateHint();
+        refreshControls();
     end
     function onDelete(~,~)
         idx=[];
@@ -397,14 +430,7 @@ end
             if isvalid(rois{idx}), delete(rois{idx}); end
             rois(idx)=[];
         end
-        updateHint();
-    end
-    function onReset(~,~)
-        for jj=1:1:numel(rois)
-            if isvalid(rois{jj}), delete(rois{jj}); end
-        end
-        rois={};
-        updateHint();
+        refreshControls();
     end
     function onKey(~,evt)
         if strcmp(evt.Key,'delete')                % Delete key = remove selected ROI(s)
@@ -414,24 +440,45 @@ end
                     delete(rois{jj}); rois(jj)=[]; deleted=true;
                 end
             end
-            if deleted, updateHint(); end
+            if deleted, refreshControls(); end
         end
     end
     function onDone(~,~)
         if isvalid(fig), fig.UserData='done'; end
     end
-    function updateHint()
+    function n=nLive()
+        %nLive  THE ROI count - the number of live handles, computed in ONE place so
+        %   the hint and the Add button can never disagree about whether the file is
+        %   full.  Deleting an ROI leaves an invalid handle behind until the callback
+        %   that removed it also drops the cell, so counting cells is not the same
+        %   thing as counting regions.
         n=0;
         for jj=1:1:numel(rois), if isvalid(rois{jj}), n=n+1; end, end
+    end
+    function refreshControls()
+        %refreshControls  Everything the ROI count drives: the hint and Add's enable
+        %   state.  Called wherever an ROI appears or disappears.
+        n=nLive();
+        full=n>=nRegions;
+        if isvalid(addBtn), set(addBtn,'Enable',onOff(~full)); end
         if n==0
             msg=['No ROIs drawn: the WHOLE WINDOW will be used (no region mask is ', ...
                  'written).  Add ROIs to restrict segmentation, then press Done.'];
+        elseif full
+            msg=[num2str(n) ' ROI(s) - as many as this file may have.  Drag / reshape ', ...
+                 'freely; delete one to draw a different one.  Press Done when finished.'];
         else
             msg=[num2str(n) ' ROI(s).  Add / drag / reshape freely; select an ROI and ', ...
                  'press Delete (or "Delete ROI") to remove it.  Press Done when finished.'];
         end
         if isvalid(hint), set(hint,'String',msg); end
     end
+end
+
+% =====================================================================
+function v=onOff(tf)
+%onOff  A logical as the 'on'/'off' a uicontrol Enable expects.
+if tf, v='on'; else, v='off'; end
 end
 
 % =====================================================================
@@ -491,21 +538,19 @@ end
 end
 
 % =====================================================================
-function carried=dropOutsideFOV(carried,sz,rep)
+function carried=dropOutsideFOV(carried,sz)
 %dropOutsideFOV  Keep only the carried ROI specs that fit entirely inside an sz =
-%   [rows cols] field of view, discarding (with a note) the ones that do not.  ROIs are
-%   carried across files of a group, which may differ in size; an ROI that does not fit
-%   is deleted here so nothing downstream sees a region hanging off the image.
+%   [rows cols] field of view, discarding the ones that do not.  ROIs are carried
+%   across files of a group, which may differ in size; an ROI that does not fit is
+%   deleted here so nothing downstream sees a region hanging off the image.  The
+%   operator sees the outcome on the image in front of them, which is why this is
+%   silent.
 keep=true(1,numel(carried));
 for i=1:1:numel(carried)
     [xLim,yLim]=roiExtent(carried(i));
     keep(i)= xLim(1)>=0.5 && xLim(2)<=sz(2)+0.5 && yLim(1)>=0.5 && yLim(2)<=sz(1)+0.5;
 end
-if any(~keep)
-    reportWarn(rep,[num2str(sum(~keep)),' carried region(s) do not fit in this ', ...
-          num2str(sz(2)),'x',num2str(sz(1)),' field of view - dropped.']);
-    carried=carried(keep);
-end
+carried=carried(keep);
 end
 
 % =====================================================================

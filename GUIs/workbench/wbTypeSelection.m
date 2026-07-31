@@ -41,8 +41,8 @@
 %   is not 'one' does not belong to a single row, because the wrapper covers the
 %   whole recording in ONE call: 'copy' (setRegions, segmentation) runs on the
 %   contrast-side file and propagates through s.fNamesCopyTo, and 'all'
-%   (splitRegions, dynamicSegmentation, BFI) is handed every branch product as one
-%   fNames column.  It is therefore impossible for one branch to be split and
+%   (dynamicSegmentation, BFI) is handed every branch product as one fNames
+%   column.  It is therefore impossible for one branch to have its BFI and
 %   another not, so offering an independent tick per row would be a lie.  Such a
 %   step is stored ONCE, on the ANCHOR row, and shown as INHERITED on the others
 %   ('effective') - which is also what keeps the selection summary from counting it
@@ -86,7 +86,7 @@
 %    txt                  = wbTypeSelection('why',       reg, branch, stepId)
 %    [k,v]                = wbTypeSelection('toCells',   sel)
 %    sel                  = wbTypeSelection('fromCells', keys)
-%    sel                  = wbTypeSelection('fromCells', keys, reg)   % + upgrade
+%    sel                  = wbTypeSelection('fromCells', keys, reg)   % + upgrade/prune
 %
 % Inputs:
 %    sel    - containers.Map 'type||branch||stepId' -> true (the selected set).
@@ -96,7 +96,8 @@
 %    stepId - a registry step id.
 %    tf     - logical, the wanted state ('set' is tick/untick in one call).
 %    keys   - a saved key list; with reg given, keys of the older 2-part layout
-%             ('type||stepId') are upgraded to their branch rows.
+%             ('type||stepId') are upgraded to their branch rows and keys naming
+%             a step the registry no longer has are dropped.
 %
 % Outputs:
 %    sel     - the updated map (value semantics: always take the returned one).
@@ -112,7 +113,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function varargout = wbTypeSelection(action, varargin)
@@ -469,11 +470,23 @@ function sel = fromCells(k, reg)
 %   creates, a branch-specific step to that branch, and a branch-agnostic one to
 %   every row the type actually has (it was configured before rows existed, so the
 %   only faithful reading is "on both pipelines").
+%
+%   A KEY NAMING A STEP THE REGISTRY NO LONGER HAS IS DROPPED, QUIETLY.  The
+%   registry is the only list of what a step id means, and it changes over the
+%   life of a project - a step is added, or one is dropped from the workbench
+%   while its wrapper stays in the library (2026-07-31).  A session saved before
+%   that carries the id in its selection, and the honest reading of a tick for
+%   something that is no longer a step is "nothing": it names no column, so it can
+%   never be seen, untangled or unticked, and keeping it would only write it back
+%   out again on the next save.  Everything else about the session still loads.
+%   This is THE place that knows the registry, which is why the rule lives here
+%   and not in wbSession.
 sel = newSel();
 for i = 1:numel(k)
-    if nargin<2 || isempty(reg) || numel(strsplit(k{i},'||'))>=3
-        sel(k{i}) = true;
-    end
+    if nargin<2 || isempty(reg), sel(k{i}) = true; continue; end
+    if numel(strsplit(k{i},'||'))<3, continue; end      % 2-part: upgraded below
+    [~,~,stepId] = splitKey(k{i});
+    if any(strcmp(stepId,{reg.id})), sel(k{i}) = true; end
 end
 if nargin<2 || isempty(reg), return; end
 

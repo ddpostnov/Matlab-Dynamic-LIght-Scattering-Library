@@ -56,8 +56,8 @@
 %                            image COLUMNS inside a serial loop over ROWS, so a
 %                            parallel run enters the pool once per row.
 %     fNames   cell array of *b_I_d.mat paths.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUT FILES (side-effects, SOURCE left untouched)
 %       *b_I_r.mat   RESULTS  – sMetrics/dvsMetrics extended with t*B/v*B
@@ -131,7 +131,6 @@ for fidx=1:numel(fNames)
     end
 
     % ----------------------------- regions -----------------------------
-    reportStage(rep,'Bolus transit metrics');
     results.sMetrics=appendBolusMetrics(results.sMetrics,results.sData,results.time,s,bw,dt);
 
     % ------------------------- vessel segments -------------------------
@@ -141,7 +140,6 @@ for fidx=1:numel(fNames)
 
     % --------------------------- pixels (opt) --------------------------
     if strcmp(s.calcData,"all")
-        reportStage(rep,'Per-pixel bolus landmarks');
         data=single(source.data);
         for k=1:size(data,3)                         % 2-D median across frames
             data(:,:,k)=medfilt2(data(:,:,k),[s.medSpace s.medSpace],'symmetric');
@@ -167,9 +165,7 @@ for fidx=1:numel(fNames)
             end
             imgT(i,:,:)=reshape(rowT,1,C,4);
             imgV(i,:,:)=reshape(rowV,1,C,4);
-            reportProgress(rep,i/R,'Per-pixel bolus landmarks');
         end
-        reportProgress(rep,1,'Per-pixel bolus landmarks');   % forced final tick
         results.imgT0B       =imgT(:,:,1);  results.imgV0B       =imgV(:,:,1);
         results.imgTUpslopeB =imgT(:,:,2);  results.imgVUpslopeB =imgV(:,:,2);
         results.imgTPeakB    =imgT(:,:,3);  results.imgVPeakB    =imgV(:,:,3);
@@ -178,10 +174,10 @@ for fidx=1:numel(fNames)
     end
 
     settings.ctthCalculation=reportSettings(s);
-    reportStage(rep,'Saving');
+    reportWriting(rep);
     save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
     save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-    reportSaved(rep,2);
+    reportSaved(rep);
 end
 end
 reportClose(rep);

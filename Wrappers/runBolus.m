@@ -19,8 +19,8 @@
 %                          after the bolus span.
 %     fNames   cell array of char vectors / strings with full paths to
 %              *.cxd files produced by the acquisition software.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUT SIDE-EFFECTS (per file)
 %     <name>_b_I_d.mat   SOURCE  – bolus cube (source.data) + time (source.time, s)
@@ -72,8 +72,6 @@ for fidx=1:1:numel(fNames)
     s.fName=char(fNames{fidx});
     reportFile(rep,fidx,s.fName);
     clearvars results source settings
-
-    reportStage(rep,'Reading the recording');
 
     %read the file meta data
     reader    = bfGetReader(s.fName);
@@ -218,13 +216,13 @@ for fidx=1:1:numel(fNames)
     reportSave(rep,fh,'bolus');
 
     %save the settings and results
-    reportStage(rep,'Saving');
+    reportWriting(rep);
     source.data=data;
     source.time=time;
     save(strrep(s.fName,'.cxd','_b_I_d.mat'),'source','-v7.3');
     save(strrep(s.fName,'.cxd','_b_I_r.mat'),'results','-v7.3');
     save(strrep(s.fName,'.cxd','_b_I_s.mat'),'settings','-v7.3');
-    reportSaved(rep,3);
+    reportSaved(rep);
      end
 end
 reportClose(rep);

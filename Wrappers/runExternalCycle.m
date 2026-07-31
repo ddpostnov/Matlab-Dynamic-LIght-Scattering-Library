@@ -25,8 +25,8 @@
 %              reject*Coefs, maskType, enablelRejectionModification, etc.)
 %     fNames   cell array of full paths to *_K_d.mat files (same naming
 %              convention as produced by runContrastFromRLS).
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – all results are written to disk (see above).
@@ -132,7 +132,6 @@ for fidx=1:1:numel(fNames)
         [~,epochEndFrame]=min(abs(time'-epochEndSec),[],1);
 
         %% Epoch rejection and calculation of average epoch
-        reportStage(rep,'Averaging the stimulation epochs');
         %calculate average epoch time-step and time loss
         timeStep=median(time(2:end)-time(1:end-1));
         timeLoss=[timeStep,time(2:end)-time(1:end-1)]-timeStep;
@@ -291,13 +290,13 @@ for fidx=1:1:numel(fNames)
         reportSave(rep,fh,'epoch-average');
 
         % Save the settings and results
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         settings.externalCycle=reportSettings(s);
         results.time=source.time;
         save(strrep(s.fName,'_K_d.mat','_e_K_d.mat'),'source','-v7.3');
         save(strrep(s.fName,'_K_d.mat','_e_K_r.mat'),'results','-v7.3');
         save(strrep(s.fName,'_K_d.mat','_e_K_s.mat'),'settings','-v7.3');
-        reportSaved(rep,3);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

@@ -31,6 +31,14 @@
 %   neither tool reaches into the file layout, and a schema bump stays a change to
 %   this one function.
 %
+%   KEYED BY PATH OR BY RECORDING IDENTITY.  Nine of the members below are - the
+%   four .overrides axes and .modalityOvr by PATH, .completed by 'path||stepId',
+%   .fileOverrides and .staleOverlay by 'identity||stepId', .animalRef and
+%   .animalRefMan by an identity VALUE.  Renaming a recording on disk therefore has
+%   to move all of them together or a session stops matching the files it describes;
+%   guiWorkbench>adoptRename owns that, and a new keyed field added here has to be
+%   added there too.  The SHAPE never changes, so a rename needs no schema bump.
+%
 %   PLAIN DATA ONLY.  Every containers.Map member is flattened to parallel
 %   key/value cell arrays so the file is Map-free on disk (the trick
 %   wbSettingsModel uses for its preset), and the whole payload is swept for
@@ -38,7 +46,7 @@
 %   reportSettings / stripFcnHandles discipline) - a session must never serialise a
 %   closure over a dead figure.
 %
-%   SCHEMA.  wbSessionData.schema names the layout version (currently 6; a file
+%   SCHEMA.  wbSessionData.schema names the layout version (currently 7; a file
 %   without the field is the unversioned Phase-3 layout, read as 1).  Loading an
 %   older session is supported: the fields it predates come back at their empty
 %   defaults, so an old sidecar still restores its file set and settings - a
@@ -47,12 +55,17 @@
 %   'type||stepId' to 'type||branch||stepId', because one raw recording can drive
 %   two independent pipelines and each is configured separately; the keys are
 %   written verbatim here and upgraded by wbTypeSelection('fromCells',keys,reg),
-%   which is the only place that knows what a step's branch is.  Schema 5 added
+%   which is the only place that knows what a step's branch is - and which also
+%   DROPS a key naming a step the registry no longer has, so a session outlives a
+%   retired step without a schema bump (nothing about the layout changed, only
+%   which ids are meaningful).  Schema 5 added
 %   the resolved .files list and the .completed record.  Schema 6 DROPPED the
 %   'checked' set: the per-cell run queue was retired with the per-file matrix
 %   (Phase 6) and selection is now wholly the Constructor's typeSel/animalSel, so
 %   the field is neither written nor read - a schema-5 sidecar's chkKeys are simply
-%   ignored, and everything else about it still loads.
+%   ignored, and everything else about it still loads.  Schema 7 added .reprocess,
+%   the Process tab's re-run switch; a schema-6 sidecar reads it as false, which is
+%   the default and the safe answer.
 %
 % Syntax:
 %    wbSession('save', path, session)      % write the sidecar
@@ -104,6 +117,12 @@
 %       staleOverlay  containers.Map 'identity||stepId' -> logical true (the done
 %                     cells an in-session settings edit re-opened).
 %       presetRef     char, path of the last-used preset ('' if none).
+%       reprocess     logical, the Process tab's 'Re-process finished files' tick:
+%                     whether the next Run repeats work that is already on disk.
+%                     It is remembered rather than treated as a window preference
+%                     because it changes what a resumed session DOES - coming back
+%                     to a half-finished protocol and silently re-running it would
+%                     be the same trap the From-column coupling was.
 %
 % Outputs:
 %    session - the same struct shape, with every Map reconstructed.
@@ -134,7 +153,7 @@ end
 end
 
 % =====================================================================
-function v = schemaVersion(), v = 6; end
+function v = schemaVersion(), v = 7; end
 
 % =====================================================================
 function s = emptySession()
@@ -165,6 +184,7 @@ s.typeSel       = anyMap();
 s.animalSel     = anyMap();
 s.staleOverlay  = anyMap();
 s.presetRef     = '';
+s.reprocess     = false;
 end
 
 % =====================================================================
@@ -233,6 +253,7 @@ wbSessionData.rowOrder      = session.rowOrder;
 wbSessionData.bag           = session.bag;
 wbSessionData.stepOverrides = session.stepOverrides;
 wbSessionData.presetRef     = session.presetRef;
+wbSessionData.reprocess     = logical(session.reprocess);
 
 % ---- label overrides: one key/value cell-array pair per axis ----------------
 ax = wbTypeModel('axes');
@@ -272,7 +293,8 @@ session = emptySession();
 if isfield(p,'schema'), session.schema = p.schema; else, session.schema = 1; end
 
 plain = {'root','glob','patterns','paths','fNames','referenceMode', ...
-         'animalNames','modality','rowOrder','bag','stepOverrides','presetRef'};
+         'animalNames','modality','rowOrder','bag','stepOverrides','presetRef', ...
+         'reprocess'};
 for i = 1:numel(plain)
     if isfield(p,plain{i}), session.(plain{i}) = p.(plain{i}); end
 end

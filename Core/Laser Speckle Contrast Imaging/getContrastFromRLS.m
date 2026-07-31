@@ -19,10 +19,12 @@
 %    'decimFactor' - frames averaged and kept during decimation (default 1).
 %    'decimMethod' - 'leaking' (overlapping, default) or 'sharp' (temporal only).
 %    'memoryCoef'  - fraction of free RAM used for batching (default 0.8).
-%    'progressFcn' - progress sink, progressFcn(frac,label).  Absent (the default)
-%                    the per-batch line is printed to the command window exactly as
-%                    it always has been, so every existing caller is unaffected; a
-%                    wrapper passes reportProgress's handle to route it instead.
+%
+%   IT SAYS NOTHING WHILE IT WORKS.  Reporting belongs to the wrapper: it names
+%   the recording before this is called and closes it with an elapsed time after,
+%   and a per-batch line underneath that is noise in a sixty-file run.  So there
+%   is no progress sink and no command-window print here - a core neither reports
+%   nor takes a reporting argument.
 %
 % Outputs:
 %    data             - contrast data, 3-D [y x t] single.
@@ -41,7 +43,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function [data,time,timeStamp,intensityMetrics]=getContrastFromRLS(rlsFileName,contrastType, varargin)
@@ -54,7 +56,6 @@ addParameter(p, 'procType', 'gpu', @(x) any(validatestring(x, {'cpu', 'gpu'})));
 addParameter(p, 'decimFactor', 1, @isnumeric);
 addParameter(p, 'decimMethod', 'leaking', @(x) any(validatestring(x, {'leaking', 'sharp'})));
 addParameter(p, 'memoryCoef', 0.8, @(x) isnumeric(x) && isscalar(x) && x > 0 && x <= 1);
-addParameter(p, 'progressFcn', [], @(x) isempty(x) || isa(x,'function_handle'));
 parse(p, rlsFileName, contrastType, varargin{:});
 
 kernelSize  = p.Results.kernelSize;
@@ -62,7 +63,6 @@ procType    = p.Results.procType;
 decimFactor = p.Results.decimFactor;
 decimMethod = p.Results.decimMethod;
 memoryCoef  = p.Results.memoryCoef;
-progressFcn = p.Results.progressFcn;
 
 if isempty(kernelSize)
     if strcmpi(contrastType, 'temporal')
@@ -118,7 +118,6 @@ tailIntensity = [];
 tailTime = [];
 H = floor(kernelSize/2);
 
-tic
 for i=1:batchNum
     curBatchSize=min(batchSize, sz(3)-(i-1)*batchSize);
     if i==1
@@ -173,11 +172,6 @@ for i=1:batchNum
         data(:, :, curSize : curSize+numToSave-1) = tmp1(:, :, startIdx:endIdx);
         time(curSize : curSize+numToSave-1) = tmp2(startIdx:endIdx);
         curSize = curSize + numToSave;
-    end
-    if isempty(progressFcn)
-        fprintf('Batch %d/%d processed. Elapsed: %.2fs\n', i, batchNum, toc);
-    else
-        progressFcn(i/batchNum, 'Speckle contrast');
     end
 end
 time=(time-time(1))./1000; %conversion to seconds

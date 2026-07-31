@@ -1,7 +1,7 @@
-%wbReportPdf - Combine report images into ONE PDF, a page per image.
+%makeReportPdf - Combine report images into ONE PDF, a page per image.
 %
-%   A 60-file column leaves 60 JPGs in the workbench's link list, which is a pile
-%   rather than a report.  This helper turns a list of report images into a single
+%   A 60-file step leaves 60 JPGs beside the data, which is a pile rather than a
+%   report.  This function turns a list of report images into a single
 %   document you can page through: ONE PAGE PER IMAGE, each page fitted to ITS OWN
 %   image with no cropping and no common paper size - the pages of a run are as
 %   different in shape as the figures the wrappers wrote, and forcing them onto a
@@ -15,14 +15,23 @@
 %   recorded the same way.  The caller logs the outcome; the batch carries on.  An
 %   empty list writes nothing and returns ''.
 %
+%   IT IS CALLED BETWEEN THE STEPS, BY WHOEVER IS RUNNING THEM - a launcher cell
+%   after the step it documents, or the workbench's per-column assembly - and never
+%   by a wrapper.  A wrapper processes one recording at a time; which pages belong
+%   in one document is a question about the whole batch, and asking it in the
+%   middle of the batch is what used to make every step pay for rasterising its own
+%   pages before the next step could start.  (It lived in GUIs/workbench until
+%   2026-07-31, which also made Core/Reporting call into the GUI layer.)
+%
 %   It knows nothing about the workbench - no handles, no settings bag, no step
 %   registry - so it is callable from a launcher or a test as it stands.  Where the
-%   images come from is wbArtifacts' business (the ONE place that knows how a report
-%   image is named); this function is handed paths and asked for a document.
+%   images come from is the caller's business: reportClose hands back the ledger of
+%   what a call wrote, and wbArtifacts re-resolves them from disk for the workbench
+%   (the ONE place that knows how a report image is named).
 %
 % Syntax:
-%    out = wbReportPdf(files, outFile)
-%    out = wbReportPdf(files, outFile, dpi)
+%    out = makeReportPdf(files, outFile)
+%    out = makeReportPdf(files, outFile, dpi)
 %
 % Inputs:
 %    files   - cellstr (or a single char path) of report images, in page order.
@@ -41,18 +50,18 @@
 %                   subset with ok==false), for a one-line log message
 %
 % Example:
-%    out = wbReportPdf({'A_t_K_cm.jpg','B_t_K_cm.jpg'}, 'reports/segmentation.pdf');
+%    out = makeReportPdf({'A_t_K_cm.jpg','B_t_K_cm.jpg'}, 'reports/segmentation.pdf');
 %    fprintf('%d page(s), %d skipped\n', out.pages, numel(out.skipped));
 %
-% See also: wbArtifacts, guiWorkbench, wbExecutor, exportgraphics
+% See also: reportClose, reportSave, wbArtifacts, guiWorkbench, exportgraphics
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
-function out = wbReportPdf(files, outFile, dpi)
+function out = makeReportPdf(files, outFile, dpi)
 
 if nargin<3 || isempty(dpi), dpi = 150; end
 out = struct('path','','pages',0, ...
@@ -61,7 +70,7 @@ out = struct('path','','pages',0, ...
 files = asList(files);
 if isempty(files), return; end
 if nargin<2 || isempty(outFile)
-    error('wbReportPdf:noOutput','An output PDF path is required.');
+    error('makeReportPdf:noOutput','An output PDF path is required.');
 end
 outFile = char(outFile);
 d = fileparts(outFile);

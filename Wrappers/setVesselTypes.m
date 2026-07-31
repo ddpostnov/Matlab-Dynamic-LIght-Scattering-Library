@@ -22,8 +22,7 @@
 %                • prchNSize      grid spacing for parenchyma fill-in
 %     fNames   cell array of *_BFI_d.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
-%     s.cancelFcn()->tf (between files).  s.progressFcn is not used - the step is
-%     interactive.
+%     s.cancelFcn()->tf (between files).
 %
 %   SIDE-EFFECTS
 %       *_BFI_r.mat   RESULTS  – fields mapType, .type, .label, etc.
@@ -386,7 +385,7 @@ for fidx=1:1:numel(fNames)
                     results.dvsMetrics.label(isHit) = rois(loc(isHit))';
                 end
             else
-                reportStage(rep,'No registration ID - assuming an identical segmentation map');
+                % no registration ID: the segmentation map is assumed identical
                 results.sMetrics.type=type;
                 results.sMetrics.label=rois';
                 results.sMetrics.typeConfidence=guess;
@@ -406,10 +405,10 @@ for fidx=1:1:numel(fNames)
         writeVesselTypesReport(rep,s.fName,results);
 
         settings.setVesselTypes=reportSettings(s);
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-        reportSaved(rep,2);
+        reportSaved(rep);
     end
 end
 reportClose(rep);
@@ -1078,9 +1077,8 @@ try
     end
     hold(axMap,'off'); hold(ax,'off')
     title(axMap,sprintf('Vessel types (blue vein / red artery), %d named',nNamed))
-catch ME
-    delete(f);
-    reportWarn(rep,['  vessel types report page not drawn (' ME.message ')']);
+catch
+    delete(f);              % no page, no line: a report is a by-product
     return
 end
 reportSave(rep,f,'vesseltypes',fName);

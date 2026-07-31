@@ -24,8 +24,8 @@
 %                pInterpF, gSizeN, minOverlapMask, minOverlapSelf.
 %     fNames   cell array of *_K_d.mat / *_I_d.mat paths already processed by
 %              runSegmentation (each with matching *_s.mat / *_r.mat siblings).
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUT SIDE-EFFECTS (per file)
 %     <name>_r.mat   results.{dvsMap,dvsMetrics,dvsDiameter,dvsData}
@@ -94,7 +94,6 @@ for fidx=1:1:numel(fNames)
 
     % --- re-derive the labelling transients from the persisted seam (option a) ---
     edgeSize = settings.runSegmentation.edgeSize;
-    reportStage(rep,'Vessel segments');
     [~,~,sLines,cMask,vsMap,dMask,nodes] = getSegmentationLabels(results.cMask,edgeSize,s);
 
     % --- dynamic segmentation (verbatim from the old runSegmentation attmemptDS loop) ---
@@ -128,16 +127,11 @@ for fidx=1:1:numel(fNames)
     dvsMap=zeros(size(cMask),'int32');
 
 
-    % One bar for the whole segment sweep.  Announcing each segment, and again
-    % when it is fitted, put hundreds of lines per file in the log and said less
-    % than a percentage does.
-    reportStage(rep,'Dynamic vessel diameters');
     segIdxs=unique(sLines(sLines(:)>0))';
     nSeg=numel(segIdxs);
     counter=1;
     for segNo=1:nSeg
         lineIdx=segIdxs(segNo);
-        reportProgress(rep,segNo/max(nSeg,1),'Dynamic vessel diameters');
         [y,x]=find(sLines==lineIdx);
         if (max(x)-min(x))>=(max(y)-min(y))
             sLines(d2MY(sub2ind(size(sLines),y,x)))=lineIdx;
@@ -226,8 +220,7 @@ for fidx=1:1:numel(fNames)
                     try
                         dataProfile=nan(numel(xx),sum(sD)*2+1,size(dataROI,3));
                     catch
-                        reportWarn(rep,sprintf('segment %d is too large to fit in memory - skipped',lineIdx));
-                        continue;
+                        continue;               % too large to fit in memory - skipped
                     end
 
                     if (min(yy)-sum(sD))>0 && (max(yy)+sum(sD))<size(dataROI,1)
@@ -235,15 +228,13 @@ for fidx=1:1:numel(fNames)
                             dataProfile(i,:,:)=dataROI(yy(i)-sum(sD):yy(i)+sum(sD),xx(i),:);
                         end
                     else
-                        reportWarn(rep,sprintf('segment %d reaches outside the image - skipped',lineIdx));
-                        continue;
+                        continue;               % reaches outside the image - skipped
                     end
                 else
                     try
                         dataProfile=nan(numel(yy),sum(sD)*2+1,size(dataROI,3));
                     catch
-                        reportWarn(rep,sprintf('segment %d is too large to fit in memory - skipped',lineIdx));
-                        continue;
+                        continue;               % too large to fit in memory - skipped
                     end
                     if (min(xx)-sum(sD))>0 && (max(xx)+sum(sD))<size(dataROI,2)
                         for i=1:1:numel(yy)
@@ -251,8 +242,7 @@ for fidx=1:1:numel(fNames)
                         end
 
                     else
-                        reportWarn(rep,sprintf('segment %d reaches outside the image - skipped',lineIdx));
-                        continue;
+                        continue;               % reaches outside the image - skipped
                     end
                 end
 
@@ -352,9 +342,7 @@ for fidx=1:1:numel(fNames)
                         end
                     end
                     counter=counter+1;
-                else
-                    reportWarn(rep,sprintf('segment %d did not fit well enough - skipped',lineIdx));
-                end
+                end                             % else: did not fit well enough - skipped
             end
         end
     end
@@ -371,14 +359,16 @@ for fidx=1:1:numel(fNames)
     % (overwrites the static one runSegmentation wrote, matching the old attmemptDS
     %  artifact) using the merged cMask (recomputed above) and the persisted results.sMap.
     isK=contains(s.fName,'_K_d.mat');
-    showSegmentsPreview(rep,s.fName,source.data,cMask,results.sMap,isK,dvsMap);
+    fh=reportFigure(rep,'segments');
+    showSegmentsPreview(fh,source.data,cMask,results.sMap,isK,dvsMap);
+    reportSave(rep,fh,'segments',s.fName);
 
     %Save the data
     settings.runDynamicSegmentation=reportSettings(s);
-    reportStage(rep,'Saving');
+    reportWriting(rep);
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
-    reportSaved(rep,2);
+    reportSaved(rep);
      end
 end
 reportClose(rep);

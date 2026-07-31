@@ -6,7 +6,7 @@
 %   delegated to the headless brain (wbStepRegistry, wbDiscoverFiles, wbFileModel,
 %   wbStateEngine, wbPrereqs, wbTypeModel, wbTypeSelection, wbSettingsModel,
 %   wbRefBranch, wbRunRange, wbInvalidate), to wbExecutor / wbModalGuard /
-%   wbArtifacts / wbReportPdf / wbPool, and to wbSession.
+%   wbArtifacts / makeReportPdf / wbPool, and to wbSession.
 %
 %   RUN IS AN EXPANSION, NOT A SELECTION.  Pressing Run turns the per-type
 %   configuration into an ordered list of (file, step) work items - each type's
@@ -29,17 +29,18 @@
 %
 %   A REPORT IS A BY-PRODUCT (spec D9/D10).  With 'Create PDF reports' on, the
 %   images a COLUMN produced across the whole run are appended into ONE PDF - a
-%   page per image, each fitted to its own image (wbReportPdf) - the moment that
+%   page per image, each fitted to its own image (makeReportPdf) - the moment that
 %   column's last entry lands, so a 60-file step is one document to page through
 %   instead of 60 links; a Stop or an error still leaves the columns that finished.
 %   The list tells images and PDFs apart with a kind filter, and hands either to
 %   the desktop exactly the same way.  None of it is part of the run: it cannot
 %   change what a wrapper writes, cannot mark a step in error, and is a window
 %   preference the session does not carry.
-%   THE COLUMN OWNS THE DOCUMENT, NOT THE WRAPPER.  A wrapper run from a launcher
-%   assembles a PDF of its own pages, because there the call IS the step; a column
-%   here spans several batched calls, so wbExecutor switches that off
-%   (s.reportPdf=false) and this is the only assembly.  A second switch,
+%   THE DOCUMENT IS MADE BETWEEN THE STEPS, NEVER INSIDE ONE.  A wrapper writes
+%   its pages and stops there, whoever ran it; a launcher assembles them in a cell
+%   of its own after the step, and here the assembly is per COLUMN because a column
+%   spans several batched calls.  Both hosts call the same Core/Reporting builder.
+%   A second switch,
 %   'Delete the images once the PDF is written', is off by default: every entry in
 %   this list is a path resolved from disk (wbArtifacts), so deleting the images
 %   empties the list of them, and the PDF becomes the only copy of a page that
@@ -148,7 +149,7 @@
 % See also: wbStepRegistry, wbDiscoverFiles, wbTypeModel, wbTypeSelection,
 %           wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
 %           wbRefBranch, wbRunRange, wbExecutor, wbModalGuard, wbArtifacts,
-%           wbReportPdf, wbPool, wbSession, guiExport, guiExplore, guiMyograph
+%           makeReportPdf, wbPool, wbSession, guiExport, guiExplore, guiMyograph
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -190,15 +191,15 @@ app.branchState  = containers.Map('KeyType','char','ValueType','any');   % 'iden
 app.stale        = containers.Map('KeyType','char','ValueType','any');   % session INVALIDATION overlay
 app.runState     = containers.Map('KeyType','char','ValueType','any');   % transient run overlay: 'running'|'done'|'error'
 app.cellMsg      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> error/tooltip text
-app.cellPct      = containers.Map('KeyType','char','ValueType','any');   % 'identity||stepId' -> 0..100 while running
 app.completed    = containers.Map('KeyType','char','ValueType','any');   % 'path||stepId' -> completion record (session)
 app.pRows        = emptyProgressRows();            % TOP table: ONE PER FILE of the working set
 app.pRowOf       = containers.Map('KeyType','char','ValueType','double');% path -> raw-table row
 app.dRows        = emptyProgressRows();            % BOTTOM table: one per (recording, PRODUCT)
 app.dRowOf       = containers.Map('KeyType','char','ValueType','double');% 'identity||branch' -> row
 app.pSel         = struct('kind','raw','idx',0);   % the monitor row whose detail is shown
-app.rangeFrom    = wbRunRange('lastValid');        % Process tab: From (sentinel = resume)
+app.rangeFrom    = wbRunRange('lastValid');        % Process tab: From (sentinel = the frontier)
 app.rangeTo      = '';                             % Process tab: To ('' = the last column)
+app.reprocess    = false;                          % Process tab: re-run finished work (D6)
 app.results      = emptyResults();                 % report artifacts this session produced
 app.resultFilter = 'all';                          % result list: 'all' | 'images' | 'pdfs'
 app.pdfReports   = false;                          % Create PDF reports (UI ONLY - spec D9)
@@ -260,6 +261,8 @@ api = struct( ...
     'fileTable',   @() fileTableData(getApp(fig)), ...
     'setLabel',    @(p,axis,v) setLabel(fig,p,axis,v), ...
     'labelValues', @(axis) labelValues(getApp(fig),axis), ...
+    'renameRecording',@(p,stem) renameRecording(fig,p,stem), ...
+    'renamePlan',  @(p,stem) wbRename('plan',wbFileModel(p),stem), ...
     'setModality', @(p,v) setModality(fig,p,v), ...
     'quickAssign', @(p,field,v) quickAssign(fig,p,field,v), ...
     'selectRows',  @(p) selectRows(fig,p), ...
@@ -327,6 +330,8 @@ api = struct( ...
     'runColumns',  @() runRangeColumns(fig), ...
     'frontier',    @() runRangeFrontier(fig), ...
     'setRange',    @(f,t) setRunRange(fig,f,t), ...
+    'setReprocess',@(tf) setReprocess(fig,tf), ...
+    'reprocess',   @() getApp(fig).reprocess, ...
     'range',       @() runRangeValue(fig), ...
     'runOrderIn',  @(f,t) runOrderIn(fig,f,t), ...
     'lastValid',   @() wbRunRange('lastValid'), ...
@@ -445,7 +450,8 @@ lp = uigridlayout(gl,[8 1], ...
 
 uilabel(lp,'Text',['Collect the recordings you want to process - scan a folder, or add files ' ...
     'by hand.  Then sort them, delete what you do not need, label every one, and mark ' ...
-    'one reference recording for each animal.'],'FontWeight','bold','WordWrap','on');
+    'one reference recording for each animal.  Typing over a file name renames that ' ...
+    'recording on your disk.'],'FontWeight','bold','WordWrap','on');
 
 % -- source row: root + glob + the loaders --
 sp = uigridlayout(lp,[1 9], ...
@@ -591,9 +597,12 @@ function keys = fileTableKeys()
 keys = {'reference','file','animal','type','index','group','filetype','modality','stage'};
 end
 function e = fileTableEditable()
-%fileTableEditable  What may be typed in place.  The name, its extension, the
-%   parsed stage and the modality are properties OF THE FILE, not labels.
-e = [true false true true true true false false false];
+%fileTableEditable  What may be typed in place.  The extension, the parsed stage and
+%   the modality are properties OF THE FILE, not labels, and are read-only.
+%   THE NAME IS EDITABLE AND MEANS SOMETHING ELSE ENTIRELY: typing over it renames
+%   the RECORDING on disk - every file named after it moves together - which is why
+%   it is the one edit that asks first (renameRecording).
+e = [true true true true true true false false false];
 end
 function w = fileTableWidths()
 %fileTableWidths  'reference' is just wide enough for its own header; the rest
@@ -658,9 +667,10 @@ t = sprintf(['Finds each animal''s REFERENCE RECORDING - the one every other rec
     'that animal is aligned to, whatever its type or group.\n' ...
     '   1BP_c_BFI_d\\.mat  the animal''s first pulsatile recording\n' ...
     '   _ref_             a name you mark yourself\n' ...
-    'This is applied when you press Scan.  You can always change it afterwards by\n' ...
-    'ticking the reference box in the table - your own choice wins.  An animal may\n' ...
-    'have no reference at all; steps that need one will say so.']);
+    'It takes effect as soon as you type it, on the files already listed - there is\n' ...
+    'no need to scan again.  You can always change it afterwards by ticking the\n' ...
+    'reference box in the table - your own choice wins.  An animal may have no\n' ...
+    'reference at all; steps that need one will say so.']);
 end
 
 %% ===================== CONSTRUCTOR tab ============================== %%
@@ -858,6 +868,7 @@ if ~tf
 end
 for i = 1:numel(lines), wbLog(fig,lines{i}); end
 renderConstructor(fig);
+recomputeBase(fig);       % the configuration is an INPUT to the states (see statesOf)
 renderProgress(fig);      % D7: the product row appears with its producer, not with its file
 autosaveSession(fig);
 end
@@ -903,6 +914,7 @@ end
 setApp(fig,app);
 for i = 1:numel(lines), wbLog(fig,lines{i}); end
 renderConstructor(fig);
+recomputeBase(fig);       % the configuration is an INPUT to the states (see statesOf)
 renderProgress(fig);      % what a row is queued for changed; so did the run columns
 autosaveSession(fig);
 end
@@ -1150,6 +1162,7 @@ setApp(fig,app);
 wbLog(fig,sprintf('constructor: animal step %s %s', stepId, ternary(logical(tf),'on','off')));
 if tf, autoTickPrereqs(fig,stepId); end
 renderConstructor(fig);
+recomputeBase(fig);       % the configuration is an INPUT to the states (see statesOf)
 renderProgress(fig);      % an animal step is a monitor column and a run column too
 autosaveSession(fig);
 end
@@ -1335,13 +1348,8 @@ step = stepById(app.reg,p.stepId);
 if isempty(step) || isempty(wbPrereqs('all',step)), return; end
 ty = typeOfIdentity(app,p.refIdentity);
 if isempty(ty), return; end
-sel = animalStepsOn(app);
-brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
-for b = 1:numel(brs)
-    sel = [sel, wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b}), ...
-                wbTypeSelection('inherited', app.typeSel, app.reg, ty, brs{b})]; %#ok<AGROW>
-end
-tf  = wbPrereqs('met', step, unique(sel,'stable'));
+sel = plannedStepIds(app, ty);
+tf  = wbPrereqs('met', step, sel);
 if tf && strcmp(p.status,'fallback')
     % the wanted branch does not exist yet: only its raw producer can create it
     tf = any(strcmp(wbTypeSelection('producer', app.reg, step.refBranch), sel));
@@ -1357,6 +1365,33 @@ end
 function ids = animalStepsOn(app)
 ids = wbTypeSelection('animalSteps', app.reg);
 ids = ids(cellfun(@(id) isKey(app.animalSel,id), ids));
+end
+
+function ids = plannedStepIds(app, type, branches)
+%plannedStepIds  WHAT THIS RUN WILL PRODUCE, for one recording type: the per-animal
+%   steps that are on, plus - for each (type,branch) row - the steps ticked on that
+%   row and the ones it inherits from its anchor, in registry order.
+%
+%   ONE DEFINITION, because three different questions are asked of it and they may
+%   never disagree: the Constructor's "is that missing file about to be made?"
+%   (constructorWarnings > willBeProduced), the monitor's "what is queued for this
+%   row?" (plannedStepsFor), and the state engine's look-ahead - a step whose
+%   producer runs earlier in the same sequence has its input by the time it is
+%   reached, and must not be reported as having none (statesOf).
+%
+%   'branches' narrows it to particular rows and may legitimately be EMPTY (a
+%   monitor row whose branch its type does not run); omit the argument entirely for
+%   the whole type.
+ids = animalStepsOn(app);
+if isempty(type), ids = orderIds(app.reg, ids); return; end
+if nargin<3
+    branches = wbTypeSelection('rows', app.typeSel, app.reg, char(type));
+end
+for b = 1:numel(branches)
+    ids = [ids, wbTypeSelection('steps',     app.typeSel, app.reg, type, branches{b}), ...
+                wbTypeSelection('inherited', app.typeSel, app.reg, type, branches{b})]; %#ok<AGROW>
+end
+ids = orderIds(app.reg, ids);
 end
 
 %% ---- Constructor: settings per (step, type) ------------------------ %%
@@ -1468,8 +1503,8 @@ if ismember(field,step.sharedKeys)
     seed = field;                      % shared: every step of THIS type that reads it
 else
     app.sm = wbSettingsModel('setTypeStep', app.sm, type, stepId, field, value);
-    seed = stepId;                     % STEP-ID keyed, never field-keyed: 'deleteOriginal'
-end                                    % on BFI must not disturb splitRegions
+    seed = stepId;                     % STEP-ID keyed, never field-keyed: 'method'
+end                                    % on BFI must not disturb the internal cycle
 setApp(fig,app);
 recomputeBase(fig);                    % new fingerprint for this type's files
 applyInvalidation(fig,seed,type);      % forward cascade, restricted to this type
@@ -1700,8 +1735,8 @@ gl = uigridlayout(t,[1 2],'ColumnWidth',{'2.6x','1x'},'Padding',[6 6 6 6],'Colum
 % -- LEFT: toolbar + (recordings | log) + the products table + the selected row --
 left = uigridlayout(gl,[4 1], ...
     'RowHeight',{'fit','1x','1.5x','fit'},'RowSpacing',4);
-tb = uigridlayout(left,[1 12], ...
-    'ColumnWidth',{'fit',130,'fit',130,'fit','fit','fit','1x','fit','fit','fit','fit'}, ...
+tb = uigridlayout(left,[1 13], ...
+    'ColumnWidth',{'fit',130,'fit',130,'fit','fit','fit','fit','1x','fit','fit','fit','fit'}, ...
     'Padding',[0 0 0 0],'ColumnSpacing',4);
 uilabel(tb,'Text','From','FontWeight','bold','Tooltip',tipRangeFrom());
 c.fromDrop = uidropdown(tb,'Items',{noRangeItem()},'ItemsData',{''}, ...
@@ -1716,6 +1751,8 @@ c.runBtn = uibutton(tb,'Text','Run','ButtonPushedFcn',@(~,~)runChecked(fig), ...
     'Tooltip','Run everything from the From step to the To step, in the right order.');
 c.stopBtn = uibutton(tb,'Text','Stop','Enable','off','ButtonPushedFcn',@(~,~)cancelRun(fig), ...
     'BackgroundColor',[1 0.86 0.86],'Tooltip','Stop once the step now running has finished.');
+c.reproCheck = uicheckbox(tb,'Text','Re-process finished files','Value',false, ...
+    'ValueChangedFcn',@(s,~)onReprocessEdit(fig,s.Value),'Tooltip',tipReprocess());
 c.progLabel = uilabel(tb,'Text','Ready.','FontAngle','italic');
 c.presetDrop = uidropdown(tb,'Items',{'(launcher defaults)'},'Value','(launcher defaults)', ...
     'ValueChangedFcn',@(s,~)onPresetPick(fig,s.Value), ...
@@ -1778,9 +1815,10 @@ function t = progressLegend()
 %   PICTURE, not a control: what runs is decided on the Constructor tab.
 t = ['This table shows you what is happening; you cannot change anything in it.  ' ...
      'Each cell reads ' char(183) ' when your setup does not run that step, queued when ' ...
-     'it is waiting its turn, running NN% while it works, done when the result is ' ...
-     'saved, error when it failed, and skipped when it was asked for but its input ' ...
-     'could not be made.'];
+     'it is waiting its turn - which includes waiting for a file an earlier step of ' ...
+     'the same run will make - running while it works, done when the result is ' ...
+     'saved, error when it failed, and skipped when it was asked for but nothing in ' ...
+     'your setup will make what it needs.'];
 end
 
 function t = derivedLegend()
@@ -1798,15 +1836,20 @@ s = '(nothing set up yet)';
 end
 function t = tipRangeFrom()
 t = ['Where the run STARTS.  "Last valid" carries on where you left off: it begins at ' ...
-     'the first step that is not finished and leaves out whatever is already saved.  ' ...
-     'Choosing a step by name instead runs it again, finished or not, together with ' ...
-     'everything up to To.  That is how you redo segmentation with new parameters ' ...
-     'without changing anything you have set up, and how you re-open the vessel-type ' ...
-     'painter on an animal you have already done.'];
+     'the first step that is not finished.  Choosing a step by name starts there ' ...
+     'instead, however much is done before it.  Whether work that is already ' ...
+     'finished gets done again is the tick beside Run, not this.'];
 end
 function t = tipRangeTo()
 t = ['Where the run STOPS.  That step is included.  Only steps at or after From are ' ...
      'offered, and this moves up with From if you push From past it.'];
+end
+function t = tipReprocess()
+t = ['Off, a run leaves alone whatever is already finished and only does what is ' ...
+     'still missing.  On, every step between From and To runs again on every ' ...
+     'recording, finished or not, and overwrites what is there.  That is how you ' ...
+     'redo segmentation with new parameters, and how you re-open the vessel-type ' ...
+     'painter on an animal you have already done.'];
 end
 
 function s = emptyResultItem()
@@ -1916,13 +1959,33 @@ function onPatternEdit(fig,axis,value)
 setPattern(fig,axis,value);
 end
 function setPattern(fig,axis,value)
+%setPattern  Store one regexp and re-derive what it decides.  THE REFERENCE RULE IS
+%   LIVE, exactly like the four label axes: it used to be applied only by Scan, so
+%   typing it afterwards changed nothing at all and the reference ticks never moved.
+%   It is now answered from the working set that is already loaded (autoRefsFor), so
+%   the rule can be tuned and re-tuned without touching the disk.  A pattern that is
+%   not a valid regexp must not throw out of an edit box: it is reported in the
+%   curation status line and the previous references stand.
 app = getApp(fig);
 if ~isfield(app.patterns,axis), return; end
 app.patterns.(axis) = strtrim(char(value));
+if strcmp(axis,'ref')
+    try
+        app.autoRef = autoRefsFor(app, {app.files.path});
+    catch ME
+        setApp(fig,app); syncFilesControls(fig);
+        setCurStatus(fig,['That reference pattern cannot be used yet: ' oneLine(ME.message)]);
+        return
+    end
+    setCurStatus(fig,'');
+end
 setApp(fig,app);
 syncFilesControls(fig);
-if strcmp(axis,'ref'), return; end                  % the reference rule applies on Scan
 rebuildWorkingSet(fig, {app.files.path}, true);
+end
+function s = oneLine(msg)
+%oneLine  A multi-line MATLAB error message folded onto one status line.
+s = strtrim(regexprep(char(msg),'\s+',' '));
 end
 function setSource(fig,root,glob)
 app = getApp(fig);
@@ -1947,8 +2010,10 @@ end
 function n = doScan(fig)
 %doScan  Recurse the root for the glob and REPLACE the working set.
 %   With a Reference regexp this goes through getFileNamesList's reference mode,
-%   which forces the matching file into column 1 - that file's recording IDENTITY
-%   becomes the animal's default reference (a hand-pinned one still wins).
+%   which forces the matching file into column 1 of the grid.  Which recording that
+%   makes the animal's default reference is decided by autoRefsFor, the same helper
+%   the edit box uses - the rule has ONE definition, and a scan is not a special
+%   case of it (a hand-pinned reference still wins over both).
 app = getApp(fig);
 p = app.patterns;
 if isempty(p.ref)
@@ -1956,9 +2021,10 @@ if isempty(p.ref)
 else
     disc = wbDiscoverFiles('structured', app.root, app.glob, p.animal, p.ref, p.type, p.expGroup);
 end
-app.autoRef = autoRefsFrom(disc);
+paths = gridPaths(disc);
+app.autoRef = autoRefsFor(app, paths);
 setApp(fig,app);
-n = rebuildWorkingSet(fig, gridPaths(disc), false);
+n = rebuildWorkingSet(fig, paths, false);
 end
 function uiAddFiles(fig)
 app = getApp(fig);
@@ -2006,10 +2072,11 @@ if isfield(disc,'patterns')
     f = intersect(fieldnames(app.patterns), fieldnames(disc.patterns));
     for i = 1:numel(f), app.patterns.(f{i}) = disc.patterns.(f{i}); end
 end
-app.autoRef      = autoRefsFrom(disc);
+paths = gridPaths(disc);
+app.autoRef      = autoRefsFor(app, paths);
 app.animalRefMan = containers.Map('KeyType','char','ValueType','char');
 setApp(fig,app); syncFilesControls(fig);
-rebuildWorkingSet(fig, gridPaths(disc), false);
+rebuildWorkingSet(fig, paths, false);
 end
 function d = defaultDir(v)
 if ~isempty(v) && isfolder(v), d = v; else, d = pwd; end
@@ -2023,21 +2090,37 @@ g = disc.fNames.';                                   % transpose -> row-major re
 paths = reshape(g(~cellfun(@isempty,g)),1,[]);
 end
 
-function m = autoRefsFrom(disc)
-%autoRefsFrom  Animal -> reference recording IDENTITY, taken from column 1 of a
-%   reference-mode grid (that IS getFileNamesList's answer to the ref regexp).
-%   getFileNamesList puts SOMETHING in column 1 for every animal, matched or not,
-%   so the match is re-checked here: an animal whose files match nothing simply
-%   has no reference, which is legal.
+function m = autoRefsFor(app, paths)
+%autoRefsFor  THE reference rule: animal -> reference recording IDENTITY, answered
+%   from a path list and the CURRENT Reference regexp.  No disk scan, and no
+%   dependence on which loader produced the paths - that dependence is exactly what
+%   made the rule inert unless a Scan had just run.
+%
+%   The regexp is matched against the bare file NAME WITH ITS EXTENSION, which is
+%   what getFileNamesList matches in its own reference mode, so a pattern written
+%   for a scan keeps meaning the same thing when it is retyped afterwards.  Where
+%   several files of an animal match, the FIRST in working-set order wins, and what
+%   is stored is that file's recording IDENTITY - never a branch file, since each
+%   step resolves the branch it needs at run time.  An empty pattern is no rule at
+%   all: every automatic reference goes, and the hand-pinned ones stand.
+%
+%   MATLAB's regexp does not reject a malformed pattern - it simply matches nothing
+%   - so a half-typed rule costs the automatic references and no more.  It can still
+%   throw (wbTypeModel converts a pattern its own axes choke on into an error), and
+%   the caller is expected to catch that rather than let it out of an edit box.
 m = containers.Map('KeyType','char','ValueType','char');
-if ~isfield(disc,'referenceMode') || ~disc.referenceMode, return; end
-rx = '';
-if isfield(disc,'patterns') && isfield(disc.patterns,'ref'), rx = disc.patterns.ref; end
-for r = 1:size(disc.models,1)
-    mdl = disc.models{r,1};
-    if isempty(mdl), continue; end
-    if ~isempty(rx) && isempty(regexp(mdl.name, rx, 'once')), continue; end
-    m(mdl.animal) = mdl.identity;                   % identity: never a branch flag
+rx = strtrim(char(app.patterns.ref));
+paths = cleanPathList(paths);
+if isempty(rx) || isempty(paths), return; end
+
+labels = wbTypeModel('applyOverrides', ...
+    wbTypeModel('derive', paths, app.patterns), app.overrides);
+for i = 1:numel(paths)
+    mdl = wbFileModel(paths{i});
+    if isempty(regexp(mdl.name, rx, 'once')), continue; end
+    a = labels.animal{i};
+    if isKey(m,a), continue; end                    % first match of the animal wins
+    m(a) = mdl.identity;                            % identity: never a branch flag
 end
 end
 
@@ -2272,13 +2355,18 @@ end
 
 function onFileTableEdit(fig,src,~)
 %onFileTableEdit  Reconcile the whole table after any cell edit.
-%   Reading the FULL Data, keyed by the non-editable 'file' column, instead of
-%   the edited index keeps this correct whatever the table's sort order is - a
-%   sorted uitable renumbers what the user sees, not its Data.  The key works
-%   because file names are unique across a scanned tree; a name that is NOT
-%   unique is reported by fileProblems and its rows are left alone here.
+%   Reading the FULL Data, keyed by the 'file' + 'file type' columns, instead of the
+%   edited index keeps this correct whatever the table's sort order is - a sorted
+%   uitable renumbers what the user sees, not its Data.  The key works because file
+%   names are unique across a scanned tree; a name that is NOT unique is reported by
+%   fileProblems and its rows are left alone here.
+%
+%   A NAME EDIT IS HANDLED FIRST AND ENDS THE CALLBACK, because it moved the very
+%   key the reconciliation below reads by: every other row would still match, and
+%   the edited one would silently look like an unknown file.
 D = src.Data;
 if isempty(D), return; end
+if handleNameEdit(fig, D), return; end
 col = columnIndex();
 newRef = ''; unRef = {}; refused = {};
 for i = 1:size(D,1)
@@ -2339,6 +2427,265 @@ for i = 1:numel(names), c.(names{i}) = i; end
 end
 function s = charOf(v)
 if isempty(v), s = ''; elseif ischar(v), s = v; else, s = char(string(v)); end
+end
+
+%% ---- renaming a recording (author decision D4) --------------------- %%
+function tf = handleNameEdit(fig, D)
+%handleNameEdit  Spot a rename typed into the 'file' column and carry it out.
+%   FOUND BY VALUE, NEVER BY ROW INDEX: the table is sortable, so the edited row's
+%   position says nothing about which file it is.  What a name edit does say is that
+%   the table's set of names and the working set's differ in exactly one place - one
+%   name has gone and one has appeared - and that pair IS the rename.  Anything else
+%   (both sets equal) is a label edit and is left to the reconciliation loop.
+%   Returns true when the edit was a name edit, refusals included, so the caller
+%   stops rather than reconciling rows against a key that has just moved.
+tf = false;
+app = getApp(fig);
+if isempty(app.files), return; end
+col = columnIndex();
+
+shown = cell(1,size(D,1));
+for i = 1:size(D,1)
+    shown{i} = [charOf(D{i,col.file}) charOf(D{i,col.filetype})];
+end
+gone = setdiff({app.files.name}, shown);
+came = setdiff(shown, {app.files.name});
+if isempty(gone) && isempty(came), return; end
+tf = true;
+
+if isscalar(gone) && isempty(came)
+    setCurStatus(fig,'That name is already used by another file in the list - nothing was renamed.');
+    refreshFileTable(fig); return
+end
+if ~isscalar(gone) || ~isscalar(came)
+    setCurStatus(fig,'The file names could not be matched up - nothing was renamed.');
+    refreshFileTable(fig); return
+end
+
+k = find(strcmp({app.files.name}, gone{1}), 1);
+if isempty(k), refreshFileTable(fig); return; end
+newBare = '';
+for i = 1:size(D,1)
+    if strcmp([charOf(D{i,col.file}) charOf(D{i,col.filetype})], came{1})
+        newBare = charOf(D{i,col.file}); break
+    end
+end
+renameFromTable(fig, app.files(k).path, newBare);
+end
+
+function renameFromTable(fig, oldPath, newBare)
+%renameFromTable  Reduce an edited table name to a STEM, then rename the recording.
+%   The 'file' column shows the whole bare name - the crop prefix, the stem, the
+%   stage/product flags and the role, all at once - but only the stem is the
+%   recording's name.  The prefix and the tail belong to the naming GRAMMAR
+%   (wbFileModel), and a rename that changed them would rename one product out of
+%   its own set of siblings, so both are required to survive the edit.
+m = wbFileModel(oldPath);
+[~, oldBare] = fileparts(oldPath);
+pre  = m.roiPrefix;
+tail = oldBare(numel(pre)+numel(m.stem)+1 : end);       % '_t_K_d', '' for a raw file
+
+if ~strncmp(newBare, pre, numel(pre))
+    setCurStatus(fig, sprintf(['Keep the "%s" at the front - it is part of the ' ...
+        'recording name.  Nothing was renamed.'], pre));
+    refreshFileTable(fig); return
+end
+if ~isempty(tail) && ~endsWith(newBare, tail)
+    setCurStatus(fig, sprintf(['Keep the "%s" at the end - you are renaming the ' ...
+        'recording, not one of its result files.  Nothing was renamed.'], tail));
+    refreshFileTable(fig); return
+end
+newStem = newBare(numel(pre)+1 : numel(newBare)-numel(tail));
+renameRecording(fig, oldPath, newStem);
+end
+
+function ok = renameRecording(fig, path, newStem)
+%renameRecording  Rename a WHOLE recording on disk (author decision D4): every file
+%   named after it moves together - the _d/_r/_s set of every branch, the report
+%   images, the raw recording and any workbook written beside them.  Renaming one
+%   member is not on offer: every wrapper finds its siblings by name, so a single
+%   file renamed out of the set breaks the next step that looks for them.
+%
+%   The file work is wbRename's (pure, headless, testable); what lives here is the
+%   half only the window knows - the refusals, the confirmation that lists every
+%   file before any of them moves, and moving the session state onto the new names.
+ok = false;
+app = getApp(fig);
+if isfield(app,'running') && app.running
+    setCurStatus(fig,'A run is in progress - stop it before renaming a recording.');
+    refreshFileTable(fig); return
+end
+k = find(strcmp({app.files.path}, char(path)), 1);
+if isempty(k)
+    setCurStatus(fig,'That file is not in the list - nothing was renamed.');
+    refreshFileTable(fig); return
+end
+model   = app.files(k).model;
+newStem = strtrim(char(newStem));
+if strcmp(newStem, model.stem), refreshFileTable(fig); return; end   % nothing typed
+
+list = wbRename('plan', model, newStem);
+why  = renameProblem(app, model, newStem, list);
+if isempty(why)
+    [fine, whyNot] = wbRename('check', list);
+    if ~fine, why = whyNot; end
+end
+if ~isempty(why)
+    setCurStatus(fig,['Nothing was renamed - ' why]);
+    refreshFileTable(fig); return
+end
+if ~confirmRename(fig, model, newStem, list)
+    setCurStatus(fig,'Rename cancelled - nothing was moved.');
+    refreshFileTable(fig); return
+end
+
+out = wbRename('apply', list);
+if ~out.ok
+    setCurStatus(fig,['The rename failed - ' out.why]);
+    wbLog(fig,['rename failed: ' out.why ternary(out.rolledBack, ...
+        '  (the files that had already moved were put back)', ...
+        '  (SOME FILES MAY HAVE MOVED - check the folder)')]);
+    refreshFileTable(fig); return
+end
+adoptRename(fig, list, model, newStem);
+setCurStatus(fig, sprintf('Renamed %d %s to %s.', numel(list), ...
+    plural(numel(list),'file'), [model.roiPrefix newStem]));
+wbLog(fig, sprintf('renamed %s -> %s (%d file(s))', [model.roiPrefix model.stem], ...
+    [model.roiPrefix newStem], numel(list)));
+ok = true;
+end
+
+function why = renameProblem(app, model, newStem, list)
+%renameProblem  Why the WORKING SET cannot accept this rename ('' when it can).
+%   Only what the LIST knows is judged here.  Whether a name is usable at all, and
+%   whether anything on disk is in the way, is wbRename's call on the names it
+%   composes, so the character rule has one definition and lives with the code that
+%   writes to disk.
+%
+%   THE DUPLICATE-NAME RULE IS ENFORCED BEFORE ANYTHING MOVES.  fileProblems already
+%   refuses to let a set with two identically named files go any further - the
+%   workbench and the pipeline both identify a recording by name - but by the time
+%   it spoke the files would already have been renamed.  So a rename that would
+%   create the clash is simply not offered.
+why = '';
+newStem = char(newStem);
+if isempty(newStem), why = 'type a name for the recording.'; return; end
+newId  = fullfile(model.folder,[model.roiPrefix newStem]);
+lands  = {list.newName};
+for i = 1:numel(app.files)
+    f = app.files(i);
+    if strcmp(f.model.identity, model.identity), continue; end   % the recording itself
+    if strcmpi(f.model.identity, newId)
+        why = sprintf('"%s" is already another recording in the list.', ...
+            [model.roiPrefix newStem]); return
+    end
+    if any(strcmpi(f.name, lands))
+        why = sprintf(['another file in the list is already called "%s", and no two ' ...
+            'may share a name.'], f.name); return
+    end
+end
+end
+
+function tf = confirmRename(fig, model, newStem, list)
+%confirmRename  Show EVERY file that will move, before any of them does (D4).  A
+%   headless window (the tests, an API caller) has nobody to ask and proceeds.
+tf = true;
+if ~isvalid(fig) || ~strcmp(fig.Visible,'on'), return; end
+lines = cell(1,numel(list));
+for i = 1:numel(list)
+    lines{i} = ['    ' list(i).oldName '   ->   ' list(i).newName];
+end
+msg = sprintf(['Rename the recording %s to %s?\n\n%d %s move together:\n\n%s\n\n' ...
+    'A recording is renamed as a whole - everything computed from it, and its report ' ...
+    'images, move with it, because the processing steps find them by name.'], ...
+    [model.roiPrefix model.stem], [model.roiPrefix newStem], ...
+    numel(list), plural(numel(list),'file'), strjoin(lines,newline));
+sel = uiconfirm(fig,msg,'Rename recording','Options',{'Rename','Cancel'}, ...
+    'DefaultOption',2,'CancelOption',2,'Icon','question');
+tf = strcmp(sel,'Rename');
+end
+
+function adoptRename(fig, list, model, newStem)
+%adoptRename  Move every piece of state that is keyed by a PATH or by a recording
+%   IDENTITY onto the new names, then rebuild the working set from them.
+%
+%   THE POINT OF DOING IT IN ONE PLACE.  Nine containers are keyed one of those two
+%   ways, and a rename that missed one would leave a label override, a completion
+%   record or a per-animal reference pointing at a file that no longer exists - a
+%   loss that would only surface on the next run, or after the next session load.
+%   So there is one dictionary per kind of key and one two-line helper (remapMap),
+%   and every container is routed through it rather than getting a loop of its own.
+app = getApp(fig);
+pMap = containers.Map('KeyType','char','ValueType','char');
+for i = 1:numel(list), pMap(list(i).old) = list(i).new; end
+iMap = containers.Map('KeyType','char','ValueType','char');
+iMap(model.identity) = fullfile(model.folder,[model.roiPrefix newStem]);
+
+% ---- keyed by FILE PATH -----------------------------------------------------
+ax = fieldnames(app.overrides);
+for i = 1:numel(ax)
+    app.overrides.(ax{i}) = remapMap(app.overrides.(ax{i}), pMap, 'key');
+end
+app.modalityOvr = remapMap(app.modalityOvr, pMap, 'key');
+app.completed   = remapMap(app.completed,   pMap, 'head');   % 'path||stepId'
+
+% ---- keyed by recording IDENTITY -------------------------------------------
+app.stale            = remapMap(app.stale,            iMap, 'head');  % 'identity||stepId'
+app.runState         = remapMap(app.runState,         iMap, 'head');
+app.cellMsg          = remapMap(app.cellMsg,          iMap, 'head');
+app.sm.fileOverrides = remapMap(app.sm.fileOverrides, iMap, 'head');  % settings model
+% .base / .fileState / .branchState are re-derived from disk by recomputeBase a few
+% lines below; they are moved anyway so the app struct is never briefly inconsistent
+app.base        = remapMap(app.base,        iMap, 'key');
+app.fileState   = remapMap(app.fileState,   pMap, 'key');
+app.branchState = remapMap(app.branchState, iMap, 'head');   % 'identity||branch'
+
+% ---- the per-animal references hold an identity as their VALUE --------------
+app.animalRef    = remapMap(app.animalRef,    iMap, 'value');
+app.autoRef      = remapMap(app.autoRef,      iMap, 'value');
+app.animalRefMan = remapMap(app.animalRefMan, iMap, 'value');
+
+% ---- the report links this session collected point at files that moved ------
+for i = 1:numel(app.results)
+    app.results(i).path = remapKey(app.results(i).path, pMap);
+end
+
+paths = cellfun(@(p) remapKey(p,pMap), {app.files.path}, 'UniformOutput', false);
+setApp(fig,app);
+rebuildWorkingSet(fig, paths, true);   % relabels, re-refs, recomputes, repaints, autosaves
+end
+
+function m = remapMap(m, dict, mode)
+%remapMap  Move one containers.Map onto renamed keys or values.  THE single place a
+%   rename touches keyed state:
+%     'key'   the whole key is a path or an identity;
+%     'head'  the key is '<path-or-identity>||<something>' and only the head moves;
+%     'value' the key is something else and the VALUE is an identity.
+if ~isa(m,'containers.Map') || m.Count==0 || dict.Count==0, return; end
+k = keys(m); v = values(m);
+out = containers.Map('KeyType','char','ValueType',m.ValueType);
+for i = 1:numel(k)
+    key = k{i}; val = v{i};
+    switch mode
+        case 'key',   key = remapKey(key, dict);
+        case 'head',  key = remapHead(key, dict);
+        case 'value', val = remapKey(val, dict);
+    end
+    out(key) = val;
+end
+m = out;
+end
+function s = remapKey(s, dict)
+%remapKey  One path or identity, moved when the rename touched it.
+s = char(s);
+if isKey(dict,s), s = dict(s); end
+end
+function s = remapHead(s, dict)
+%remapHead  A composite '<path-or-identity>||<rest>' key - only its head can move.
+s = char(s);
+j = strfind(s,'||');
+if isempty(j), s = remapKey(s,dict); return; end
+s = [remapKey(s(1:j(1)-1),dict) s(j(1):end)];
 end
 
 function uiAssignLabel(fig)
@@ -2722,6 +3069,11 @@ function recomputeBase(fig)
 %                                   every product it would touch (D8).
 %   All three come from the same wbStateEngine call shape; only the model handed
 %   to it differs, which is exactly where the per-file rule lives.
+%
+%   IT IS RE-RUN WHEN THE CONFIGURATION CHANGES TOO, not only when the disk does:
+%   since the look-ahead landed (statesOf), what a type is TICKED for is one of the
+%   inputs, so a Constructor tick makes these maps stale exactly as a settings edit
+%   does - and both now call this.
 app = getApp(fig);
 app.base        = containers.Map('KeyType','char','ValueType','any');
 app.fileState   = containers.Map('KeyType','char','ValueType','any');
@@ -2749,9 +3101,18 @@ end
 
 function bs = statesOf(app, model, type)
 %statesOf  wbStateEngine's answer for one model, folded into a stepId->state struct.
+%
+%   THE DISK IS NOT THE ONLY SOURCE (author, 2026-07-31).  A step is also satisfied
+%   when the step that will produce its input is selected to run in this sequence -
+%   the run order is step-major, so the producer is genuinely there by the time the
+%   consumer is reached.  What that configuration will produce is plannedStepIds,
+%   the same answer the Constructor and the monitor read; wbStateEngine folds it
+%   into its prerequisite test and reports such a cell as READY (never done), which
+%   is why only .state is kept here and the distinction lives in .reason.
 if nargin<3, type = modelType(model); end
 cs = curSettingsFor(app, model, type);
-st = wbStateEngine(model, app.reg, cs);
+opts = struct('plannedIds', {plannedStepIds(app, type)});
+st = wbStateEngine(model, app.reg, cs, opts);
 bs = struct();
 for k = 1:numel(st), bs.(st(k).id) = st(k).state; end
 end
@@ -2791,11 +3152,15 @@ function s = resolveCellState(app,identity,stepId)
 %   invalidation overlay (app.stale).
 %
 %   THERE IS NO 'checked' STATE ANY MORE (Phase 6).  Selection is a property of the
-%   recording TYPE and lives in the Constructor; the per-cell queue that used to
-%   promote 'ready' to 'checked' - and the look-ahead that promoted an
-%   'unavailable' cell whose prerequisites were merely QUEUED - went with it.
-%   Readiness is now exactly what wbStateEngine says it is, which already counts a
-%   prerequisite whose gating field is on disk, so nothing here re-derives it.
+%   recording TYPE and lives in the Constructor, and the per-cell queue that used to
+%   promote 'ready' to 'checked' went with it.
+%   THE LOOK-AHEAD IS BACK, BUT ONE LAYER DOWN (2026-07-31).  Phase 6 also dropped
+%   the projection that promoted a cell whose prerequisites were merely queued, and
+%   that turned out to be a step too far: it made the workbench say a file was
+%   missing while the same run was about to write it.  It now lives inside
+%   wbStateEngine, which is handed the configuration's planned step ids (statesOf)
+%   and answers 'ready' with a reason - so readiness is still exactly what
+%   wbStateEngine says it is, and nothing here re-derives it.
 key = cellKey(identity,stepId);
 % transient run overlay (running/done/error) is authoritative during & after a run
 if isfield(app,'runState') && isKey(app.runState,key)
@@ -2972,19 +3337,14 @@ function ids = plannedStepsFor(app, r)
 %   product file in the working set), in which case it stands for its own pipeline.
 %   The per-animal steps are added for the animal, not the row: they span every
 %   type by definition.
-ids = animalStepsOn(app);
-if isempty(r.type), ids = orderIds(app.reg, ids); return; end
+if isempty(r.type), ids = plannedStepIds(app, ''); return; end
 brs = wbTypeSelection('rows', app.typeSel, app.reg, r.type);
 if strcmp(r.kind,'derived')
     brs = brs(strcmp(brs, r.branch));                  % the row IS a branch
 elseif ~isempty(r.branch) && any(strcmp(r.branch, brs))
     brs = {r.branch};
 end
-for b = 1:numel(brs)
-    ids = [ids, wbTypeSelection('steps',     app.typeSel, app.reg, r.type, brs{b}), ...
-                wbTypeSelection('inherited', app.typeSel, app.reg, r.type, brs{b})]; %#ok<AGROW>
-end
-ids = orderIds(app.reg, ids);
+ids = plannedStepIds(app, r.type, brs);
 end
 
 function out = orderIds(reg, ids)
@@ -2999,10 +3359,10 @@ function txt = progressCellText(app, r, step, planned)
 key = cellKey(r.identity, step.id);
 if isKey(app.runState,key) && stepTouchesFile(step, r.branch)
     switch app.runState(key)
-        case 'running'
-            pct = 0;
-            if isKey(app.cellPct,key), pct = app.cellPct(key); end
-            txt = sprintf('running %d%%', round(pct)); return
+        % 'running' carries NO percentage.  A wrapper says what it started and what
+        % it finished and nothing in between, so there is no fraction to show and a
+        % made-up one would be worse than none.
+        case 'running', txt = 'running'; return
         case 'done',  txt = 'done';  return
         case 'error', txt = 'error'; return
     end
@@ -3303,7 +3663,7 @@ function applyInvalidation(fig,seed,type)
 %   With a type, only that type's recordings are touched - which is the whole
 %   point of keying the settings by type: a BP edit must leave BV's done cells
 %   alone.  The seed is a STEP ID (or a shared-key name), never a bare field, so
-%   'deleteOriginal' edited on BFI cannot invalidate splitRegions.
+%   'method' edited on BFI cannot invalidate the internal cycle.
 app = getApp(fig);
 if isempty(app.modelArr), return; end
 models = app.modelArr;
@@ -3552,6 +3912,7 @@ session.typeSel       = app.typeSel;
 session.animalSel     = app.animalSel;
 session.staleOverlay  = app.stale;
 session.presetRef     = app.presetRef;
+session.reprocess     = logical(app.reprocess);
 wbSession('save', pth, session);
 end
 function loadSessionFrom(fig,pth)
@@ -3599,6 +3960,7 @@ syncFilesControls(fig);
 paths = session.paths;
 if isempty(paths), paths = gridPaths(struct('fNames',{session.fNames})); end
 rebuildWorkingSet(fig, paths, true);
+setReprocess(fig, session.reprocess);    % after the working set: it repaints the range
 refreshPresetDrop(fig);
 wbLog(fig,sprintf('loaded session %s (schema %g, %d file(s), %d completed cell(s))', ...
     pth, session.schema, numel(session.paths), session.completed.Count));
@@ -3643,21 +4005,21 @@ function entries = buildRunOrder(fig)
 %   walks an animal together.  A step already done on every product it would touch
 %   is left out, so a re-run resumes rather than repeats (spec §5).
 %
-%   THE FROM/TO RANGE (spec D1/D2) is applied on TOP of that expansion, in
-%   runOrderIn - it filters the entry list by registry column and decides whether
-%   the "already on disk" pruning applies at all.  The expansion itself knows
-%   nothing about it.
+%   THE FROM/TO RANGE (spec D1) is applied on TOP of that expansion, in runOrderIn:
+%   it filters the entry list by registry column, and nothing else.  Whether the
+%   "already on disk" pruning applies is a SEPARATE question, answered by the
+%   Re-process tick (spec D6).  The expansion itself knows about neither.
 app = getApp(fig);
 entries = runOrderIn(fig, app.rangeFrom, app.rangeTo);
 end
 
 function entries = expandEntries(app, prune)
 %expandEntries  THE expansion proper (see buildRunOrder for what it asks and why).
-%   'prune' is the ONLY thing the range changes about it: with it false the
-%   already-on-disk test is skipped, so a finished column re-runs with new settings
-%   (spec D2).  Everything else stands - one work item per (file,step), the
-%   per-animal steps once per animal - because those are not resume rules, they are
-%   what makes the list correct.
+%   'prune' is the ONE thing the Process tab changes about it: with it false the
+%   already-on-disk test is skipped, so a finished step runs again with new settings
+%   (spec D6, the Re-process tick).  Everything else stands - one work item per
+%   (file,step), the per-animal steps once per animal - because those are not resume
+%   rules, they are what makes the list correct.
 %
 %   THE PER-ANIMAL STEPS ARE PRUNED TOO (Phase 6).  Until this phase they were
 %   emitted unconditionally, so registration and vessel typing re-ran on every Run,
@@ -3715,15 +4077,14 @@ end
 function [entries, info] = runOrderIn(fig, fromSel, toSel)
 %runOrderIn  The run order for ONE range.  Two readings of the same configuration:
 %   the PLANNED list (everything the configuration would ever run) says which
-%   columns exist and is what a forced re-run executes; the PENDING list (today's
-%   expansion, with the already-done steps pruned) says where the resume frontier
-%   is and is what 'Last valid' executes.
+%   columns exist and is what a Re-process run executes; the PENDING list (today's
+%   expansion, with the already-done steps pruned) is what an ordinary run executes.
 %
 %   THE RESUME PATH IS UNCHANGED.  With From = 'Last valid' the slice starts at the
 %   frontier, and every column before the frontier is by definition finished - so
 %   it has no pending entries and the slice removes nothing.  'Last valid' to the
-%   last column therefore returns exactly what buildRunOrder returned before this
-%   phase, entry for entry, in the same order (the regression gate).
+%   last column therefore returns exactly what buildRunOrder returned before the
+%   range existed, entry for entry, in the same order (the regression gate).
 app = getApp(fig);
 [info, planned, pending] = runRangeInfo(app, fromSel, toSel);
 if info.forced, src = planned; else, src = pending; end
@@ -3733,9 +4094,14 @@ end
 function [info, planned, pending] = runRangeInfo(app, fromSel, toSel)
 %runRangeInfo  Everything the toolbar and the run headline need about one range:
 %   the configured columns, the resume frontier, the two resolved step ids, and
-%   whether this is a resume or a forced re-run.  The columns come from the PLANNED
+%   whether finished work is to be done again.  The columns come from the PLANNED
 %   expansion on purpose - a finished column is still configured, and dropping it
 %   would take away the only way to ask for it again.
+%
+%   'forced' IS THE CHECKBOX, AND ONLY THE CHECKBOX (spec D6).  It used to be a side
+%   effect of naming a From column, which is a coupling nobody could see in the
+%   window: the same gesture asked for two unrelated things, and there was no way to
+%   start at segmentation without also overwriting it.  From/To is now a pure range.
 planned = expandEntries(app, false);
 pending = expandEntries(app, true);
 pendIds = {};
@@ -3744,7 +4110,7 @@ cols = wbRunRange('columns', app.reg, planned);
 fron = wbRunRange('frontier', app.reg, cols, @(id) ~any(strcmp(id, pendIds)));
 [fromId, toId] = wbRunRange('resolve', app.reg, cols, fromSel, toSel, fron);
 info = struct('cols',{cols},'frontier',fron,'fromId',fromId,'toId',toId, ...
-    'forced',wbRunRange('isForced',fromSel));
+    'forced',logical(getfieldOr(app,'reprocess',false)));
 end
 
 function info = currentRangeInfo(fig)
@@ -3778,8 +4144,11 @@ end
 lastTok = wbRunRange('lastValid');
 fromItems = [{sprintf('Last valid (%s)', wbRunRange('label',cols,info.frontier))}, {cols.label}];
 fromData  = [{lastTok}, {cols.id}];
-fromVal   = lastTok;
-if info.forced, fromVal = info.fromId; end
+% show what is STORED, not what it resolved to: the sentinel is a standing
+% instruction ("wherever the frontier is now") and replacing it with today's answer
+% would quietly freeze it the first time the toolbar was painted
+fromVal = char(app.rangeFrom);
+if isempty(fromVal), fromVal = lastTok; end
 setDropItems(c.fromDrop, fromItems, fromData, fromVal);
 
 k = wbRunRange('index', cols, info.fromId);
@@ -3825,6 +4194,26 @@ clampStoredTo(fig);
 refreshRangeControls(fig);
 end
 
+function setReprocess(fig, tf)
+%setReprocess  The 'Re-process finished files' switch (spec D6) - THE only thing
+%   that decides whether a run repeats work that is already on disk.  It is not a
+%   window preference like the PDF switches: it changes what the next Run does, it
+%   is part of what the session remembers, and the pruning rule it turns off is
+%   stepAlreadyDone / animalStepAlreadyDone, which stay the single definition of
+%   "already there" (expandEntries consults them or does not).
+app = getApp(fig); app.reprocess = logical(tf); setApp(fig,app);
+c = app.c.process;
+if isfield(c,'reproCheck') && isgraphics(c.reproCheck), c.reproCheck.Value = app.reprocess; end
+refreshRangeControls(fig);
+end
+
+function onReprocessEdit(fig, tf)
+%onReprocessEdit  The checkbox itself: set it, then say in the log what the run will
+%   now do - the same courtesy the two range dropdowns pay.
+setReprocess(fig, tf);
+wbLog(fig, rangeHeadline(currentRangeInfo(fig)));
+end
+
 function clampStoredTo(fig)
 %clampStoredTo  Spec D4, made durable: an EXPLICIT To that now sits before From is
 %   moved up to From rather than left to be clamped afresh on every read - the
@@ -3842,14 +4231,18 @@ end
 
 function v = runRangeValue(fig)
 %runRangeValue  What the range currently resolves to - the headless view of the two
-%   dropdowns plus the resume/force verdict.
+%   dropdowns, the frontier, and the Re-process verdict that now stands beside them.
 info = currentRangeInfo(fig);
 v = struct('from',getApp(fig).rangeFrom,'to',getApp(fig).rangeTo, ...
     'fromId',info.fromId,'toId',info.toId,'frontier',info.frontier,'forced',info.forced);
 end
 
 function s = rangeHeadline(info)
-%rangeHeadline  One line naming the range and whether it resumes or forces.
+%rangeHeadline  One line naming the range and what will happen to work that is
+%   already finished inside it.  The two are now INDEPENDENT (spec D6): From/To says
+%   how much of the protocol to walk, the Re-process tick says whether finished
+%   recordings are done again - so the sentence names them separately instead of
+%   implying that picking a start column also means "redo it".
 if isempty(info.cols)
     s = 'range: nothing set up yet - tick some steps on the Constructor tab.';
     return
@@ -3857,8 +4250,8 @@ end
 s = sprintf('range: %s -> %s.  %s', ...
     wbRunRange('label',info.cols,info.fromId), wbRunRange('label',info.cols,info.toId), ...
     ternary(info.forced, ...
-        'These steps will run again even where they are already done.', ...
-        'Carrying on from the last valid step, leaving out what is already done.'));
+        'Everything in that range will run again, finished or not.', ...
+        'Anything already finished is left as it is.'));
 end
 
 function e = emptyEntries()
@@ -3971,7 +4364,6 @@ if ~confirmRun(fig, entries, info), return; end
 % a fresh run starts with a clean transient overlay
 app.runState = containers.Map('KeyType','char','ValueType','any');
 app.cellMsg  = containers.Map('KeyType','char','ValueType','any');
-app.cellPct  = containers.Map('KeyType','char','ValueType','any');
 app.running  = true;  app.cancel = false;
 setApp(fig,app);
 % how many entries each COLUMN of THIS run has - counted from the list about to be
@@ -3993,16 +4385,18 @@ function ok = confirmRun(fig, entries, info)
 %confirmRun  The pre-run summary.  A type-level tick can expand into hundreds of
 %   file-steps, and the number is the only honest warning about how long this will
 %   take - so it is shown before anything runs, not discovered afterwards.  The
-%   RANGE is on the same card: a forced re-run overwrites finished work, and that
-%   has to be visible at the moment of consent, not only in the toolbar.
+%   RANGE is on the same card, and so is the Re-process tick: overwriting finished
+%   work has to be visible at the moment of consent, not only in the toolbar, and
+%   the tick is easy to leave on from the last time.
 ok = true;
 n  = numel(entries);
 tys = unique({entries.type},'stable');
 tys = tys(~cellfun(@isempty,tys));
 sts = unique({entries.stepId},'stable');
-msg = sprintf('%s\nAbout to run %d %s across %d recording %s - %d jobs in all.  Continue?', ...
+msg = sprintf('%s\nAbout to run %d %s across %d recording %s - %d jobs in all.%s  Continue?', ...
     rangeHeadline(info), numel(sts), plural(numel(sts),'step'), ...
-    numel(tys), plural(numel(tys),'type'), n);
+    numel(tys), plural(numel(tys),'type'), n, ...
+    ternary(info.forced,'  Results that are already saved will be overwritten.',''));
 wbLog(fig,msg);
 if ~isvalid(fig) || strcmp(fig.Visible,'off'), return; end   % headless: never block
 sel = uiconfirm(fig, msg, 'Run', 'Options',{'Run','Cancel'}, ...
@@ -4027,7 +4421,6 @@ ctx.contrastStage = @(mdl) contrastStageOf(fig,mdl);
 % re-deriving one that could disagree with what the user was shown
 ctx.refFile       = @(ai,sid) animalRefFile(fig,ai,sid);
 ctx.setState      = @(id,sid,state,msg) execSetState(fig,id,sid,state,msg);
-ctx.progress      = @(id,sid,f,l) execProgress(fig,id,sid,f,l);
 ctx.log           = @(msg) wbLog(fig,msg);
 ctx.isCancelled   = @() execIsCancelled(fig);
 ctx.modalGuard    = @(fcn) wbModalGuard(fig,fcn);
@@ -4060,7 +4453,6 @@ key = cellKey(identity,stepId);
 if isempty(state)
     if isKey(app.runState,key), remove(app.runState,key); end
     if isKey(app.cellMsg,key),  remove(app.cellMsg,key);  end
-    if isKey(app.cellPct,key),  remove(app.cellPct,key);  end
 else
     app.runState(key) = state;
     if ~isempty(msg), app.cellMsg(key) = msg; end
@@ -4069,23 +4461,6 @@ setApp(fig,app);
 if any(strcmp(state,{'done','error'})), recordCompletion(fig,identity,stepId,state,msg); end
 refreshCells(fig,{identity});
 refreshProgressDetail(fig);
-drawnow limitrate;
-end
-
-function execProgress(fig,identity,stepId,frac,label)
-%execProgress  Update the running cell's percent + the global progress label.
-%   The drawnow yields are what keep the window alive through a long wrapper.
-if ~isvalid(fig), return; end
-if nargin<5 || ~ischar(label), label = ''; end
-app = getApp(fig);
-pct = max(0,min(100,round(100*frac)));
-key = cellKey(identity,stepId);
-app.cellPct(key) = pct;
-setApp(fig,app);
-refreshCells(fig,{identity});
-if isfield(app.c.process,'progLabel') && isgraphics(app.c.process.progLabel)
-    app.c.process.progLabel.Text = sprintf('%s  %s (%d%%)', shortId(identity), label, pct);
-end
 drawnow limitrate;
 end
 
@@ -4274,7 +4649,6 @@ app.completed = containers.Map('KeyType','char','ValueType','any');
 app.stale     = containers.Map('KeyType','char','ValueType','any');
 app.runState  = containers.Map('KeyType','char','ValueType','any');
 app.cellMsg   = containers.Map('KeyType','char','ValueType','any');
-app.cellPct   = containers.Map('KeyType','char','ValueType','any');
 setApp(fig,app);
 recomputeBase(fig);
 renderProgress(fig);
@@ -4639,7 +5013,7 @@ try
         return
     end
     stamp = char(datetime('now','Format','yyyyMMdd_HHmmss'));
-    out = wbReportPdf(files, fullfile(root,'workbenchReports',[char(stepId) '_' stamp '.pdf']));
+    out = makeReportPdf(files, fullfile(root,'workbenchReports',[char(stepId) '_' stamp '.pdf']));
     for i = 1:numel(out.skipped)
         wbLog(fig,sprintf('  skipped %s (not a readable report image)', out.skipped{i}));
     end
@@ -4669,7 +5043,7 @@ function dropSourceImages(fig, files, out, lbl)
 %   longer there - and since the list is repainted from disk anyway, a stale entry
 %   would not even survive the next repaint.
 %
-%   Only images that really reached a page are removed: wbReportPdf names what it
+%   Only images that really reached a page are removed: makeReportPdf names what it
 %   could not read, and an image that was skipped is the one image the PDF cannot
 %   stand in for.  Like every other part of the report path this is a by-product -
 %   a failure costs a log line and never the column's state.

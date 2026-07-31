@@ -24,8 +24,8 @@
 %              • minTrust(1:3)      quality thresholds
 %              • manualMask         1 = enable interactive ROI selection
 %     fNames   cell array of full paths to *.rls files.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   EXAMPLE
 %     p = defaultContrastParams();
@@ -76,13 +76,11 @@ for fidx=1:1:numel(fNames)
         reportFile(rep,fidx,s.fName);
         clearvars results source settings
 
-        % Launch contrast calculation from an RLS file.  The core prints its own
-        % per-batch line when called without a sink; here it ticks through rep
-        % instead, so the percentage rewrites one line under the banner.
-        reportStage(rep,'Speckle contrast');
+        % Launch contrast calculation from an RLS file.  The core is silent: the
+        % Starting line above and the Finished line below are the whole account
+        % of this recording.
         [source.data,source.time,results.timeStamp,s.trustMatrix]=...
-            getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod, ...
-            'progressFcn',@(frac,label) reportProgress(rep,frac,label));
+            getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
 
         imgK=squeeze(mean(source.data,3,'omitmissing'));
         imgBFI=1./(imgK.*imgK);
@@ -139,13 +137,13 @@ for fidx=1:1:numel(fNames)
         reportSave(rep,fh,'contrast');
 
         % Save the settings and results
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         settings.runContrastFromRLS=reportSettings(s);
         results.time=source.time;
         save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3');
         save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3');
         save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3');
-        reportSaved(rep,3);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

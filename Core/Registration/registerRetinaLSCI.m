@@ -64,12 +64,12 @@
 %                   only (returns transforms + trust, writes nothing).
 %   'preview'       save a *_reg_preview.png diagnostic (default true).
 %   'memoryCoef'    fraction of free RAM used for batching (default 0.7).
-%   'progressFcn'   progress sink, progressFcn(frac,label).  Absent (the default)
-%                   the four long phases print their in-place percentage to the
-%                   command window exactly as they always have, so every existing
-%                   caller is unaffected; supplied, the same ticks go to the sink
-%                   and the status lines drop the function-name prefix because the
-%                   caller's banner already names the step.
+%
+%   IT SAYS NOTHING WHILE IT WORKS.  This is the longest core in the library and
+%   it used to narrate all four of its phases; that reporting now belongs to
+%   runRegistration, which names the recording before this is called and closes it
+%   with an elapsed time after.  A core neither reports nor takes a reporting
+%   argument, so there is no progress sink and no command-window print here.
 %
 % OUTPUT
 %   regTrustVector  sizeT x 1 logical.  1 = low motion and a confident
@@ -97,7 +97,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 23-July-2026
+% Last revision: 31-July-2026
 
 function [regTrustVector,s] = registerRetinaLSCI(rlsFileName, varargin)
 
@@ -120,16 +120,8 @@ addParameter(p,'outputSuffix','_reg',@(x) ischar(x)||isstring(x));
 addParameter(p,'writeFile',true,@(x) islogical(x)||ismember(x,[0 1]));
 addParameter(p,'preview',true,@(x) islogical(x)||ismember(x,[0 1]));
 addParameter(p,'memoryCoef',0.7,@(x) isnumeric(x)&&isscalar(x)&&x>0&&x<=1);
-addParameter(p,'progressFcn',[],@(x) isempty(x)||isa(x,'function_handle'));
 parse(p,rlsFileName,varargin{:});
 
-% The four long phases print an in-place percentage.  With no sink supplied they
-% print it exactly as they always have; with one, the same ticks go to the sink
-% instead and the status lines drop the function-name prefix, because the caller's
-% banner already says which step is running.
-progressFcn = p.Results.progressFcn;
-toWindow    = isempty(progressFcn);
-if toWindow, pfx = 'registerRetinaLSCI: '; else, pfx = ''; end
 r = p.Results;
 rlsFileName = char(r.rlsFileName);
 avg = round(r.avgFrames);
@@ -163,8 +155,7 @@ if batchSize<avg, batchSize = avg; end
 % measured as the shift between the first and second half.
 kfSumA = zeros(sizeY,sizeX,nKf,'single'); kfCntA = zeros(nKf,1);
 kfSumB = zeros(sizeY,sizeX,nKf,'single'); kfCntB = zeros(nKf,1);
-processed = 0; stream = []; tA = tic;
-fprintf('%s%d frames, %d keyframes\n',pfx,sizeT,nKf);
+processed = 0; stream = [];
 while processed<sizeT
     nb = min(batchSize,sizeT-processed);
     if isempty(stream)
@@ -185,13 +176,7 @@ while processed<sizeT
         if fhi>=flo, kfSumB(:,:,k)=kfSumB(:,:,k)+sum(K(:,:,flo:fhi),3); kfCntB(k)=kfCntB(k)+(fhi-flo+1); end
     end
     processed = processed+nb;
-    if toWindow
-        fprintf('\r  contrast + keyframes:  %5.1f%%  [%.0fs]',100*processed/sizeT,toc(tA));
-    else
-        progressFcn(processed/sizeT,'contrast + keyframes');
-    end
 end
-if toWindow, fprintf('\n'); end
 if isfield(stream,'fId') && ~isempty(fopen(stream.fId)), fclose(stream.fId); end
 clear raw K
 
@@ -206,13 +191,7 @@ for k = 1:nKf
         [tx,ty] = regOneRaw(enhanceKeyframe(kfB(:,:,k)),enhanceKeyframe(kfA(:,:,k)),r.regMaxDim,regOpt,regMet);
         intraMotion(k) = hypot(tx,ty);
     end
-    if toWindow
-        fprintf('\r  within-block motion:   %5.1f%%',100*k/nKf);
-    else
-        progressFcn(k/nKf,'within-block motion');
-    end
 end
-if toWindow, fprintf('\n'); end
 clear kfA kfB
 kfCenters = ((1:nKf)'-1)*avg + (avg+1)/2;
 kfCenters(nKf) = ((nKf-1)*avg+1 + sizeT)/2;             % true centre of the last (fuller) block
@@ -224,7 +203,7 @@ kfE = zeros(sizeY,sizeX,nKf,'single');
 for k = 1:nKf, kfE(:,:,k) = enhanceKeyframe(kf(:,:,k)); end
 
 [kfShift,kfTheta,regCorr,template] = estimateKeyframeTransforms( ...
-    kfE,r.transformType,round(r.refPasses),r.rotationLimit,maxShift,r.regMaxDim,regOpt,regMet,progressFcn);
+    kfE,r.transformType,round(r.refPasses),r.rotationLimit,maxShift,r.regMaxDim,regOpt,regMet);
 
 % ---- trust + robust shift series -------------------------------------------
 stepMotion = zeros(nKf,1);
@@ -279,8 +258,7 @@ if r.writeFile
     if fo==-1, error('registerRetinaLSCI:write','Cannot open %s for writing.',outName); end
     cleanup = onCleanup(@() fclose(fo));
     fwrite(fo,hdr,'uint8');
-    processed = 0; stream = []; tB = tic;
-    fprintf('%swriting %s\n',pfx,outName);
+    processed = 0; stream = [];
     while processed<sizeT
         nb = min(batchSize,sizeT-processed);
         if isempty(stream)
@@ -300,13 +278,7 @@ if r.writeFile
             fwrite(fo,cast(w,dataType),dataType);
         end
         processed = processed+nb;
-        if toWindow
-            fprintf('\r  applying + writing:    %5.1f%%  [%.0fs]',100*processed/sizeT,toc(tB));
-        else
-            progressFcn(processed/sizeT,'applying + writing');
-        end
     end
-    if toWindow, fprintf('\n'); end
     if isfield(stream,'fId') && ~isempty(fopen(stream.fId)), fclose(stream.fId); end
     clear cleanup
 else
@@ -323,7 +295,6 @@ if r.preview
     try savePreview(fullfile(pp,[nn,char(r.outputSuffix),'_preview.png']), ...
             template,kfCenters,kfShiftFix,regCorr,trustKf,sizeT,avg,nKf); catch, end %#ok<CTCH>
 end
-fprintf('%sdone (%.1f%% of frames trusted).\n',pfx,100*mean(regTrustVector));
 end
 
 % ===========================================================================
@@ -336,13 +307,11 @@ e = enhanceForRegistration(img,'smoothSigma',1);
 end
 
 % ===========================================================================
-function [kfShift,kfTheta,regCorr,template] = estimateKeyframeTransforms(kfE,type,nPass,rotLim,maxShift,regMaxDim,opt,met,progressFcn)
+function [kfShift,kfTheta,regCorr,template] = estimateKeyframeTransforms(kfE,type,nPass,rotLim,maxShift,regMaxDim,opt,met)
 %estimateKeyframeTransforms  Register enhanced keyframes to a common template.
 %   Intensity-based imregtform on a down-sampled copy - phase correlation
 %   (imregcorr) is unreliable here because it locks onto the fixed camera
 %   vignette / residual speckle rather than the moving vasculature.
-if nargin<9, progressFcn = []; end
-toWindow = isempty(progressFcn);
 [sy,sx,nKf] = size(kfE);
 kfShift = zeros(nKf,2); kfTheta = zeros(nKf,1); regCorr = zeros(nKf,1);
 if nKf==1, template = kfE; regCorr = 1; return; end
@@ -373,15 +342,9 @@ for pass = 1:nPass
             aligned(:,:,k) = kfD(:,:,k);
             kfShift(k,:) = NaN;
         end
-        if toWindow
-            fprintf('\r  registering keyframes: pass %d/%d  %5.1f%%',pass,nPass,100*k/nKf);
-        else
-            progressFcn(((pass-1)*nKf+k)/(nPass*nKf),'registering keyframes');
-        end
     end
     template = median(aligned,3);                        % robust template for the next pass
 end
-if toWindow, fprintf('\n'); end
 m = template>0;                                          % correlation over the valid region
 for k = 1:nKf
     a = aligned(:,:,k);

@@ -54,6 +54,23 @@ fNames=getFileNamesList(rootFolder,'*BP.rls'); %if structured file names were us
 %RUN THE PROCESSING ROUTINE
 runInternalCycle(s,fNames(:));
 
+%% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
+close all
+clearvars -except fNames libraryFolder rootFolder
+
+%A wrapper writes one <recording>_rep_<page>.jpg beside each recording and stops
+%there - the document is assembled HERE, between the steps, so a 60-file step is one
+%thing to page through instead of 60 files.  COPY THIS CELL after any step whose
+%pages you want together and change the tail and the output name: after setRegions
+%it is '_rep_regions.jpg', after runSegmentation '_rep_categories.jpg' and
+%'_rep_segments.jpg', after runRegistration '_rep_registration.jpg', after
+%setVesselTypes '_rep_vesseltypes.jpg'.
+%runInternalCycle also writes '_rep_cycle-average.jpg' - copy the cell for it too.
+tail='_rep_cycle-detect.jpg'; %the page STEP 1 writes, one per recording
+pdfFolder=fileparts(char(fNames{find(~cellfun(@isempty,fNames(:)),1)}));
+D=dir(fullfile(pdfFolder,['*',tail]));
+makeReportPdf(fullfile({D.folder}',{D.name}'),fullfile(pdfFolder,'report_cycle-detect.pdf')); %ASSEMBLES THE DOCUMENT
+
 %% STEP 2 Define segmentation regions (interactive ROI editor; optional - whole window if skipped)
 close all
 clearvars -except fNames libraryFolder rootFolder

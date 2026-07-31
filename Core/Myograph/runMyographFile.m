@@ -61,7 +61,7 @@ tim=struct('detect',0,'vasomotion',0,'propagation',0,'save',0);
 
 try
     % ---- 1. diameter ----
-    reportStage(s,'detect',sprintf('measuring diameter (%s)',ternary(s.detectPerInterval,'per interval','whole/crop')));
+    myoStage(s,'detect',sprintf('measuring diameter (%s)',ternary(s.detectPerInterval,'per interval','whole/crop')));
     t0=tic;
     if s.detectPerInterval && ~isempty(s.intervals)
         intervals=getMyographDiameter(s,fName);                  % Path A
@@ -79,7 +79,7 @@ try
 
     % ---- 2+3. vasomotion + propagation (shared with the GUI's Vasomotion stage) ----
     if s.runVasomotion || s.runPropagation
-        reportStage(s,'vasomotion',sprintf('%d interval(s) - starting parallel pool if needed',nIv));
+        myoStage(s,'vasomotion',sprintf('%d interval(s) - starting parallel pool if needed',nIv));
         [intervals,at]=analyzeMyographIntervals(s,intervals,s.stageFcn);
         tim.vasomotion=at.vasomotion; tim.propagation=at.propagation;
     end
@@ -91,7 +91,7 @@ try
         [pp,nn]=fileparts(char(fName)); outPath=fullfile(pp,[nn,'_myograph.mat']);
     end
     if s.saveResult
-        reportStage(s,'save',outPath);
+        myoStage(s,'save',outPath);
         s=stripFcnHandles(s);                            % drop GUI callbacks so no figure is serialised into the .mat
         t0=tic; save(outPath,'intervals','s','meta','-v7.3'); tim.save=toc(t0);
     end
@@ -104,7 +104,7 @@ catch ME
     else
         out.status='failed'; out.message=ME.message;
     end
-    out.timings=tim; reportStage(s,ternary(strcmp(out.status,'cancelled'),'cancel','error'),out.message);
+    out.timings=tim; myoStage(s,ternary(strcmp(out.status,'cancelled'),'cancel','error'),out.message);
 end
 end
 
@@ -137,7 +137,7 @@ end
 end
 
 % =====================================================================
-function reportStage(s,stage,detail)
+function myoStage(s,stage,detail)
 if isfield(s,'stageFcn') && ~isempty(s.stageFcn)
     try, s.stageFcn(stage,detail); catch, end
 else

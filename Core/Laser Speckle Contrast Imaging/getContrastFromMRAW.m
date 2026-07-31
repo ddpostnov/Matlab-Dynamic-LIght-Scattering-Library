@@ -9,7 +9,6 @@
 %    [dataLSCI,time,timeStamp,trustMatrix,settings] = getContrastFromMRAW( ...
 %        mrawFileName, contrastType, contrastKernel, rawBatchSize, procType, ...
 %        decimation, saveContrast, selectROI, rawAveraging)
-%    [...] = getContrastFromMRAW(..., rawAveraging, progressFcn)
 %
 % Inputs:
 %    mrawFileName   - path to the .mraw file (.cihx must sit next to it).
@@ -21,11 +20,14 @@
 %    saveContrast   - logical; save the result next to the .mraw as a .mat.
 %    selectROI      - logical; interactively pick an ROI to process.
 %    rawAveraging   - raw frames averaged before contrast (1 = none).
-%    progressFcn    - (optional) progress sink, progressFcn(frac,label).  Absent,
-%                     the per-batch line is printed to the command window exactly
-%                     as it always has been, so every existing nine-argument
-%                     caller is unaffected; a wrapper passes reportProgress's
-%                     handle to route it instead.
+%
+%   IT SAYS NOTHING WHILE IT WORKS.  Reporting belongs to the wrapper: it names
+%   the recording before this is called and closes it with an elapsed time after,
+%   and a per-batch line underneath that is noise in a sixty-file run.  So there
+%   is no progress sink and no command-window narration here - a core neither
+%   reports nor takes a reporting argument.  The one line that remains is the
+%   selectROI cue, which is not narration: it says why MATLAB has stopped and is
+%   waiting for a double-click in another window.
 %
 % Outputs:
 %    dataLSCI    - contrast data, 3-D [y x t] single.
@@ -44,21 +46,15 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
-function [dataLSCI,time,timeStamp,trustMatrix,settings]=getContrastFromMRAW(mrawFileName,contrastType,contrastKernel,rawBatchSize,procType,decimation,saveContrast,selectROI,rawAveraging,progressFcn)
-
-% Trailing and optional, so every existing nine-argument caller is unaffected:
-% with no sink the per-batch lines print exactly as they always have.
-if nargin<10, progressFcn=[]; end
-toWindow=isempty(progressFcn);
+function [dataLSCI,time,timeStamp,trustMatrix,settings]=getContrastFromMRAW(mrawFileName,contrastType,contrastKernel,rawBatchSize,procType,decimation,saveContrast,selectROI,rawAveraging)
 
 timeStamp=0;
 procType=erase(lower(procType),'fast');       % accept legacy 'fastcpu'/'fastgpu' -> 'cpu'/'gpu'
 %read metadata
 [dataLSCI,fps,~,rawFramesN]=readMRAW(mrawFileName,0,1);
-disp(['Number of frames to read: ',num2str(rawFramesN)]);
 ROI=[1,size(dataLSCI,1);1,size(dataLSCI,2)];
 
 %batch size test
@@ -95,7 +91,6 @@ if selectROI
 end
 
 %contrast calculation
-tic
 switch contrastType
     case 'spatial'
         procFramesN=floor(rawFramesN/decimation);
@@ -113,11 +108,6 @@ switch contrastType
             trustMatrix(:,:,3)=trustMatrix(:,:,3)-sum(subdata==0,3);
             subdata=movmean(subdata,[0,decimation-1],3);
             dataLSCI(:,:,(i-1)*outBatchSize+1:1:(i-1)*outBatchSize+floor(framesToRead/decimation))= subdata(:,:,1:decimation:floor(end./decimation)*decimation);
-            if toWindow
-                disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
-            else
-                progressFcn(i/batchesN,'Speckle contrast');
-            end
         end
     case 'temporal'
         procFramesN=floor((rawFramesN-contrastKernel+1)/decimation);
@@ -136,12 +126,6 @@ switch contrastType
             subdata=movmean(subdata,[0,decimation-1],3,'Endpoints','shrink');
             subdata=subdata(:,:,1:end-contrastKernel+1);
             dataLSCI(:,:,((i-1)*outBatchSize+1):1:((i-1)*outBatchSize+floor(size(subdata,3)/decimation)))= subdata(:,:,1:decimation:floor(end./decimation)*decimation);
-            
-            if toWindow
-                disp(['Processed batch ',num2str(i),' out of ',num2str(batchesN),'. Time elapsed ',num2str(toc)]);
-            else
-                progressFcn(i/batchesN,'Speckle contrast');
-            end
         end
 end
 time=((1:1:size(dataLSCI,3))-1).*decimation./fps; %convert time to seconds
@@ -159,11 +143,8 @@ settings.runContrastFromMRAW.ROI=ROI;
 
 
 if saveContrast
-    disp('Saving the results');
     save(strrep(mrawFileName,'.mraw',['_',contrastType,'.mat']),'dataLSCI','time','timeStamp','trustMatrix','settings','-v7.3');
 end
-
-disp('Processing has been completed.');
 end
 %------------- END OF CODE --------------
 %Comments: For the high-speed cameras and other cases with abnormal

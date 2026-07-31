@@ -98,10 +98,8 @@
 %                                   field per loop, so the three can be set apart.
 %     fNames   cell array of *_BFI_d.mat paths.
 %                • Optional workbench hooks in s (no-op when absent):
-%                  s.progressFcn(frac,label), s.stageFcn(stage,detail), s.cancelFcn()->tf.
-%                  Cancel is checked between files (never inside the parfor); the per-pixel
-%                  progress comes from reportProgress's DataQueue, sent in batches so the
-%                  hot loop pays for about two hundred callbacks rather than one per pixel.
+%                  s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
+%                  between files, never inside the parfor.
 %
 %   OUTPUTS  (RESULTS.vasomotion; band-branched tree.  <sig> = sData, dvsData,
 %            dvsDiameter or gsData - one row/slice per segment; nSeg segments,
@@ -319,8 +317,7 @@ end
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
 % are resolved to no-ops when absent and ride in rep.  s is never mutated, and
 % reportSettings strips the hooks from the settings before saving.  Cancel is only
-% checked between files; progress inside a parfor goes through reportProgress's
-% DataQueue, whose afterEach runs client-side and is therefore parfor-safe.
+% checked between files - the per-pixel parfor below runs silently to the end.
 rep=reportOpen(s,'Vasomotion',fNames);
 
 for fidx=1:1:numel(fNames)
@@ -405,7 +402,6 @@ for fidx=1:1:numel(fNames)
             wantMoments=want.moments; wantSeries=want.series;
             wantClustering=want.clustering; wantRecon=want.reconstruction; keepSpectrum=want.spectrum;
 
-            reportStage(rep,'Vasomotion per segment');
             nwSeg=0; if s.parforVasomotionSegments, nwSeg=Inf; end   %worker bound, not a branch
             parfor (i=1:nSeg, nwSeg)
                 m=getVasomotionMetrics(sig(:,i),layout,s);
@@ -620,21 +616,8 @@ for fidx=1:1:numel(fNames)
                 wBandsAmp=wantPix.bandsAmp; wBandsSkew=wantPix.bandsSkew; wBandsShape=wantPix.bandsShape;
                 wBandsPct=wantPix.bandsPct; wSpectrum=wantPix.spectrum;
 
-                reportStage(rep,'Vasomotion per pixel');
-                %THROTTLED AT THE SEND.  One send per pixel cost a client-side
-                %afterEach callback for every one of ~10^5-10^6 iterations, whether
-                %or not it printed; sendEvery makes it about two hundred for the
-                %whole loop.  The count is over ALL pixels (not just masked ones)
-                %because the send now precedes the background skip - it measures
-                %how far through the image the sweep is, which is what a bar means.
-                %The queue is created and deleted regardless of whether the loop below
-                %runs parallel: it is the ONE piece of state that must stay switchable
-                %apart from the loop, or "parfor off" and "queue gone" become the same
-                %experiment and neither cause can be told from the other.
-                [dqPix,sendEvery]=reportProgress(rep,'queue',npx,'Vasomotion per pixel');
                 nwPix=0; if s.parforVasomotionPixels, nwPix=Inf; end   %worker bound, not a branch
                 parfor (p=1:npx, nwPix)
-                    if mod(p,sendEvery)==0, send(dqPix,sendEvery); end
                     if sMapLin(p)==0, continue; end          %background: leave NaN
                     mp=getVasomotionMetrics(single(D(p,:))',layoutPix,sPix);
                     if mp.valid
@@ -657,8 +640,6 @@ for fidx=1:1:numel(fNames)
                         end
                     end
                 end
-                reportProgress(rep,1,'Vasomotion per pixel');   %forced final tick
-                delete(dqPix);                                  %its afterEach pinned rep
 
                 accP=struct('vbAmpMean',pxVbAmpMean,'vbAmpStd',pxVbAmpStd,'vbAmpSkew',pxVbAmpSkew,'vbAmpPct',pxVbAmpPct, ...
                     'cbAmpMean',pxCbAmpMean,'cbAmpStd',pxCbAmpStd,'cbAmpSkew',pxCbAmpSkew,'cbAmpPct',pxCbAmpPct, ...
@@ -682,15 +663,15 @@ for fidx=1:1:numel(fNames)
             % complex.WT and NO timeVectors.VB.rData) via the SHARED tree assembler.
             % =================================================================
             if ~isempty(s.ppxSegmentAveraging)
-                results=runSegmentAveragingTEMP(s,settings,D,sMapLin,nSeg,results,rep);
+                results=runSegmentAveragingTEMP(s,settings,D,sMapLin,nSeg,results);
             end
         end
 
         settings.runVasomotion=reportSettings(s);
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-        reportSaved(rep,2);
+        reportSaved(rep);
     end
 
 end
@@ -747,7 +728,7 @@ end
 % ## the core, they die with the block.  It DOES reuse the shared,   ##
 % ## non-temporary identityShapes + assembleVasomotionTree (kept).   ##
 % #####################################################################
-function results=runSegmentAveragingTEMP(s,settings,D,sMapLin,nSeg,results,rep)
+function results=runSegmentAveragingTEMP(s,settings,D,sMapLin,nSeg,results)
 %runSegmentAveragingTEMP  TEMPORARY per-segment averaging demo (self-contained).
 %   For each segment it transforms every member pixel to its UNdecimated complex CWT
 %   (inlined copy of the old core returnComplex step), combines those across the
@@ -787,7 +768,6 @@ keep=coi<0.05;
 nT=sum(keep); nf=numel(f);
 nwAvg=0; if s.parforVasomotionAveraging, nwAvg=Inf; end   %worker bound, not a branch
 shpA=identityShapes();
-nPixTotal=nnz(sMapLin>0);   %segmented pixels iterated per combine pass (progress total)
 
 for combo=1:2
     if combo==1 && ~doCoh, continue; end
@@ -808,12 +788,6 @@ for combo=1:2
     avbSpctPct=zeros(nSeg,nf,numel(s.pcts)-1,'single');
     [atsVB,atsCB,afCentTV,afSprdTV,anPeakTV,aflareVB,aflareCB]=deal(zeros(nT,nSeg,'single'));
 
-    %Per-SEGMENT ticks from the client: the inner parfor is per segment, so a
-    %worker send would have to fire on an index that does not span the loop.
-    %Counting whole segments costs the workers nothing and is just as monotone.
-    avgLabel=sprintf('Segment averaging (%s)',comboName(combo));
-    reportStage(rep,avgLabel);
-    donePix=0;
     for kk=1:nSeg
         pix=find(sMapLin==kk);
         nPix=numel(pix);
@@ -833,8 +807,6 @@ for combo=1:2
                 wttsPix(:,:,pp)=interp1(fwt,wtts,f);
             end
         end
-        donePix=donePix+nPix;
-        reportProgress(rep,donePix/max(nPixTotal,1),avgLabel);
         validPix=squeeze(all(isfinite(wttsPix),[1 2]));
         if ~any(validPix), continue; end
         if combo==1
@@ -863,7 +835,6 @@ for combo=1:2
         atsVB(:,kk)=m.ts; atsCB(:,kk)=m.tsc; afCentTV(:,kk)=m.fCent; afSprdTV(:,kk)=m.fSprd; anPeakTV(:,kk)=m.nPeak;
         aflareVB(:,kk)=m.flare; aflareCB(:,kk)=m.cbFlare;
     end
-    reportProgress(rep,1,avgLabel);   %forced final tick
 
     accA=struct('vbAmpMean',avbAmpMean,'vbAmpStd',avbAmpStd,'vbAmpSkew',avbAmpSkew,'vbAmpPct',avbAmpPct, ...
         'cbAmpMean',acbAmpMean,'cbAmpStd',acbAmpStd,'cbAmpSkew',acbAmpSkew,'cbAmpPct',acbAmpPct, ...

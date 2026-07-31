@@ -22,8 +22,8 @@
 %              method = {'sLSCIMM','tLSCIMM','ltLSCIMM','sLSCIMMM'}, etc.).
 %     fNames   cell array of full paths to *.rls files produced by the
 %              in-house acquisition software.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – function acts via side-effects (files listed above).
@@ -130,10 +130,8 @@ for fidx=1:1:numel(fNames)
         fseek(fid,firstByte,-1 );
 
         %perform data pre-processing, store spacially decimated information
-        reportStage(rep,'Reading and pre-processing');
         kernel=gpuArray(ones(s.contrastKernelPreproc,s.contrastKernelPreproc,1,'single'));
         for i=1:1:size(data,3)
-            reportProgress(rep,i/size(data,3),'Reading and pre-processing');
             timeStamps(i)=fread(fid,1,'*uint64');
             tmp=gpuArray(fread(fid,s.sizeX*s.sizeY*s.framesToAverage,s.dataType));
             meanI(i)=mean(tmp(:));
@@ -292,7 +290,6 @@ for fidx=1:1:numel(fNames)
         reportSave(rep,fh,'cycle-detect');
         clearvars data;
 
-        reportStage(rep,'Averaging the cardiac cycle');
         s.descendTimePts=round(median(pulsesListFinal(:,3)-pulsesListFinal(:,2)));
         s.ascendTimePts=round(median(pulsesListFinal(:,2)-pulsesListFinal(:,1)));
         s.cycleTimePts=s.ascendTimePts+s.descendTimePts-1;
@@ -396,14 +393,14 @@ for fidx=1:1:numel(fNames)
         sgtitle(fh,['sLSCIMMM ',strrep(tmp{end},'_',' ')]);
         reportSave(rep,fh,'cycle-average');
 
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         settings.runInternalCycle=reportSettings(s);
         results.imgK=squeeze(mean(source.data,3,'omitmissing'));
         results.time=source.time;
         save(strrep(s.fName,'.rls','_c_K_d.mat'),'source','-v7.3');
         save(strrep(s.fName,'.rls','_c_K_r.mat'),'results','-v7.3');
         save(strrep(s.fName,'.rls','_c_K_s.mat'),'settings','-v7.3');
-        reportSaved(rep,3);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

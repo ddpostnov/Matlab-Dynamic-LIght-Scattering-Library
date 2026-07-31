@@ -178,7 +178,7 @@ if ~isempty(fStart)
         idxRraw(f,:)=R(:).';
         offLraw(f)=offL; offRraw(f)=offR;
         if mod(f,500)==0
-            reportProgress(s,f,fEnd);
+            myoProgress(s,f,fEnd);
             if ~isempty(s.cancelFcn) && s.cancelFcn()      % user asked to stop
                 error('getMyographDiameter:cancelled','Diameter measurement stopped by user.');
             end
@@ -202,8 +202,11 @@ end
 end
 
 % =====================================================================
-function reportProgress(s,f,total)
-%REPORTPROGRESS  route frame progress to s.progressFcn (GUI) or the console
+function myoProgress(s,f,total)
+%MYOPROGRESS  route frame progress to s.progressFcn (GUI) or the console.
+%   Named myo* so it cannot SHADOW a Core/Reporting function: addpath(genpath(...))
+%   puts the whole library on one path, and a local called report* would win inside
+%   this file.  This hook is the Myograph subsystem's own, not the library seam.
 if isfield(s,'progressFcn') && ~isempty(s.progressFcn)
     try, s.progressFcn(f,total); catch, end
 else

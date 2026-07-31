@@ -57,8 +57,8 @@
 %                                 false runs the identical loop body serially in the
 %                                 client and starts no pool.
 %     fNames   cell array of *_BFI_d.mat paths.
-%                • Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,
-%                  label), s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
+%                • Optional workbench hooks in s (no-op when absent):
+%                  s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
 %                  between files (never inside the per-pixel parfor).
 %
 %   OUTPUT FILES (side-effects) - NON-DESTRUCTIVE: the raw cycle is preserved
@@ -165,7 +165,6 @@ for fidx=1:1:numel(fNames)
         % =============================================================
         % Per-segment analysis: sData/dvsData (ps prefix), dvsDiameter (pd prefix).
         % =============================================================
-        reportStage(rep,'Pulsatility per segment');
         sigNames={'sData','dvsData','dvsDiameter'};
         for kSig=1:numel(sigNames)
             sigName=sigNames{kSig};
@@ -288,17 +287,8 @@ for fidx=1:1:numel(fNames)
                 %(the old fit overwrote only masked pixels); masked pixels overwritten below.
                 fDataAcc=single(Dpix);
 
-                reportStage(rep,'Pulsatility per pixel');
-                %Throttled AT THE SEND: one send per pixel would cost ~10^5-10^6
-                %client-side callbacks; sendEvery makes it about two hundred.
-                %The queue is created and deleted regardless of whether the loop below
-                %runs parallel: it is the ONE piece of state that must stay switchable
-                %apart from the loop, or "parfor off" and "queue gone" become the same
-                %experiment and neither cause can be told from the other.
-                [dqPix,sendEvery]=reportProgress(rep,'queue',npx,'Pulsatility per pixel');
                 nwPix=0; if s.parforPulsatilityPixels, nwPix=Inf; end   %worker bound, not a branch
                 parfor (p=1:npx, nwPix)
-                    if mod(p,sendEvery)==0, send(dqPix,sendEvery); end
                     if sMapLin(p)==0, continue; end          %background: model 0, fData raw
                     mp=getPulsatilityMetrics(Dpix(p,:).',layoutFit,sFit);
                     if mp.valid
@@ -311,8 +301,6 @@ for fidx=1:1:numel(fNames)
                         hAmpAcc(p,:)=NaN; hPhaseAcc(p,:)=NaN; r2Acc(p)=NaN;
                     end
                 end
-                reportProgress(rep,1,'Pulsatility per pixel');   %forced final tick
-                delete(dqPix);                                   %its afterEach pinned rep
 
                 fDataCube=reshape(fDataAcc,Y,X,nTp);
                 W=fDataCube;                                 %markers on the fitted cube
@@ -365,11 +353,11 @@ for fidx=1:1:numel(fNames)
         end
 
         settings.runPulsatility=reportSettings(s);
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         %NON-DESTRUCTIVE: SOURCE (_d) is never re-saved - only RESULTS and SETTINGS.
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-        reportSaved(rep,2);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

@@ -54,6 +54,22 @@ s.manualMask=0; %allows manual subselection of the area to mask
 
 runContrastFromRLS(s,{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
+%% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
+close all
+clearvars -except libraryFolder rootFolder rawName procType
+
+%A wrapper writes one <recording>_rep_<page>.jpg beside each recording and stops
+%there - the document is assembled HERE, between the steps, so a 60-file step is one
+%thing to page through instead of 60 files.  COPY THIS CELL after any step whose
+%pages you want together and change the tail and the output name: after setRegions
+%it is '_rep_regions.jpg', after runSegmentation '_rep_categories.jpg' and
+%'_rep_segments.jpg', after runRegistration '_rep_registration.jpg', after
+%setVesselTypes '_rep_vesseltypes.jpg'.
+tail='_rep_contrast.jpg'; %the page STEP 1 writes, one per recording
+pdfFolder=fileparts(rawName);
+D=dir(fullfile(pdfFolder,['*',tail]));
+makeReportPdf(fullfile({D.folder}',{D.name}'),fullfile(pdfFolder,'report_contrast.pdf')); %ASSEMBLES THE DOCUMENT
+
 %% STEP 2 (OPTIONAL) Define segmentation regions - this demo uses the WHOLE window
 close all
 clearvars -except libraryFolder rootFolder rawName procType

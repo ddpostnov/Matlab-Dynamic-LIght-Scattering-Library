@@ -31,8 +31,8 @@
 %     fNames   FLAT (order-independent) cell array of *_K_d.mat / *_I_d.mat paths;
 %              iterate element by element (grouping was setRegions' job).  Each file
 %              must have matching *_s.mat / *_r.mat siblings.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   s.fNamesCopyTo - assign the segmentation to siblings (replaces assignCategories)
 %     Mirrors fNames with one extra dimension: s.fNamesCopyTo(i,:) lists the sibling
@@ -141,7 +141,6 @@ for fidx=1:1:numel(fNames)
 
     % --- categorize (automatic core: edge size + enhancement + trust mask + cMask) ---
     if isfield(results,'mask'), existingMask=results.mask; else, existingMask=[]; end
-    reportStage(rep,'Pixel categories');
     [cMask,s.edgeSize,maskOut,imgVis]=getPixelCategories(imgIni,regionsMask,existingMask,isK,s);
     results.regionsMask=regionsMask;
     results.mask=(maskOut==(regionsMask>0));
@@ -150,7 +149,6 @@ for fidx=1:1:numel(fNames)
 
     % --- indexed label maps (mask algebra; merges inner walls into outer) ---
     edgeSize=s.edgeSize;
-    reportStage(rep,'Vessel segments');
     [sMap,pMap,sLines,cMask,~,dMask,~]=getSegmentationLabels(cMask,edgeSize,s); % cMask now merged
     results.pMap=pMap;
 
@@ -233,15 +231,17 @@ for fidx=1:1:numel(fNames)
     results.sMetrics=sMetrics;
     results.sData=sData;
 
-    % --- segments preview ---
-    showSegmentsPreview(rep,s.fName,source.data,cMask,sMap,isK);
+    % --- segments preview: the wrapper owns the canvas, the core only draws ---
+    fh=reportFigure(rep,'segments');
+    showSegmentsPreview(fh,source.data,cMask,sMap,isK);
+    reportSave(rep,fh,'segments',s.fName);
 
     %Save the data
     settings.runSegmentation=reportSettings(s);
-    reportStage(rep,'Saving');
+    reportWriting(rep);
     save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
     save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
-    reportSaved(rep,2);
+    reportSaved(rep);
 
     % --- assign the segmentation to co-registered siblings (s.fNamesCopyTo) ---
     shared=struct('cMask',results.cMask,'regionsMask',regionsMask,'mask',results.mask, ...
@@ -249,7 +249,7 @@ for fidx=1:1:numel(fNames)
     tgts=copyTargets(s,fidx);
     for t=1:1:numel(tgts)
         if ~isempty(tgts{t})
-            copySegmentationOnto(s,tgts{t},shared,rep);
+            copySegmentationOnto(s,tgts{t},shared,rep,fidx);
         end
     end
      end
@@ -267,13 +267,12 @@ end
 end
 
 % =====================================================================
-function copySegmentationOnto(s,targetName,shared,rep)
+function copySegmentationOnto(s,targetName,shared,rep,fidx)
 %copySegmentationOnto  Copy the shared spatial products onto a co-registered sibling
 %   and RE-EXTRACT the target's own sData from its own cube (replaces assignCategories).
-%   The sibling is a different recording from the one the banner named, so this is
-%   the one place the stage line still has to carry a file name.
-[~,tgtStem]=fileparts(targetName);
-reportStage(rep,['Copying segmentation onto ',tgtStem]);
+%   The sibling is a RECORDING OF ITS OWN, so it gets its own three lines - it is
+%   not a sub-stage of the file that was just segmented.
+reportFile(rep,fidx,targetName);
 sT=s; sT.fName=targetName;
 clearvars results source settings
 load(targetName,'source')
@@ -301,13 +300,15 @@ results.sData=extractTraces(source.data,shared.sMap,sT.sStat);
 % previews from the target's own image with the copied overlays
 imgVis=categoryPreviewBackground(imgIni,isK);
 writeCategoriesPreview(rep,targetName,imgVis,shared.cMask);
-showSegmentsPreview(rep,targetName,source.data,shared.cMask,shared.sMap,isK);
+fh=reportFigure(rep,'segments');
+showSegmentsPreview(fh,source.data,shared.cMask,shared.sMap,isK);
+reportSave(rep,fh,'segments',targetName);
 
 settings.runSegmentation=reportSettings(sT);  % carry edgeSize / sStat onto the sibling
-reportStage(rep,'Saving');
+reportWriting(rep);
 save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
 save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
-reportSaved(rep,2);
+reportSaved(rep);
 end
 
 % =====================================================================

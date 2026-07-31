@@ -19,8 +19,8 @@
 %                                   stored in SETTINGS for traceability)
 %     fNames   cell array of full paths to *_d.mat files produced by the
 %              LSCI pipelines.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – function acts via side-effects:
@@ -86,10 +86,11 @@ for fidx=1:1:numel(fNames)
 
 
 
+        % Every region is cropped and written out in the same pass, so the whole
+        % loop below IS the writing of this recording's results.
         nRoi=double(max(regionsMask(:)));
-        reportStage(rep,['Splitting into ',num2str(nRoi),' region(s)']);
+        reportWriting(rep);
         for ridx=1:1:nRoi
-            reportProgress(rep,ridx/max(nRoi,1),'Splitting the regions');
             results=resultsIni;
             source=sourceIni;
             [y,x] = find(regionsMask==ridx);
@@ -136,8 +137,7 @@ for fidx=1:1:numel(fNames)
             save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
             save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
         end
-        reportStage(rep,'Saving');
-        reportSaved(rep,3*nRoi);
+        reportSaved(rep);
         if s.deleteOriginal
             delete(fNames{fidx});
             delete(strrep(fNames{fidx},'_d.mat','_s.mat'));

@@ -4,7 +4,7 @@
 %   because this library's steps are BRANCH-AGNOSTIC in the middle:
 %
 %     requires     ALL of these must be done/selected.  A hard chain -
-%                  splitRegions genuinely cannot run before setRegions.
+%                  dynamicSegmentation genuinely cannot run before segmentation.
 %     requiresAny  AT LEAST ONE of these must be done/selected.  The middle of the
 %                  pipeline (regions, segmentation, BFI, registration) consumes
 %                  '*_K_d.mat' - ANY branch product of the recording - so it is

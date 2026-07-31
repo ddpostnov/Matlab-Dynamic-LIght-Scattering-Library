@@ -32,8 +32,8 @@
 %                .cxd), same size as fNames.  If omitted or left empty, the raw
 %                file name is derived from each *_d.mat name and expected in the
 %                same folder (just like the rest of the pipeline).
-%    Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%    s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%    Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%    s.cancelFcn()->tf.
 %
 % Outputs:
 %    (none) - updates each *_r.mat with results.gsData [nFrames x nRegions],
@@ -119,7 +119,6 @@ for fidx=1:1:numel(fNames)
         nT=cfg.sizeT;
         batchSize=getBatchSize(numel(pixIdx),cfg.sizeY*cfg.sizeX,nT,s.memoryCoef);
 
-        reportStage(rep,'Guided speckle contrast');
         gsData=nan(nT,nRegions);
         timeStamps=zeros(nT,1);
         done=0;
@@ -135,7 +134,6 @@ for fidx=1:1:numel(fNames)
             gsData(done+1:done+b,:)=(sqrt(varX)./meanX)';
             timeStamps(done+1:done+b)=tsB;
             done=done+b;
-            reportProgress(rep,done/nT,'Guided speckle contrast');
         end
         closeRawStream(st,cfg);
 
@@ -146,10 +144,10 @@ for fidx=1:1:numel(fNames)
         % Save the settings and results
         s.rawFrameRate=1./median(diff(results.gsTime));
         settings.runGuidedContrast=reportSettings(s);
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
         save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
-        reportSaved(rep,2);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

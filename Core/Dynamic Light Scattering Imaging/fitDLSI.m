@@ -57,11 +57,6 @@
 %    'mask'       - (Logical/Numeric) Pixels to fit, [Y, X]. Default: [] (all).
 %    'isAdaptive' - (Logical) Adapt beta/p bounds during fitting.
 %                   Default: true.
-%    'progressFcn'- (Function handle) Progress sink, progressFcn(frac,label).
-%                   Default: [] - the per-batch percentage is printed to the
-%                   command window exactly as it always has been, so every
-%                   existing caller is unaffected.  Supplied, one bar spans all
-%                   the coherence-loss passes instead.
 %    'parforFit'  - (Logical) Fit the pixels of a batch in parallel.
 %                   Default: true - today's behaviour.  It is a WORKER BOUND on the
 %                   fit parfor, not a branch: false runs the identical loop body
@@ -69,6 +64,11 @@
 %                   machine that cannot afford a full pool needs.  ONE switch covers
 %                   all four model types because they are four mutually exclusive
 %                   branches of a single loop - exactly one ever executes.
+%
+%   IT SAYS NOTHING WHILE IT WORKS.  Reporting belongs to the wrapper, which names
+%   the recording before this is called and closes it with an elapsed time after;
+%   a per-batch percentage underneath that is noise.  A core neither reports nor
+%   takes a reporting argument.
 %
 % Outputs:
 %    model - Lightweight fit struct (does NOT store g2) with fields:
@@ -96,7 +96,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 23-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function model = fitDLSI(g2, lags, iniTau, varargin)
@@ -115,13 +115,8 @@ addParameter(p, 'betaMax', [], @(x) isempty(x) || isnumeric(x));
 addParameter(p, 'bs', 1, @(x) isnumeric(x) && isscalar(x) && x>0);
 addParameter(p, 'mask', [], @(x) isempty(x) || isnumeric(x) || islogical(x));
 addParameter(p, 'isAdaptive', true, @(x) islogical(x) || ismember(x,[0 1]));
-addParameter(p, 'progressFcn', [], @(x) isempty(x) || isa(x,'function_handle'));
 addParameter(p, 'parforFit', true, @(x) islogical(x) || ismember(x,[0 1]));
 parse(p, g2, lags, iniTau, varargin{:});
-
-% Absent (the default) the per-batch percentage is printed exactly as it always
-% has been, so the DLSI launchers and everything in Drafts/ are unaffected.
-progressFcn = p.Results.progressFcn;
 
 % Worker bound for the fit parfor below, not a branch: Inf = as many workers as the
 % pool offers (today's behaviour), 0 = the identical loop body run serially in the
@@ -286,16 +281,6 @@ for fi=1:nForms
     fSse=zeros(size(iniTau));  fD=zeros(size(iniTau));   fC=zeros(size(iniTau));
     fP=ones(size(iniTau));
     for ii=0:poolSize:size(g2,1)-1
-        if isempty(progressFcn)
-            if nForms>1
-                disp([cc,': ',num2str(round(ii/size(g2,1)*100)),'%'])
-            else
-                disp([num2str(round(ii/size(g2,1)*100)),'%'])
-            end
-        else
-            % One bar across all the coherence-loss passes, not one per pass.
-            progressFcn((fi-1+ii/size(g2,1))/nForms, 'DLSI fit');
-        end
         iEnd=min(ii+poolSize,size(g2,1));           % last batch covers the remainder
         if isAdaptive && ii>updStep
             tsR2=fR2((ii-updStep+1):ii);

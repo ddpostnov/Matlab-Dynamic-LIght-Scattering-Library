@@ -13,6 +13,17 @@
 %     3. Settings fingerprint.  The current step settings are compared to the
 %        stored settings.(gatingField); a mismatch flips a done step to stale.
 %
+%   A PREREQUISITE IS ALSO SATISFIED BY THIS RUN (opts.plannedIds, author
+%   2026-07-31).  The disk is not the only source: a step whose producer is
+%   SELECTED TO RUN in the same sequence will have its input by the time it is
+%   reached, because the run order is step-major and puts the producer first.
+%   Judging it on the disk alone made the workbench say "no input file" about a file
+%   it was itself three lines away from writing.  Such a step therefore reads READY,
+%   and NOT done - nothing has happened yet - with the reason saying exactly why it
+%   is ready: 'input will be produced earlier in this run'.  With no plannedIds the
+%   answer is the disk's alone, which is what every caller outside the live
+%   workbench (the tests, a bare query) gets.
+%
 %   PER FILE, NOT PER RECORDING (spec D6/D8, author 2026-07-28).  One raw
 %   recording can drive TWO independent pipelines - the raw producers each write
 %   their own triplet ('_t_K', '_c_K') and everything later APPENDS to one of them
@@ -46,12 +57,18 @@
 %                  settings struct s (from wbSettingsModel).  Used only for the
 %                  staleness fingerprint; omit/[] to skip (done stays done).
 %    opts        - (optional) struct with:
-%                    .sData  containers.Map name->settings struct, injected in
-%                            place of a disk scan (for pure unit tests).
+%                    .sData       containers.Map name->settings struct, injected in
+%                                 place of a disk scan (for pure unit tests).
+%                    .plannedIds  cellstr of step ids THIS FILE'S configuration will
+%                                 run in the sequence about to be executed.  They
+%                                 count as satisfied prerequisites (see above); they
+%                                 never make a step read 'done'.  {} or absent = the
+%                                 disk alone decides.
 %
 % Outputs:
 %    st - 1xN struct array aligned to reg, with fields:
 %           id, applicable (logical), state (char), reason (char).
+%         'ready' carries a reason only when it was reached through plannedIds.
 %
 % See also: wbFileModel, wbStepRegistry, wbTypeSelection, wbInvalidate,
 %           removeProcessedFiles
@@ -75,6 +92,11 @@ ids   = {reg.id};
 gate  = {reg.gatingField};
 gateOf = containers.Map(ids, gate);
 
+% what the disk says has run, and what THIS RUN will add to it before it gets here
+onDiskIds  = doneStepIds(reg, gateOf, doneFields);
+plannedIds = plannedOf(opts);
+availIds   = uniqueStable([onDiskIds, plannedIds]);
+
 st = repmat(struct('id','','applicable',false,'state','','reason',''),1,numel(reg));
 
 for k = 1:numel(reg)
@@ -95,7 +117,10 @@ for k = 1:numel(reg)
     else
         doneOnDisk = ismember(step.gatingField, doneFields);
     end
-    requiresDone = wbPrereqs('met', step, doneStepIds(reg, gateOf, doneFields));
+    % wbPrereqs stays THE single definition of "satisfied" - it is simply asked
+    % twice, of two different sets, so the answer can say which one carried it
+    requiresDone = wbPrereqs('met', step, availIds);
+    requiresNow  = wbPrereqs('met', step, onDiskIds);
     hasInput = inputAvailable(step, model, requiresDone, doneOnDisk);
 
     if doneOnDisk
@@ -115,8 +140,33 @@ for k = 1:numel(reg)
         st(k).reason = 'no input file';
     else
         st(k).state = 'ready';
+        if ~requiresNow
+            st(k).reason = 'input will be produced earlier in this run';
+        end
     end
 end
+end
+
+% =====================================================================
+function ids = plannedOf(opts)
+%plannedOf  The step ids this run will produce, as supplied by the host.  Coerced
+%   rather than trusted: an absent field, [] and a string array all mean the same
+%   thing here, and a caller with no plan at all is the normal case.
+ids = {};
+if ~isstruct(opts) || ~isfield(opts,'plannedIds') || isempty(opts.plannedIds), return; end
+v = opts.plannedIds;
+if ischar(v), v = {v}; end
+if isstring(v), v = cellstr(v); end
+if iscell(v), ids = reshape(cellfun(@char, v, 'UniformOutput', false), 1, []); end
+end
+
+% =====================================================================
+function u = uniqueStable(c)
+%uniqueStable  Unique cellstr, order preserved (unique(...,'stable') on a 1xN cell).
+u = {};
+if isempty(c), return; end
+u = unique(c,'stable');
+u = reshape(u,1,[]);
 end
 
 % =====================================================================
@@ -211,7 +261,12 @@ end
 
 % =====================================================================
 function tf = inputAvailable(step, model, requiresDone, doneOnDisk)
-%inputAvailable  Whether the step could run now (its input exists).
+%inputAvailable  Whether the step will have its input when it is reached.
+%   requiresDone already counts the producers this run will run before it (see
+%   plannedIds in the header), so a step whose input is a PRODUCT is available as
+%   soon as its producer is on disk OR queued ahead of it.  An entry step reading a
+%   RAW recording is the one exception that no plan can help: the recording either
+%   sits beside the model or it does not.
 if doneOnDisk, tf = true; return; end            % already ran => input existed
 if isempty(step.requires)
     % entry step (contrast/internalCycle): needs the raw recording on disk
@@ -264,7 +319,7 @@ if ~isstruct(cur), return; end
 
 fields = stepFields(step);
 ignore = {'libraryFolder','fNamesCopyTo','optimizer','metric','categories', ...
-          'refFName','fName','progressFcn','stageFcn','cancelFcn'};
+          'refFName','fName','stageFcn','cancelFcn'};
 for i = 1:numel(fields)
     f = fields{i};
     if ismember(f, ignore), continue; end

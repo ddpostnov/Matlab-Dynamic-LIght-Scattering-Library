@@ -23,8 +23,8 @@
 %                • rotationLimit       degrees; reject an intensity/correlation
 %                                      transform rotating > this ([]=no limit)
 %     fNames   cell array of *_K_d.mat paths.  First file is the template.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf (before work + between files).
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf (before work + between files).
 %
 %   OUTPUT (side-effects)
 %       For every file k
@@ -138,11 +138,9 @@ end
 % RESULTS data, which is re-loaded further down.  commonMask keeps the category
 % values (not the binary support) for the consensus stage that follows.
 proxy=cell(size(fNames));
-reportStage(rep,'Preparing the registration proxies');
 for oidx=1:numel(procOrder)
     fidx=procOrder(oidx);
     if ~isempty(fNames{fidx})
-        reportProgress(rep,oidx/numel(procOrder),'Preparing the registration proxies');
         clearvars results source
         load(fNames{fidx},'source');
         load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
@@ -215,7 +213,6 @@ sEng.rotationLimit=rotationLimit;
 if isfield(s,'tFormType'), sEng.tFormType=s.tFormType; end
 if isfield(s,'optimizer'), sEng.optimizer=s.optimizer; end
 if isfield(s,'metric'),    sEng.metric=s.metric;       end
-reportStage(rep,'Registering to the reference');
 [repTforms,repDiag]=registerToReference(proxy(repList),sEng);
 
 repPos=zeros(size(fNames));                  % fidx -> its row in repList / repDiag
@@ -473,11 +470,11 @@ for fidx=1:1:size(fNames,1)
         s.imgRefIni=imgRefIni;
         settings.runRegistration=reportSettings(s);
         %Save the data
-        reportStage(rep,'Saving');
+        reportWriting(rep);
         save(fNames{fidx},'source','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
         save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
-        reportSaved(rep,3);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

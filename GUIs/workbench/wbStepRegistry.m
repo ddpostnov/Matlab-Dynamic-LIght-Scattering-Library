@@ -8,9 +8,9 @@
 %   branch main - see claude-docs/processing-workbench/01-pipeline-map.md.
 %
 %   Steps are listed in dependency order:
-%     contrast · internalCycle · externalCycle · setRegions · splitRegions ·
-%     segmentation · dynamicSegmentation · guided · registration · BFI ·
-%     vasomotion · pulsatility · vesselTypes · vascularTree
+%     contrast · internalCycle · externalCycle · setRegions · segmentation ·
+%     dynamicSegmentation · guided · registration · BFI · vasomotion ·
+%     pulsatility · vesselTypes · vascularTree
 %
 % Syntax:
 %    reg = wbStepRegistry()
@@ -53,6 +53,8 @@
 %                    products the step consumes (see below)
 %       fanOut       'flat' | 'animal' - the SHAPE of the fNames a call gets when
 %                    several recordings are batched into it (see below)
+%       fileOrder    'independent' | 'ordered' - whether the wrapper READS ACROSS
+%                    its file list, i.e. whether the list may be cut up (see below)
 %       refBranch    'contrast' | 'cardiac' | '' - which BRANCH of the animal's
 %                    REFERENCE RECORDING this step prefers (see below)
 %
@@ -93,9 +95,9 @@
 %                (vasomotion on _t, pulsatility/vascularTree on _c, the entry steps
 %                that read the raw recording).
 %       'all'  - every branch product of the recording, as an Nx1 fNames column, the
-%                way the launcher passes '*_K_d.mat' (splitRegions, BFI,
-%                dynamicSegmentation).  The wrapper's own per-file loop then
-%                covers the branches, one workbench cell for the lot.
+%                way the launcher passes '*_K_d.mat' (BFI, dynamicSegmentation).
+%                The wrapper's own per-file loop then covers the branches, one
+%                workbench cell for the lot.
 %       'copy' - the step RUNS on the contrast-side file and the result is inherited
 %                by the other branches through the wrapper's s.fNamesCopyTo
 %                (setRegions, segmentation).  This is what makes the interactive /
@@ -135,6 +137,27 @@
 %     pattern is the animal token.  Left flat, every recording would arrive as its
 %     own row and the drawn region could never persist from one recording of an
 %     animal to the next, which is the whole point of the step (author, 2026-07-29).
+%   * FILEORDER - branchScope says how many files one recording brings and fanOut
+%     how several recordings are laid out; fileOrder says whether the resulting list
+%     may be CUT UP.  It is what lets one recording fail without taking the rest of
+%     the call with it: for an 'independent' step the executor invokes the wrapper
+%     once per recording, so a throw reddens that one cell and the remaining
+%     recordings still run; for an 'ordered' step it makes the single call it always
+%     made, because the wrapper's cross-file state is exactly what would be lost.
+%       'independent' - the wrapper LOOPS its file list and each iteration stands on
+%                       its own.  The default, and true of everything that is not
+%                       named below.
+%       'ordered'     - the wrapper READS ACROSS the list: a template, a carry-
+%                       forward, or a per-file index into something else.  Each of
+%                       the four says WHY on its own line.
+%     IT CANNOT BE DERIVED from the other fields, which is why it is declared:
+%     externalCycle is perFile / flat / branchScope 'one' / no refBranch - the exact
+%     profile of an independent step - yet it indexes a per-file stimulus list, so
+%     every rule that guesses gets it wrong (author, 2026-07-31).
+%     It also decides where a run STOPS after a failure: errors never abort mid-step,
+%     but the run ends when the expansion reaches the first 'ordered' step while a
+%     recording is still red, since a cross-file step given a half-processed set is
+%     the one thing worse than stopping (spec D7/D8).
 %   * RAW PRODUCER vs DERIVED CONSUMER (author, 2026-07-28).  A step whose inGlob
 %     is NOT a '*.mat' glob reads the raw recording and writes a NEW, independent
 %     triplet: contrast writes '_t_K' (or '_s_K' when the type's contrastType is
@@ -166,8 +189,9 @@
 %     product - listing 'contrast' as a hard requirement made it tick a step it
 %     does not run.  They therefore declare requiresAny={'contrast','internalCycle'};
 %     the FIRST entry is the default producer a one-click chain pulls in.  Hard
-%     chains (splitRegions after setRegions, pulsatility after BFI+internalCycle)
-%     stay in 'requires'.  wbPrereqs is the single definition of "satisfied".
+%     chains (dynamicSegmentation after segmentation, pulsatility after
+%     BFI+internalCycle) stay in 'requires'.  wbPrereqs is the single definition
+%     of "satisfied".
 %
 %   * ARTIFACTS, AND WHY THE TAIL LIST SURVIVED THE RENAME (2026-07-29).  Unified
 %     reporting gave every report image a legible name, '<stem>_rep_<stage>.jpg',
@@ -217,7 +241,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function reg = wbStepRegistry(modality)
@@ -294,6 +318,9 @@ s.requires={'contrast'}; s.produces={'epochAvg'};
 s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
 s.artifacts={'_rep_epochs.jpg','_rep_epoch-average.jpg'};
 s.legacyArtifacts={'_ec.jpg','_ec2.jpg'}; s.branch='contrast';
+s.fileOrder='ordered';                               % the stimulus timing is a PER-FILE list
+                                                     % indexed by position in fNames
+
 s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDurationSec', ...
                      'epochBaselineSec','epochStimStartSec','epochFinaleSec'};
                   'Masking',{'maskType','enablelRejectionModification'};
@@ -324,26 +351,18 @@ s.artifacts={'_rep_regions.jpg'};                     % NEW in Session 3: the dr
 s.interactive=true;                                   % always opens the ROI editor
 s.branch=''; s.branchScope='copy';                    % draw on _t, inherit onto _c/_e
 s.fanOut='animal';                                    % rows = animals: ROIs carry along a row
-s.settingGroups={};                                   % fully interactive, no numeric params
+s.fileOrder='ordered';                                % the ROIs drawn on one file are re-offered
+                                                      % on the NEXT file of the row: cut the row up
+                                                      % and the carry-forward is gone
+s.settingGroups={ 'Regions',{'nRegions'} };           % the drawing is interactive; how MANY may
+                                                      % be drawn is the one thing a protocol fixes
+s.basicFields={'nRegions'};
 s.sharedKeys={'libraryFolder'};
-s.presets=struct('default',struct());
+s.presets=struct('default',struct('nRegions',1));     % the wrapper's own default is unlimited (Inf)
+s.tips=struct('nRegions','how many regions you may draw on each recording');
 reg(end+1)=s;
 
-% ---- 5. splitRegions --------------------------------------------------------
-s = base();
-s.id='splitRegions'; s.label='Split regions'; s.wrapper=@splitRegions;
-s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='prefix';
-s.outTransform=struct('from','','to','Roi');          % RoiN_ prefix, N per region
-s.gatingField='splitRegions'; s.requires={'setRegions'}; s.produces={'regionCrops'};
-s.branch=''; s.branchScope='all';                     % crop every branch of the recording
-s.settingGroups={ 'Options',{'deleteOriginal'} };
-s.basicFields={'deleteOriginal'};
-s.sharedKeys={'libraryFolder'};
-s.presets=struct('default',struct('deleteOriginal',false));
-s.tips=struct('deleteOriginal','true only if you will not re-define regions');
-reg(end+1)=s;
-
-% ---- 6. segmentation --------------------------------------------------------
+% ---- 5. segmentation --------------------------------------------------------
 s = base();
 s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -378,7 +397,7 @@ s.tips=struct('lSizeN','odd, ~2x the largest vessel', ...
     'parforSegmentationLabels',parforTip('the per-segment label growing'));
 reg(end+1)=s;
 
-% ---- 7. dynamicSegmentation -------------------------------------------------
+% ---- 6. dynamicSegmentation -------------------------------------------------
 s = base();
 s.id='dynamicSegmentation'; s.label='Dynamic segmentation'; s.wrapper=@runDynamicSegmentation;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -403,7 +422,7 @@ s.tips=struct('sMinP2R2','min accepted R^2 of the 3-degree polynomial fit', ...
     'parforSegmentationLabels',parforTip('the per-segment label growing'));
 reg(end+1)=s;
 
-% ---- 8. guided --------------------------------------------------------------
+% ---- 7. guided --------------------------------------------------------------
 s = base();
 s.id='guided'; s.label='Guided'; s.wrapper=@runGuidedContrast;
 s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -414,7 +433,7 @@ s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct());
 reg(end+1)=s;
 
-% ---- 9. registration (per animal) --------------------------------------------
+% ---- 8. registration (per animal) --------------------------------------------
 s = base();
 s.id='registration'; s.label='Registration'; s.wrapper=@runRegistration;
 s.arity='perAnimal';                                   % 2-D fNames row; col 1 = template
@@ -426,6 +445,8 @@ s.artifacts={'_rep_registration.jpg'};                % was a .png; now a report
 s.legacyArtifacts={'_registration.png'};
 s.branch=''; s.refBranch='contrast';                  % template = the reference's _t|_s
 s.branchScope='all';                                   % EVERY product of every member (launcher: 'Roi*_K_d.mat')
+s.fileOrder='ordered';                                 % column 1 is the TEMPLATE every other
+                                                       % file is registered onto
 s.settingGroups={ 'Registration',{'tFormType','matchSegmentation','prchNSize','silent','forceMethod','rotationLimit'} };
 s.basicFields={'tFormType','silent','forceMethod'};
 s.sharedKeys={'prchNSize','libraryFolder'};
@@ -438,7 +459,7 @@ s.tips=struct('silent','true = pick the best transform automatically (no manual 
     'rotationLimit','degrees; reject registrations rotating beyond this ([] = none)');
 reg(end+1)=s;
 
-% ---- 10. BFI ----------------------------------------------------------------
+% ---- 9. BFI -----------------------------------------------------------------
 s = base();
 s.id='BFI'; s.label='BFI'; s.wrapper=@runBFI;
 s.inGlob='*_K_d.mat'; s.outSuffix={'_BFI_d','_BFI_r','_BFI_s'}; s.outKind='new';
@@ -455,7 +476,7 @@ s.tips=struct('deleteOriginal','delete the original _K_ triplet after conversion
     'method','only "basic" (=1/K^2) is available');
 reg(end+1)=s;
 
-% ---- 11. vasomotion ---------------------------------------------------------
+% ---- 10. vasomotion ---------------------------------------------------------
 s = base();
 s.id='vasomotion'; s.label='Vasomotion'; s.wrapper=@runVasomotion;
 s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';   % contrast-side BFI (_t_BFI or _s_BFI)
@@ -492,7 +513,7 @@ s.tips=struct('vFR','vasomotion frequency band [lo hi], Hz', ...
     'parforVasomotionAveraging',parforTip('the per-segment averaging'));
 reg(end+1)=s;
 
-% ---- 12. pulsatility --------------------------------------------------------
+% ---- 11. pulsatility --------------------------------------------------------
 s = base();
 s.id='pulsatility'; s.label='Pulsatility'; s.wrapper=@runPulsatility;
 s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -513,7 +534,7 @@ s.tips=struct('nHarm','number of harmonics in the sinusoidal cardiac model', ...
     'parforPulsatilityPixels',parforTip('the per-pixel fit'));
 reg(end+1)=s;
 
-% ---- 13. vesselTypes (per animal) --------------------------------------------
+% ---- 12. vesselTypes (per animal) --------------------------------------------
 s = base();
 s.id='vesselTypes'; s.label='Vessel types'; s.wrapper=@setVesselTypes;
 s.arity='perAnimal';                                   % 2-D fNames row; col 1 = reference
@@ -525,6 +546,8 @@ s.artifacts={'_rep_vesseltypes.jpg'};                 % NEW in Session 3: the ar
 s.interactive=true;                                   % paint GUI (per-file skipped under useReference)
 s.branch=''; s.refBranch='cardiac';                   % paint target = the reference's _c
 s.branchScope='all';                                  % EVERY product of every member (launcher: 'Roi*_BFI_d.mat')
+s.fileOrder='ordered';                                % column 1 is the PAINT TARGET the rest
+                                                      % inherit under useReference
 s.settingGroups={ 'Reference',{'useReference'} };
 s.basicFields={'useReference'};
 s.sharedKeys={'libraryFolder'};
@@ -532,7 +555,7 @@ s.presets=struct('default',struct('useReference',false));
 s.tips=struct('useReference','true = paint the first (reference) file only, inherit to the rest');
 reg(end+1)=s;
 
-% ---- 14. vascularTree -------------------------------------------------------
+% ---- 13. vascularTree -------------------------------------------------------
 s = base();
 s.id='vascularTree'; s.label='Vascular tree'; s.wrapper=@setVascularTree;
 s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -569,7 +592,7 @@ s = struct( ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
     'labels',struct(), ...
     'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'fanOut','flat', ...
-    'refBranch','');
+    'fileOrder','independent', 'refBranch','');
 end
 
 % =====================================================================

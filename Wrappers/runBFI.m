@@ -18,8 +18,8 @@
 %                • deleteOriginal   true / false  
 %                • method           currently only "basic" (=1/K²)
 %     fNames   cell array of full paths to *_K_d.mat files.
-%     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%     s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%     s.cancelFcn()->tf.
 %
 %   OUTPUTS
 %     None – the routine operates by overwriting / writing files on disk.
@@ -66,9 +66,6 @@ for fidx=1:1:numel(fNames)
     load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
     load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
 
-    % One line for the conversion, not one per converted field: which internal
-    % struct fields carried data is not something the operator reads output for.
-    reportStage(rep,'Blood flow index');
     fn = fieldnames(source);
     for k=1:numel(fn)
         if contains(fn{k}, 'data', 'IgnoreCase', true )
@@ -95,7 +92,7 @@ for fidx=1:1:numel(fNames)
         end
     end
 
-    reportStage(rep,'Saving');
+    reportWriting(rep);
     settings.calculateBFI=reportSettings(s);
     save(strrep(fNames{fidx},'_K_d.mat','_BFI_d.mat'),'source','-v7.3');
     save(strrep(fNames{fidx},'_K_d.mat','_BFI_r.mat'),'results','-v7.3');
@@ -106,7 +103,7 @@ for fidx=1:1:numel(fNames)
         delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
         delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
     end
-    reportSaved(rep,3);
+    reportSaved(rep);
      end
 end
 reportClose(rep);

@@ -3,7 +3,7 @@
 %   Executes the checked work of a run by calling the REAL pipeline wrappers - it
 %   ORCHESTRATES, it never reimplements any science.  It is the guiMyograph runList
 %   pattern generalised to the file x step matrix: serial, on the main thread,
-%   streaming progress through the Phase-1 hook seam (s.progressFcn / s.stageFcn /
+%   streaming the wrappers' own narration through the hook seam (s.stageFcn /
 %   s.cancelFcn), with continue-on-error and cooperative cancel.
 %
 %   ONE CALL IS A BATCH, NOT A CELL.  Every wrapper in Wrappers/ is a multi-file
@@ -13,15 +13,39 @@
 %   wbBatchPlan, which folds the entries of one step whose resolved settings agree
 %   and shapes their files the way that step declares (registry fanOut).  This
 %   module then does one thing per call:
-%     1. mark every recording of the call 'running',
-%     2. inject the progress/stage/cancel hooks and, when the step inherits its
-%        result onto co-registered siblings, s.fNamesCopyTo,
-%     3. invoke the wrapper once (an interactive step goes through ctx.modalGuard
-%        so the parent window is parked),
-%     4. mark every recording 'done', or every recording 'error' with the message,
-%     5. call ctx.afterDone ONCE PER FOLDED ENTRY, so per-recording artifact
+%     1. RESOLVE the call's files, against the disk as it is at that moment,
+%     2. mark the recordings about to run 'running',
+%     3. inject the stage/cancel hooks and, when the step inherits its result onto
+%        co-registered siblings, s.fNamesCopyTo,
+%     4. invoke the wrapper (an interactive step goes through ctx.modalGuard so the
+%        parent window is parked),
+%     5. mark 'done', or 'error' with the message,
+%     6. call ctx.afterDone ONCE PER FOLDED ENTRY, so per-recording artifact
 %        collection, downstream invalidation and the per-column PDF accounting are
 %        exactly what they were when a call was a single cell (spec D6).
+%
+%   THE FILES ARE RESOLVED HERE, NOT BEFORE THE RUN (author, 2026-07-31).  The run
+%   order is step-major, so contrast runs before the setRegions entry that consumes
+%   its product - but resolving every batch's files in one pass up front asked for
+%   that product while it did not exist yet, and setRegions was marked as an error
+%   before anything had been attempted.  Step 1 above is that fix: wbBatchPlan
+%   'build' now touches no disk, and 'resolve' runs immediately before each call.
+%   A batch whose input is genuinely still missing is marked and logged THERE, one
+%   line, and the loop carries on with the next call.
+%
+%   ONE FILE ERRORS, ONE CELL GOES RED (spec D8/D9).  Whether a fold may be cut up
+%   is the step's own declaration, registry fileOrder:
+%     'independent' - the wrapper simply loops its list, so the executor invokes it
+%                     ONCE PER RECORDING out of the fold.  A throw then reddens that
+%                     recording alone; the ones already finished stay done and keep
+%                     their afterDone, the ones after it still run, and the ones
+%                     never reached are left untouched rather than being marked.
+%     'ordered'     - the wrapper reads ACROSS its list (a template, a carry-forward,
+%                     a per-file stimulus index), so it gets the single call it
+%                     always got and a throw marks the whole call.  That is correct
+%                     rather than regrettable: the cross-file state is gone with it.
+%   The try/catch lives HERE, once (spec D9).  No wrapper has one and no wrapper was
+%   asked to change.
 %
 %   The executor is decoupled from the figure through a CONTEXT struct of
 %   callbacks (ctx), so it can be unit-tested headlessly (drive it with recording
@@ -47,7 +71,6 @@
 %       .resolve(step,mdl)-> resolved settings s (wbSettingsModel)
 %       .contrastStage(m) -> 't' | 's'  (which contrast flag this project uses)
 %       .setState(id,step,state,msg)   set a cell running/done/error (''=revert)
-%       .progress(id,step,frac,label)  progress-hook sink
 %       .log(msg)                      append one line to the log / CW mirror
 %       .isCancelled()    -> tf        cooperative cancel flag
 %       .modalGuard(fcn)               run fcn with the parent window parked
@@ -66,29 +89,30 @@
 %      it - the input glob, the branch fan-out (branchScope), the copy targets, the
 %      raw partner, the per-animal reference, and the shape (fanOut: a flat column,
 %      or one row per animal for a wrapper that carries state across a row).  This
-%      module knows only that a batch has an fNames and a list of recordings.
-%    * STATE IS REPORTED PER BATCH (spec D4).  Every recording of a call reads
-%      'running' from the moment it starts until it returns, and then 'done' or
-%      'error' together; the percent rides on the call's first recording, and the
-%      per-file detail comes from the wrapper, which narrates through
-%      Core/Reporting.
-%    * THE LOG IS A LIST OF RECORDINGS, NOT A TRANSCRIPT.  Core/Reporting routes by
-%      CLASS: the per-file banner, the save line and any warning reach s.stageFcn
-%      and so this log; the stage detail and the progress ticks do not - the ticks
-%      go to s.progressFcn, which paints the progress label and the cell percent
-%      and never appends.  A 60-file column is therefore ~2 lines per recording,
-%      inside wbLog's 400-line cap, instead of the ~7 it would be if every class
-%      were appended.
+%      module knows only that a batch has an fNames and a list of recordings, and
+%      that each of its units carries the same thing for one recording.
+%    * STATE IS REPORTED PER INVOCATION.  For an 'ordered' step that is the whole
+%      call, exactly as before (spec D4); for an 'independent' one it is the
+%      recording, which is what makes a single red cell possible.  'running' carries
+%      NO percentage - there is no progress axis - and the per-file detail comes
+%      from the wrapper, which narrates through Core/Reporting.
+%    * THE LOG IS A LIST OF RECORDINGS, NOT A TRANSCRIPT.  A wrapper emits exactly
+%      three lines per recording - Starting, Writing results, Finished with the
+%      time it took - and every one of them reaches s.stageFcn and so this log.  A
+%      60-file column is therefore 3 lines per recording and nothing else, which is
+%      what keeps it inside wbLog's 400-line cap.
 %    * Cancel is checked between calls and, via s.cancelFcn, between files inside a
 %      wrapper (the Phase-1 seam only cancels on file boundaries).  A cancel that
-%      lands mid-call reverts THAT call's recordings - they may be partly processed
-%      - and the run stops cleanly.
-%    * Any error in one call is caught -> that call's recordings go 'error' and the
-%      run CONTINUES with the next call.  The remainder of the failed call is lost,
-%      exactly as it is inside a launcher cell (spec D1, accepted).
-%    * A recording whose prerequisite input cannot be located never reaches a
-%      wrapper: it is reported before the run starts and left for a later one.  It
-%      does not take the rest of its call down with it.
+%      lands mid-call reverts THAT invocation's recordings - they may be partly
+%      processed - and the run stops cleanly.  Cancel keeps precedence over
+%      everything below.
+%    * WHERE A FAILED RUN STOPS (spec D7).  An error never aborts a step: the step
+%      is attempted on every one of its files whatever happened to the others.  The
+%      run then carries on until the expansion reaches the first step whose
+%      fileOrder is 'ordered' while a recording is still red, and stops cleanly
+%      there - a step that reads across the whole file set must not be handed a set
+%      with holes in it.  The log line names what failed and what was not attempted.
+%      With nothing red the run goes to the end, as it always did.
 %
 % See also: wbBatchPlan, guiWorkbench, wbStepRegistry, wbSettingsModel,
 %           wbModalGuard, wbArtifacts, wbInvalidate, wbRefBranch, guiMyograph
@@ -96,7 +120,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function wbExecutor(entries, ctx)
@@ -107,91 +131,190 @@ if isempty(entries), ctx.log('Nothing checked - nothing to run.'); return; end
 reportSkipped(ctx, skipped);
 ctx.log(sprintf('=== RUN: %d job(s) in %d call(s) ===', numel(entries), numel(batches)));
 
+failed  = {};                    % what has gone red so far, in words (spec D7)
+stopped = false;
 for i = 1:numel(batches)
-    if ctx.isCancelled(), ctx.log('Stopped.'); break; end
+    if ctx.isCancelled(), ctx.log('Stopped.'); stopped = true; break; end
     b   = batches(i);
     sid = b.stepId;
 
-    % ---- the hooks, bound to the CALL (its first recording carries the percent) ---
-    %
-    % NO TAG ON THE LOG LINE.  Core/Reporting already filters by class, so only the
-    % lines that name a recording reach here (banner, save, warning, error); the
-    % stage detail and the progress ticks never do.  What arrives is a finished
-    % sentence, and the executor knows which step is running without being told -
-    % the tag it used to prepend was the WRAPPER's name, which is not a word the
-    % operator has ever seen.  The step is named once, in the call header below,
-    % and everything the call says is indented under it.
-    s = b.s;
-    s.progressFcn = @(f,l) ctx.progress(b.heads(1).identity, sid, f, hookLabel(l));
-    s.stageFcn    = @(~,d) ctx.log(['  ' hookLabel(d)]);
-    s.cancelFcn   = @() ctx.isCancelled();
-    % THE DOCUMENT IS THE COLUMN'S, NOT THE CALL'S.  A wrapper assembles a PDF of
-    % its own report images when it is run from a launcher, where the call IS the
-    % step; here a column spans several batched calls, so the wrapper must not
-    % assemble one and flushPdfColumn does it for the whole column instead.  The
-    % images are likewise never the wrapper's to delete - wbArtifacts re-resolves
-    % them from disk to paint the result list, and a call is only part of a column,
-    % so the only place that may remove them is flushPdfColumn, after its own PDF.
-    s.reportPdf        = false;
-    s.reportKeepImages = true;
-    if strcmp(sid,'vesselTypes') && ~isempty(b.refName)
-        s.refFName = b.refName;                          % per-animal paint reference (launcher idiom)
-    end
-    if ~isempty(b.copyTo)
-        s.fNamesCopyTo = b.copyTo;                       % the other branches inherit the result
-        tg = copyTargetList(b.copyTo);
-        ctx.log(sprintf('  copy to %d sibling(s): %s', numel(tg), ...
-            strjoin(cellfun(@shortName,tg,'UniformOutput',false),', ')));
-    end
-
-    % ---- run it (every recording of the call is marked together) ------------------
-    markCells(ctx, sid, b.models, 'running', '');
-    % ONE HEADER PER CALL, and the wrapper's own per-file banners are the indented
-    % lines under it.  The step comes first because that is what the column is; the
-    % count is of REAL files (a per-animal shape pads its ragged rows with '').
-    ctx.log(sprintf('%s - %s (%d file(s))', b.step.label, b.label, ...
-        nnz(~cellfun(@isempty, b.fNames(:)))));
-    call = @() invokeWrapper(b.step, s, b.fNames, b.rawNames);
-    try
-        if isInteractiveStep(b.step, s)
-            ctx.modalGuard(call);
-        else
-            call();
-        end
-    catch ME
-        if isCancelErr(ME)
-            markCells(ctx, sid, b.models, '', '');       % revert; may be partial
-            ctx.log('Stopped by user.');
-            break
-        end
-        markCells(ctx, sid, b.models, 'error', ME.message);
-        ctx.log(sprintf('ERROR %s - %s: %s', b.step.label, b.label, ME.message));
-        continue                                         % continue-on-error
-    end
-
-    % cooperative cancel can fire mid-call without throwing (checked between files
-    % inside the wrapper): if it did, do NOT mark this call done.
-    if ctx.isCancelled()
-        markCells(ctx, sid, b.models, '', '');
-        ctx.log('Stopped.');
+    % ---- a cross-file step must not meet a set with holes in it (spec D7) --------
+    if ~isempty(failed) && isOrdered(b)
+        ctx.log(stopLine(b, batches(i:end), failed));
+        stopped = true;
         break
     end
 
-    markCells(ctx, sid, b.models, 'done', '');
-    for k = 1:numel(b.entries)                           % once per FOLDED ENTRY (spec D6)
-        ctx.afterDone(b.heads(k).identity, sid, b.heads(k));
+    % ---- WHICH FILES, asked now that the earlier steps have written theirs -------
+    [b, okFiles, whyFiles] = wbBatchPlan('resolve', b, ctx);
+    if ~okFiles
+        markCells(ctx, sid, b.models, 'error', whyFiles);
+        ctx.log(sprintf('skip %s - %s: %s', b.step.label, b.label, whyFiles));
+        failed{end+1} = sprintf('%s / %s', b.step.label, b.label); %#ok<AGROW>
+        continue
     end
+
+    % ---- the hooks, bound to the CALL -------------------------------------------
+    %
+    % NO TAG ON THE LOG LINE.  A wrapper emits exactly three lines per recording
+    % (Starting / Writing results / Finished ... time elapsed), each of them a
+    % finished sentence that names the recording, so there is nothing to filter and
+    % nothing to label.  The executor knows which step is running without being told
+    % - the tag it used to prepend was the WRAPPER's name, which is not a word the
+    % operator has ever seen.  The step is named once, in the call header below, and
+    % everything the call says is indented under it.
+    %
+    % NO PROGRESS HOOK.  There is no progress axis any more: a long loop is silent
+    % between its two lines, and the monitor cell reads 'running' with no percentage.
+    % NO PDF SWITCHES either - a wrapper never assembles a document, so there is
+    % nothing to opt out of; flushPdfColumn assembles the column's own, between the
+    % steps, out of the images wbArtifacts re-resolves from disk.
+    %
+    % s.fNamesCopyTo and s.refFName are NOT set here: they belong to one invocation,
+    % and an independent step has one per recording.  callSettings adds them.
+    s = b.s;
+    s.stageFcn  = @(~,d) ctx.log(['  ' hookLabel(d)]);
+    s.cancelFcn = @() ctx.isCancelled();
+
+    % ONE HEADER PER CALL, and the wrapper's own per-file banners are the indented
+    % lines under it.  The step comes first because that is what the column is; the
+    % count is of REAL files (a per-animal shape pads its ragged rows with '').
+    ctx.log(sprintf('%s - %s (%d file(s))', b.step.label, b.label, fileCount(b.fNames)));
+    logCopyTargets(ctx, b.copyTo);
+
+    if isOrdered(b)
+        [outcome, whoFailed] = runBatchWhole(ctx, b, s);
+    else
+        [outcome, whoFailed] = runBatchPerUnit(ctx, b, s);
+    end
+    if strcmp(outcome,'cancel'), stopped = true; break; end
+    failed = [failed, whoFailed]; %#ok<AGROW>   already marked and logged where it happened
 end
 
-ctx.log('=== RUN complete ===');
+if stopped
+    ctx.log('=== RUN stopped ===');
+else
+    ctx.log('=== RUN complete ===');
+end
+end
+
+% =====================================================================
+function [outcome, failedNames] = runBatchWhole(ctx, b, s)
+%runBatchWhole  An 'ordered' step: ONE call over the whole fold, marked together.
+%   A throw takes the call with it, which is the honest reading - whatever the
+%   wrapper was carrying across its files is gone.
+outcome = 'ok'; failedNames = {};
+sid = b.stepId;
+markCells(ctx, sid, b.models, 'running', '');
+[ok, ME] = invokeGuarded(ctx, b.step, callSettings(s, sid, b), b.fNames, b.rawNames);
+if ~ok
+    if isCancelErr(ME)
+        markCells(ctx, sid, b.models, '', '');           % revert; may be partial
+        ctx.log('Stopped by user.');
+        outcome = 'cancel'; return
+    end
+    markCells(ctx, sid, b.models, 'error', ME.message);
+    ctx.log(errorLine(b.step, b.label, ME));
+    outcome = 'error'; failedNames = {sprintf('%s / %s', b.step.label, b.label)};
+    return
+end
+% cooperative cancel can fire mid-call without throwing (checked between files
+% inside the wrapper): if it did, do NOT mark this call done.
+if ctx.isCancelled()
+    markCells(ctx, sid, b.models, '', '');
+    ctx.log('Stopped.');
+    outcome = 'cancel'; return
+end
+markCells(ctx, sid, b.models, 'done', '');
+finishUnits(ctx, sid, b.units);
+end
+
+% =====================================================================
+function [outcome, failedNames] = runBatchPerUnit(ctx, b, s)
+%runBatchPerUnit  An 'independent' step: one invocation per RECORDING, out of the
+%   same fold.  The recordings are marked as they go, so a failure reddens one cell,
+%   the ones before it keep their 'done' and their afterDone, the ones after it
+%   still run, and the ones a cancel never reached carry no state at all.
+outcome = 'ok'; failedNames = {};
+sid = b.stepId;
+for k = 1:numel(b.units)
+    u = b.units{k};
+    markCells(ctx, sid, u.models, 'running', '');
+    [ok, ME] = invokeGuarded(ctx, b.step, callSettings(s, sid, u), u.fNames, u.rawNames);
+    if ~ok
+        if isCancelErr(ME)
+            markCells(ctx, sid, u.models, '', '');       % revert; may be partial
+            ctx.log('Stopped by user.');
+            outcome = 'cancel'; return
+        end
+        markCells(ctx, sid, u.models, 'error', ME.message);
+        ctx.log(errorLine(b.step, unitName(u), ME));
+        outcome = 'error';
+        failedNames{end+1} = sprintf('%s / %s', b.step.label, unitName(u)); %#ok<AGROW>
+        continue                                          % the rest of the step still runs
+    end
+    if ctx.isCancelled()
+        markCells(ctx, sid, u.models, '', '');
+        ctx.log('Stopped.');
+        outcome = 'cancel'; return
+    end
+    markCells(ctx, sid, u.models, 'done', '');
+    finishUnits(ctx, sid, b.units(k));
+end
+end
+
+% =====================================================================
+function finishUnits(ctx, sid, units)
+%finishUnits  ctx.afterDone, owed exactly ONCE PER FOLDED ENTRY (spec D6) whether
+%   the fold ran as one call or as N - artifact collection, downstream invalidation
+%   and the per-column PDF accounting all count entries, not invocations.
+for k = 1:numel(units)
+    h = units{k}.head;
+    ctx.afterDone(h.identity, sid, h);
+end
+end
+
+% =====================================================================
+function [ok, ME] = invokeGuarded(ctx, step, s, fNames, rawNames)
+%invokeGuarded  THE try/catch, in the one place it is allowed to be (spec D9).  An
+%   interactive step goes through ctx.modalGuard, which parks the parent window; it
+%   is taken and released per invocation, so a per-recording interactive step parks
+%   the window once per file rather than once per fold.
+ok = true; ME = [];
+call = @() invokeWrapper(step, s, fNames, rawNames);
+try
+    if isInteractiveStep(step, s)
+        ctx.modalGuard(call);
+    else
+        call();
+    end
+catch err
+    ok = false; ME = err;
+end
+end
+
+% =====================================================================
+function s = callSettings(s, sid, part)
+%callSettings  The two settings fields that belong to ONE invocation rather than to
+%   the configuration: the sibling list this call's result is inherited onto, and
+%   the per-animal reference file.  'part' is a batch or a single unit - they carry
+%   the same four file fields, shaped the same way, which is exactly what lets an
+%   independent step be cut up without anyone re-deriving the layout.
+if ~isempty(part.copyTo)
+    s.fNamesCopyTo = part.copyTo;
+elseif isfield(s,'fNamesCopyTo')
+    s = rmfield(s,'fNamesCopyTo');                % never leak the fold's list into a unit call
+end
+if strcmp(sid,'vesselTypes') && ~isempty(part.refName)
+    s.refFName = part.refName;                    % per-animal paint reference (launcher idiom)
+end
 end
 
 % =====================================================================
 function reportSkipped(ctx, skipped)
-%reportSkipped  Entries that never became part of a call.  A missing input has
-%   always marked its own cell, so it still does - but it is settled BEFORE the run
-%   starts, because a call now spans several recordings and one absent file may not
-%   decide the fate of the others.
+%reportSkipped  Entries that never became a call at all.  Only STRUCTURAL problems
+%   reach here now - an unknown step, a recording the host cannot model - since a
+%   missing input is not knowable until the moment the call is made.
 for i = 1:numel(skipped)
     sk = skipped(i);
     if sk.mark, ctx.setState(sk.entry.identity, sk.stepId, 'error', sk.reason); end
@@ -206,6 +329,84 @@ function markCells(ctx, sid, models, state, msg)
 for k = 1:numel(models)
     ctx.setState(models(k).identity, sid, state, msg);
 end
+end
+
+% =====================================================================
+function tf = isOrdered(b)
+%isOrdered  Whether this call reads ACROSS its file list (registry fileOrder), and
+%   so may neither be cut into per-recording invocations nor be handed a set with a
+%   failed recording missing from it.  Absent field = 'independent' (wbBatchPlan).
+tf = isfield(b,'fileOrder') && strcmp(b.fileOrder,'ordered');
+end
+
+% =====================================================================
+function l = stopLine(b, remaining, failed)
+%stopLine  Why the run is stopping here, in the operator's words: the step it
+%   refused to start, what is still red, and what will therefore not be attempted.
+%   Everything named is something the user can act on - a recording and a step.
+steps = {};
+for i = 1:numel(remaining)
+    lbl = remaining(i).step.label;
+    if ~any(strcmp(lbl, steps)), steps{end+1} = lbl; end %#ok<AGROW>
+end
+l = sprintf(['Stopping before %s: it works across the whole set of files at once, ' ...
+    'and %d did not finish (%s).  Not attempted: %s.  Fix those and run again.'], ...
+    b.step.label, numel(failed), strjoin(failed,'; '), strjoin(steps,', '));
+end
+
+% =====================================================================
+function l = errorLine(step, who, ME)
+%errorLine  ONE line worth reading: which step, which recording, the error's own
+%   identifier when it has one, what it said, and where it came from.  The file name
+%   carries no folder (the folder is the same for the whole run and would push the
+%   message off the line) and the frame is the top of the stack, which is the line
+%   that actually threw rather than the wrapper that was called.
+l = sprintf('ERROR %s - %s: %s', step.label, who, idTag(ME));
+l = [l ME.message];
+fr = topFrame(ME);
+if ~isempty(fr), l = sprintf('%s  [%s]', l, fr); end
+end
+
+function t = idTag(ME)
+t = '';
+if ~isempty(ME.identifier), t = ['(' ME.identifier ') ']; end
+end
+
+function fr = topFrame(ME)
+%topFrame  The throwing site as 'file:line', or '' when the error carries no stack.
+fr = '';
+if isempty(ME.stack), return; end
+[~,nm,ex] = fileparts(ME.stack(1).file);
+if isempty(nm), nm = ME.stack(1).name; ex = ''; end
+fr = sprintf('%s%s:%d', nm, ex, ME.stack(1).line);
+end
+
+% =====================================================================
+function n = unitName(u)
+%unitName  What ONE recording of a fold answers to in a log line: the file the
+%   wrapper was pointed at, without its folder, falling back to the entry's label.
+n = '';
+if ~isempty(u.fNames)
+    real = u.fNames(~cellfun(@isempty, u.fNames(:)));
+    if ~isempty(real), n = shortName(real{1}); end
+end
+if isempty(n), n = u.entry.label; end
+end
+
+% =====================================================================
+function n = fileCount(fNames)
+%fileCount  How many REAL files a laid-out list holds (a per-animal shape pads its
+%   ragged rows with '').
+n = nnz(~cellfun(@isempty, fNames(:)));
+end
+
+% =====================================================================
+function logCopyTargets(ctx, copyTo)
+%logCopyTargets  Name the siblings a step's result is inherited onto, once per call.
+if isempty(copyTo), return; end
+tg = copyTargetList(copyTo);
+ctx.log(sprintf('  copy to %d sibling(s): %s', numel(tg), ...
+    strjoin(cellfun(@shortName,tg,'UniformOutput',false),', ')));
 end
 
 % =====================================================================

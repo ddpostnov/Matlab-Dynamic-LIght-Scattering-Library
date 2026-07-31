@@ -13,8 +13,8 @@
 %               .dataTypeOut  output class, e.g. 'single' ([] = source type).
 %               .saveSource   logical; also save the full intensity stack.
 %    fNames - cell array of .cxd file paths.
-%    Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
-%    s.stageFcn(stage,detail), s.cancelFcn()->tf.
+%    Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
+%    s.cancelFcn()->tf.
 %
 % Outputs:
 %    (none) - writes <file>_I_d.mat (source), _I_r.mat (results), _I_s.mat
@@ -53,8 +53,6 @@ for fidx=1:1:numel(fNames)
         reportFile(rep,fidx,s.fName);
         clearvars results source settings
         dF=s.decimFactor;
-
-        reportStage(rep,'Reading the recording');
 
         reader = bfGetReader(s.fName);
         omeMeta = reader.getMetadataStore();
@@ -114,17 +112,15 @@ for fidx=1:1:numel(fNames)
         reportSave(rep,fh,'intensity');
 
         % Save the settings and results
-        reportStage(rep,'Saving');
-        nSaved=2;
+        reportWriting(rep);
         if s.saveSource
             source.data=data;
             source.time=time;
             save(strrep(s.fName,'.cxd','_I_d.mat'),'source','-v7.3');
-            nSaved=3;
         end
         save(strrep(s.fName,'.cxd','_I_r.mat'),'results','-v7.3');
         save(strrep(s.fName,'.cxd','_I_s.mat'),'settings','-v7.3');
-        reportSaved(rep,nSaved);
+        reportSaved(rep);
     end
 end
 reportClose(rep);

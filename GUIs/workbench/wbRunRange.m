@@ -19,7 +19,8 @@
 %                  'Last valid' mean "carry on from where it broke".  Nothing
 %                  finished gives the first column (a full run); EVERYTHING finished
 %                  gives the LAST column, so a resume is a no-op rather than a
-%                  silent re-run of the whole protocol.
+%                  silent re-run of the whole protocol.  It is the DEFAULT From and
+%                  nothing else - see the note below.
 %     'slice'    - THE RANGE ITSELF.  The entries whose step sits in [from..to] BY
 %                  REGISTRY INDEX, order preserved.  The expansion's own step-major
 %                  order is never disturbed - a slice is a filter, not a re-sort.
@@ -28,15 +29,17 @@
 %                  is clamped to be at or after 'From' (spec D4), so the pair can
 %                  never describe an empty or inverted range.
 %
-%   RESUME vs FORCED RE-RUN (spec D2) is decided by the From value alone and
-%   reported by 'isForced': the sentinel resumes (the caller prunes what is already
-%   on disk, today's behaviour), an explicit column FORCES (the caller hands over
-%   the UNPRUNED expansion, so a finished column re-runs with new settings).  This
-%   module does no pruning of its own - it never looks at disk.
+%   A RANGE NO LONGER DECIDES WHETHER FINISHED WORK RE-RUNS (author, 2026-07-31).
+%   Until now an explicit From meant "and do it again whatever is on disk", reported
+%   by an 'isForced' action - two unrelated requests carried by one gesture, with no
+%   way to start at segmentation without also overwriting it and nothing in the
+%   window to say so.  That is now a checkbox of its own on the Process tab, so
+%   'isForced' is gone and the sentinel means exactly one thing: the DEFAULT From is
+%   the frontier.  This module still does no pruning of its own - it never looks at
+%   disk - and the caller decides which expansion, pruned or not, it slices.
 %
 % Syntax:
 %    tok       = wbRunRange('lastValid')
-%    tf        = wbRunRange('isForced', fromSel)
 %    cols      = wbRunRange('columns',  reg, entries)
 %    id        = wbRunRange('frontier', reg, cols, isDone)
 %    sel       = wbRunRange('slice',    reg, entries, fromId, toId)
@@ -57,7 +60,6 @@
 %    cols  - configured columns, registry order, struct('id',..,'label',..).
 %    id    - a step id ('' when nothing is configured).
 %    sel   - the entries inside the range, in their original order.
-%    tf    - true when From names a column, i.e. the run is a forced re-run.
 %    lbl   - a column's registry label ('' when it is not configured).
 %    k     - a column's 1-based position in cols (0 when it is not configured).
 %
@@ -79,7 +81,6 @@ function varargout = wbRunRange(action, varargin)
 
 switch action
     case 'lastValid', varargout{1} = lastValidToken();
-    case 'isForced',  varargout{1} = isForced(varargin{:});
     case 'columns',   varargout{1} = columnsOf(varargin{:});
     case 'frontier',  varargout{1} = frontierOf(varargin{:});
     case 'slice',     varargout{1} = sliceOf(varargin{:});
@@ -93,16 +94,10 @@ end
 
 % =====================================================================
 function t = lastValidToken()
-%lastValidToken  The From sentinel: "resume, wherever that turns out to be".  It is
-%   deliberately not a step id, so it can never collide with one (spec §2's open
-%   vocabulary rule applies to steps as well as to types).
+%lastValidToken  The From sentinel: "start wherever the frontier turns out to be".
+%   It is deliberately not a step id, so it can never collide with one (spec §2's
+%   open vocabulary rule applies to steps as well as to types).
 t = '__last__';
-end
-
-% =====================================================================
-function tf = isForced(fromSel)
-%isForced  A From that NAMES a column means "run it again whatever is on disk".
-tf = ~isempty(fromSel) && ~strcmp(char(fromSel), lastValidToken());
 end
 
 % =====================================================================

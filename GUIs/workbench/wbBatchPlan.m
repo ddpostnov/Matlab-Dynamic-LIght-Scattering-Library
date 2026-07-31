@@ -29,6 +29,14 @@
 %   reorder execution, and the list is never re-sorted (the run order is
 %   step-major and already contiguous per step).
 %
+%   WHAT A FOLD IS FOR DEPENDS ON THE STEP'S fileOrder.  For an 'ordered' step the
+%   fold IS the call - the whole point, since that is the launcher cell its
+%   cross-file work needs.  For an 'independent' one the executor invokes the
+%   wrapper once per recording out of the same fold (see wbExecutor), because there
+%   is by declaration nothing happening between the files; the fold then remains the
+%   unit of settings, of the log header and of the error boundary, and each
+%   recording's own files and copy targets are carried on its unit.
+%
 %   SHAPING (spec §5).  How the files are laid out is the step's own declaration,
 %   registry field fanOut:
 %     'flat'   - fNames is a COLUMN of every file of every recording in the batch,
@@ -43,21 +51,39 @@
 %
 %   branchScope is unchanged and still resolves PER RECORDING: 'one' contributes
 %   the stage-preferred file, 'all' every branch product, 'copy' the contrast file
-%   with its siblings routed into the copy list.  A recording whose input is not on
-%   disk yet cannot be part of a call, so it is reported back through the second
-%   output and the rest of the batch runs without it.
+%   with its siblings routed into the copy list.
 %
-%   Pure planning: it reads the registry, the models and the disk, and it changes
-%   no state, marks no cell and calls no wrapper.
+%   PLANNING AND RESOLVING ARE TWO DIFFERENT MOMENTS (author, 2026-07-31).  Until
+%   now this module answered "which files does this call get" for EVERY entry in one
+%   pass, before the run started - and a step whose input its own run had not
+%   written yet was therefore reported 'input file not found' and marked as an error
+%   before anything had been attempted.  The run order is step-major, so contrast
+%   runs three lines above the setRegions entry that consumes its '_t_K_d': the
+%   ORDER was right all along, only the timing of the question was wrong.
+%   So the two halves are now separate actions:
+%     'build'   is pure arithmetic over the entry list - the registry, the models
+%               and the resolved settings.  IT TOUCHES NO DISK.  It folds and
+%               shapes the calls and leaves fNames/copyTo/rawNames/refName unset.
+%     'resolve' is the disk half - the input glob, the branch fan-out, the copy
+%               targets, the raw partner, the per-animal reference and the layout -
+%               and the executor runs it IMMEDIATELY BEFORE each call, when the disk
+%               finally reflects what the earlier steps of the same run wrote.
+%   A batch whose input is still missing at that moment is the caller's to report;
+%   this module only says so (ok=false) and the run carries on with the next call.
+%
+%   Pure planning either way: it reads the registry, the models and the disk, and it
+%   changes no state, marks no cell and calls no wrapper.
 %
 % Syntax:
 %    batches            = wbBatchPlan('build', entries, ctx)
 %    [batches, skipped] = wbBatchPlan('build', entries, ctx)
+%    [b, ok, reason]    = wbBatchPlan('resolve', b, ctx)
 %
 % Inputs:
 %    entries - struct array from guiWorkbench>buildRunOrder, already step-major
 %              (registry step -> animal -> reference-first -> file).  Each entry
 %              has at least: stepId, identity, animalIdx, arity, label, animal.
+%    b       - ONE batch from 'build', to be resolved against the disk as it is now.
 %    ctx     - the wbExecutor context struct.  This module uses .reg, .modelOf,
 %              .animalModels, .resolve, .contrastStage and the OPTIONAL .refFile
 %              (see wbExecutor for what each of them promises).
@@ -68,21 +94,32 @@
 %       step     the registry step struct (carries the wrapper handle)
 %       arity    'perFile' | 'perAnimal'
 %       fanOut   'flat' | 'animal' - the shape below
+%       fileOrder 'independent' | 'ordered' - whether the call may be cut into one
+%                invocation per recording (registry fileOrder; see wbExecutor)
 %       label    how the call names itself in the log
 %       entries  the folded entries, in order (afterDone is owed one call each)
 %       heads    one model per ENTRY: the recording a perFile entry is, or the
 %                reference a perAnimal entry starts at
 %       models   every recording model the call touches, in order (the cells to
 %                mark running / done / error)
+%       units    1xK cell, ONE PER FOLDED ENTRY, each a struct with .entry .head
+%                .models and - after 'resolve' - the .fNames / .copyTo / .rawNames
+%                / .refName of that entry ALONE, shaped exactly as the whole batch
+%                is.  This is what makes a per-recording invocation possible without
+%                a second definition of the layout.
 %       s        the shared resolved settings, hooks NOT yet injected
-%       fNames   the wrapper's file list, shaped per fanOut
+%       fNames   the wrapper's file list, shaped per fanOut       ('resolve' only)
 %       rawNames the parallel raw recordings for a needsRaw step, else {}
 %       copyTo   the s.fNamesCopyTo list, shaped per fanOut, {} when nothing is
 %                inherited
 %       refName  the per-animal reference file ('' when the call has none)
-%    skipped - 1xM struct array of entries that could not become part of a call:
-%       entry, stepId, stepLabel, who, reason, mark (true = the caller should mark
-%       the cell as an error, which is what a missing input has always done).
+%    skipped - 1xM struct array of entries that could not become part of a call.
+%       STRUCTURAL PROBLEMS ONLY now ('unknown step', 'no recording'): a missing
+%       input is no longer knowable at this point, and is reported by 'resolve'.
+%       Fields: entry, stepId, stepLabel, who, reason, mark (true = the caller
+%       should mark the cell as an error).
+%    ok      - 'resolve': whether every unit of the batch found its input.
+%    reason  - 'resolve': 'input file not found' when it did not, else ''.
 %
 % Notes:
 %    * The entry list is authoritative for ORDER.  Nothing here sorts, and folding
@@ -92,8 +129,10 @@
 %    * A batch's settings are the FIRST folded entry's.  That is safe precisely
 %      because the fold key is the settings themselves; the discarded copies were
 %      equal.
-%    * An error inside a call skips the remainder of that call, exactly as it does
-%      inside a launcher cell (spec D1, accepted).
+%    * 'resolve' IS ALL-OR-NOTHING for one batch, because a call is: the file list a
+%      wrapper receives is one object, and half of it is not a launcher cell.  A
+%      batch that loses its input therefore reports the whole call, and the executor
+%      marks that call's recordings; the other calls of the same step are untouched.
 %
 % See also: wbExecutor, wbStepRegistry, wbRunRange, wbRefBranch, wbFileModel,
 %           guiWorkbench, setRegions, runSegmentation
@@ -101,14 +140,16 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
-function [batches, skipped] = wbBatchPlan(action, entries, ctx)
+function varargout = wbBatchPlan(action, varargin)
 
 switch lower(char(action))
     case 'build'
-        [batches, skipped] = buildBatches(entries, ctx);
+        [varargout{1:max(1,nargout)}] = buildBatches(varargin{:});
+    case 'resolve'
+        [varargout{1:max(1,nargout)}] = resolveBatch(varargin{:});
     otherwise
         error('wbBatchPlan:action','Unknown action ''%s''.', char(action));
 end
@@ -116,11 +157,15 @@ end
 
 % =====================================================================
 function [batches, skipped] = buildBatches(entries, ctx)
-%buildBatches  Resolve every entry to its files, then fold and shape the runs.
+%buildBatches  Fold the entry list into wrapper CALLS.  No disk access anywhere in
+%   here: what a call is - which entries share it, which settings it takes, how its
+%   files will be laid out - is decided by the registry and the resolved settings
+%   alone, all of which are knowable before the run starts.  WHICH files is asked
+%   later, per call, by 'resolve'.
 batches = emptyBatch(); skipped = emptySkip();
 if isempty(entries), return; end
 
-% ---- 1. one UNIT per entry: its models, its settings, its concrete files ------
+% ---- 1. one UNIT per entry: its models and its settings -----------------------
 U = {}; sk = {};
 for i = 1:numel(entries)
     e    = entries(i);
@@ -138,16 +183,9 @@ for i = 1:numel(entries)
         sk{end+1} = mkSkip(e, step.id, step.label, whoOf(e), 'no recording', false); %#ok<AGROW>
         continue
     end
-    mHead  = models(1);
-    s      = ctx.resolve(step, mHead);
-    cstage = ctx.contrastStage(mHead);
-    [files, copies, raws, ok] = entryFiles(step, models, cstage, refFileFor(ctx, e, step));
-    if ~ok
-        sk{end+1} = mkSkip(e, step.id, step.label, whoOf(e), 'input file not found', true); %#ok<AGROW>
-        continue
-    end
-    U{end+1} = struct('entry',e, 'step',step, 's',s, 'head',mHead, 'models',models, ...
-        'files',{files}, 'copies',{copies}, 'raws',{raws}, 'key',foldKey(s)); %#ok<AGROW>
+    mHead = models(1);
+    s     = ctx.resolve(step, mHead);
+    U{end+1} = newUnit(e, step, s, mHead, models); %#ok<AGROW>
 end
 if ~isempty(sk), skipped = [sk{:}]; end
 if isempty(U), return; end
@@ -166,6 +204,67 @@ batches = [B{:}];
 end
 
 % =====================================================================
+function [b, ok, reason] = resolveBatch(b, ctx)
+%resolveBatch  THE DISK HALF, asked at the last possible moment.  Every unit of the
+%   batch contributes its concrete files, and the batch is laid out per fanOut - the
+%   same shaping as before, only now run when the steps ahead of this one in the
+%   very same run have already written their products.
+%
+%   Each unit is ALSO shaped on its own, so a step the registry calls file-order
+%   'independent' can be invoked once per recording without anyone re-deriving what
+%   that recording's file list or copy list should look like.
+ok = false; reason = '';
+if isempty(b) || isempty(b.units), reason = 'no recording'; return; end
+step = b.step;
+
+for k = 1:numel(b.units)
+    u      = b.units{k};
+    cstage = ctx.contrastStage(u.head);
+    [files, copies, raws, found] = entryFiles(step, u.models, cstage, ...
+        refFileFor(ctx, u.entry, step));
+    if ~found, reason = 'input file not found'; return; end
+    u.files = files; u.copies = copies; u.raws = raws;
+    [u.fNames, u.copyTo, u.rawNames] = shapeUnits({u}, step);
+    u.refName = refOf(b.arity, u.fNames);
+    b.units{k} = u;
+end
+
+[b.fNames, b.copyTo, b.rawNames] = shapeUnits(b.units, step);
+b.refName = refOf(b.arity, b.fNames);
+ok = true;
+end
+
+% =====================================================================
+function u = newUnit(e, step, s, head, models)
+%newUnit  One entry's share of a call, before the disk has been consulted.  The file
+%   fields are filled in by 'resolve' and are {} until then.
+u = struct('entry',e, 'step',step, 's',s, 'head',head, 'models',models, ...
+    'key',foldKey(s), 'files',{{}}, 'copies',{{}}, 'raws',{{}}, ...
+    'fNames',{{}}, 'copyTo',{{}}, 'rawNames',{{}}, 'refName','');
+end
+
+% =====================================================================
+function [fNames, copyTo, rawNames] = shapeUnits(units, step)
+%shapeUnits  Lay a list of resolved units out the way the step declares (fanOut).
+%   ONE definition, used for the whole batch and for a single unit alike, so a
+%   per-recording invocation gets exactly the shape the wrapper expects.
+switch fanOutOf(step)
+    case 'animal'
+        [fNames, copyTo, rawNames] = shapeByAnimal(units, step);
+    otherwise
+        [fNames, copyTo, rawNames] = shapeFlat(units, step);
+end
+end
+
+% =====================================================================
+function r = refOf(arity, fNames)
+%refOf  The per-animal reference file of a laid-out list ('' when there is none):
+%   the first file, whichever shape it was laid out in.
+r = '';
+if strcmp(arity,'perAnimal') && ~isempty(fNames), r = fNames{1}; end
+end
+
+% =====================================================================
 function tf = foldable(a, b)
 %foldable  Whether unit b can join unit a's call: the same perFile step, and the
 %   same settings once the per-call fields are out of the way.  Nothing else is
@@ -181,7 +280,7 @@ function k = foldKey(s)
 %   reference it templates on - are dropped, along with the transport hooks, which
 %   are closures and would never compare equal anyway.
 k = s;
-for f = {'fName','fNamesCopyTo','refFName','progressFcn','stageFcn','cancelFcn'}
+for f = {'fName','fNamesCopyTo','refFName','stageFcn','cancelFcn'}
     if isfield(k,f{1}), k = rmfield(k,f{1}); end
 end
 if numel(fieldnames(k)) > 1, k = orderfields(k); end
@@ -189,14 +288,17 @@ end
 
 % =====================================================================
 function b = shapeBatch(units)
-%shapeBatch  One run of folded units becomes ONE call, laid out per step.fanOut.
+%shapeBatch  One run of folded units becomes ONE call.  The files are NOT part of
+%   it yet - only what the call is: its step, its arity, its declared layout and
+%   order sensitivity, its shared settings, and the recordings it will touch.
 step = units{1}.step;
-b        = newBatch();
-b.stepId = step.id;
-b.step   = step;
-b.arity  = units{1}.entry.arity;
-b.fanOut = fanOutOf(step);
-b.s      = units{1}.s;
+b           = newBatch();
+b.stepId    = step.id;
+b.step      = step;
+b.arity     = units{1}.entry.arity;
+b.fanOut    = fanOutOf(step);
+b.fileOrder = orderOf(step);
+b.s         = units{1}.s;
 
 ents = cell(1,numel(units)); heads = cell(1,numel(units)); mdls = cell(1,numel(units));
 for k = 1:numel(units)
@@ -207,17 +309,8 @@ end
 b.entries = [ents{:}];
 b.heads   = [heads{:}];
 b.models  = [mdls{:}];
+b.units   = units;
 b.label   = batchLabel(units);
-
-switch b.fanOut
-    case 'animal'
-        [b.fNames, b.copyTo, b.rawNames] = shapeByAnimal(units, step);
-    otherwise
-        [b.fNames, b.copyTo, b.rawNames] = shapeFlat(units, step);
-end
-
-b.refName = '';
-if strcmp(b.arity,'perAnimal') && ~isempty(b.fNames), b.refName = b.fNames{1}; end
 end
 
 % =====================================================================
@@ -450,6 +543,16 @@ if isfield(step,'fanOut') && ~isempty(step.fanOut), fo = step.fanOut; end
 end
 
 % =====================================================================
+function fo = orderOf(step)
+%orderOf  A step's fileOrder, defaulting to 'independent' when the field is absent.
+%   Same tolerance again - a hand-built step struct (tests, a trimmed registry) then
+%   gets the per-recording invocation, which is the safer of the two: it can only
+%   narrow which cell an error reddens, never widen it.
+fo = 'independent';
+if isfield(step,'fileOrder') && ~isempty(step.fileOrder), fo = step.fileOrder; end
+end
+
+% =====================================================================
 function l = batchLabel(units)
 %batchLabel  How a call names itself in the run log: the animal for a per-animal
 %   call, the recording for a single one, and a count once several were folded -
@@ -484,9 +587,11 @@ end
 % =====================================================================
 function b = newBatch()
 %newBatch  One batch with every field defaulted, so building them in any order
-%   never triggers a field mismatch when they are concatenated.
-b = struct('stepId','', 'step',[], 'arity','perFile', 'fanOut','flat', 'label','', ...
-    'entries',[], 'heads',[], 'models',[], 's',struct(), ...
+%   never triggers a field mismatch when they are concatenated.  The four file
+%   fields stay empty until 'resolve' fills them.
+b = struct('stepId','', 'step',[], 'arity','perFile', 'fanOut','flat', ...
+    'fileOrder','independent', 'label','', ...
+    'entries',[], 'heads',[], 'models',[], 'units',{{}}, 's',struct(), ...
     'fNames',{{}}, 'rawNames',{{}}, 'copyTo',{{}}, 'refName','');
 end
 

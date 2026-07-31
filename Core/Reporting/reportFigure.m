@@ -43,12 +43,18 @@
 %    nexttile(t); imagesc(mask);   axis image off; title('Mask');
 %    reportSave(rep,fh,'contrast');
 %
+%   A CORE THAT DRAWS A PAGE IS HANDED THE HANDLE THIS RETURNS.  Only wrappers
+%   report, so a core function never calls reportFigure and never calls
+%   reportSave: it takes fh as its first argument, draws into it, and the wrapper
+%   that opened the figure is the one that saves it (showSegmentsPreview is the
+%   pattern).
+%
 % See also: reportOpen, reportSave, reportClose, exportgraphics
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 31-July-2026
 
 %------------- BEGIN CODE --------------
 function fh = reportFigure(rep, tag, layout)
