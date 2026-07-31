@@ -6,7 +6,7 @@
 %   delegated to the headless brain (wbStepRegistry, wbDiscoverFiles, wbFileModel,
 %   wbStateEngine, wbPrereqs, wbTypeModel, wbTypeSelection, wbSettingsModel,
 %   wbRefBranch, wbRunRange, wbInvalidate), to wbExecutor / wbModalGuard /
-%   wbArtifacts / wbReportPdf, and to wbSession.
+%   wbArtifacts / wbReportPdf / wbPool, and to wbSession.
 %
 %   RUN IS AN EXPANSION, NOT A SELECTION.  Pressing Run turns the per-type
 %   configuration into an ordered list of (file, step) work items - each type's
@@ -148,7 +148,7 @@
 % See also: wbStepRegistry, wbDiscoverFiles, wbTypeModel, wbTypeSelection,
 %           wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
 %           wbRefBranch, wbRunRange, wbExecutor, wbModalGuard, wbArtifacts,
-%           wbReportPdf, wbSession, guiExport, guiExplore, guiMyograph
+%           wbReportPdf, wbPool, wbSession, guiExport, guiExplore, guiMyograph
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -3234,7 +3234,11 @@ gg = uigridlayout(parent,[numel(flds) 2],'ColumnWidth',{'fit','1x'}, ...
     'RowHeight',repmat({'fit'},1,numel(flds)),'RowSpacing',3,'Padding',[12 0 0 2]);
 for fi = 1:numel(flds)
     f = flds{fi};
-    lbl = uilabel(gg,'Text',f);
+    % The row label is the FIELD NAME unless the registry names a friendlier one in
+    % step.labels.  Most fields are their own best label here (a protocol is written
+    % in terms of vFR and nHarm), so the override is opt-in per field rather than a
+    % table everything has to be listed in.
+    lbl = uilabel(gg,'Text',getfieldOr(step.labels,f,f));
     if isfield(step.tips,f), lbl.Tooltip = step.tips.(f); end
     makeParamControl(fig,gg,step,f,getfieldOr(s,f,[]),type);
 end
@@ -3975,7 +3979,12 @@ setApp(fig,app);
 beginPdfColumns(fig, entries);
 setRunningUI(fig,true);
 autosaveSession(fig);                    % a run that never returns still leaves a session
-cleaner = onCleanup(@() finishRun(fig)); % restore UI + fold results even on error
+% The pool token has to be taken BEFORE anything runs a parfor, or "was there a pool
+% before this run" is no longer knowable.  It starts nothing; finishRun releases.  It
+% rides in the cleanup closure BY VALUE rather than in app, so the workers still go
+% back even if the figure itself is gone by the time this unwinds.
+poolTok = wbPool('open');
+cleaner = onCleanup(@() finishRun(fig,poolTok)); % restore UI + fold results even on error
 ctx = buildExecContext(fig);
 wbExecutor(entries, ctx);
 end
@@ -4116,10 +4125,17 @@ notePdfColumn(fig,stepId,files);
 autosaveSession(fig);
 end
 
-function finishRun(fig)
+function finishRun(fig, poolTok)
 %finishRun  Reset the run UI, fold successful cells into the disk baseline, and
 %   keep only error overlays (errors are not an on-disk state).
-if ~isvalid(fig), return; end
+if nargin<2, poolTok = []; end
+if ~isvalid(fig)
+    % The window is already gone, so there is no UI to restore and no PDF to
+    % assemble - but a parallel pool is a PROCESS-level resource, not a figure's, so
+    % the workers still have to be handed back.
+    wbPool('close', poolTok);
+    return
+end
 app = getApp(fig);
 wasCancel = isfield(app,'cancel') && app.cancel;
 app.running = false; app.cancel = false;
@@ -4128,6 +4144,12 @@ setApp(fig,app);
 % mid-column - is assembled here, so a PDF is never lost because the run was cut
 % short.  It happens BEFORE the repaint below, which is what puts it in the list.
 flushPdfColumns(fig);
+% The workers go now: AFTER the PDFs (assembling a column must not race a pool
+% shutdown) and BEFORE the repaint, since there is no reason to hold ~18 GB of idle
+% worker heap across it.  finishRun is runChecked's onCleanup target, so a Stop, an
+% error and a mid-run Exit all reach this line.  A pool the author opened himself is
+% left alone - wbPool decides, from the token taken before the run.
+releasePool(fig, poolTok);
 recomputeBase(fig);
 app = getApp(fig);
 ks = keys(app.runState);
@@ -4147,6 +4169,19 @@ drawnow limitrate;
 % Exit pressed mid-run: the stop it asked for has now happened and the session is
 % written, so this is the first safe moment to close (see requestExit).
 if getfieldOr(getApp(fig),'exitAfterStop',false), onClose(fig); end
+end
+
+function releasePool(fig, poolTok)
+%releasePool  Hand the run's parallel workers back, and SAY SO.
+%   A silent fix to an invisible leak is indistinguishable from no fix - the 18 GB
+%   never showed up in the GUI, so its disappearance has to be stated.  The line
+%   names the worker count and NOT a byte figure: reading a pool's real footprint
+%   means walking the OS process table from inside MATLAB, and an unmeasured number
+%   is worse than no number.
+n = wbPool('close', poolTok);
+if n>0
+    wbLog(fig, sprintf('released %d parallel %s.', n, plural(n,'worker')));
+end
 end
 
 function cancelRun(fig)

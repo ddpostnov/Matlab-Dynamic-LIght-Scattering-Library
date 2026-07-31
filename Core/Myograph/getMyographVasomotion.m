@@ -12,7 +12,10 @@
 %   segVsmReturn); the LSCI-only fields ppxVsmReturn/ppxSegmentAveraging/vsmSignals
 %   are ignored (Myograph has one signal and no per-pixel path).  s.segVsmReturn
 %   (cell subset of {'bands','moments','series','clustering','reconstruction',
-%   'spectrum'}, default all six) selects which analysis levels are computed.  The
+%   'spectrum'}, default all six) selects which analysis levels are computed.
+%   s.parforMyographLines (logical, default true) decides whether the per-image-line
+%   loop runs in parallel; it is a WORKER BOUND on the parfor, not a branch, so false
+%   runs the identical loop body serially in the client and starts no pool.  The
 %   metric maths matches runVasomotion because both call the shared core
 %   getVasomotionMetrics, and both assemble the result with assembleVasomotionTree.
 %
@@ -61,6 +64,12 @@ function vasomotion = getMyographVasomotion(s,data,time)
 if ~isfield(s,'normalisation')  || isempty(s.normalisation),  s.normalisation='median'; end
 if ~isfield(s,'normsize')       || isempty(s.normsize),       s.normsize=inf; end
 if ~isfield(s,'tgtFS'), s.tgtFS=[]; end
+% Parallelism is optional: a BOUND on the per-line parfor (Inf workers or 0), never a
+% branch - parfor(...,0) runs the identical body serially in the client and starts no
+% pool.  Default true when the field is absent, so every existing caller is unaffected.
+if ~isfield(s,'parforMyographLines') || isempty(s.parforMyographLines)
+    s.parforMyographLines=true;
+end
 % output levels selected by s.segVsmReturn (resolved into layout.want by
 % getVasomotionMetrics)
 
@@ -125,7 +134,8 @@ wantBandsPct=want.bandsPct; wantBandsPeak=want.bandsPeak;
 wantMoments=want.moments; wantSeries=want.series;
 wantClustering=want.clustering; wantRecon=want.reconstruction; keepSpectrum=want.spectrum;
 
-parfor i=1:nY
+nwLine=0; if s.parforMyographLines, nwLine=Inf; end   % worker bound, not a branch
+parfor (i=1:nY, nwLine)
     m=getVasomotionMetrics(data(:,i),layout,s);
     if wantRecon
         rData(:,i)=m.rData;   %already rescaled per series (NaN for a non-finite series, as before)

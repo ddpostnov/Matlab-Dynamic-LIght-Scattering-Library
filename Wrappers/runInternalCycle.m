@@ -161,7 +161,7 @@ for fidx=1:1:numel(fNames)
         tsBFI=1./(tsK.*tsK);
 
         %correct the framerate
-        s.fps=1000./(mean(double(timeStamps(2:end)-timeStamps(1:end-1))));
+        s.fps=1000./(median(double(timeStamps(2:end)-timeStamps(1:end-1))));
         time=((1:1:length(tsK))-1)./s.fps;
 
         %identify central frequency

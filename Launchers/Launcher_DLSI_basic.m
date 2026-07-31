@@ -105,6 +105,7 @@ s.cLoss='sqrtbeta'; %coherence-loss form of the static/dynamic cross-term:
 s.pointsMin=5;      %minimum number of lag points used per pixel
 s.isAdaptive=true;  %adapt the beta/p bounds on the fly from already-fitted pixels
 s.spatialDS=1;      %>1 (e.g. 2 or 4) spatially downsamples for a quick test - fitting a full frame can take many minutes
+s.parforFit=true;   %false fits the pixels one at a time in this MATLAB and starts no parallel pool
 
 %SET FILE NAMES HERE
 fNames=getFileNamesList(rootFolder,'*_g_d.mat'); %the g2 sources written by STEP 1
@@ -139,7 +140,8 @@ for i=1:1:size(fNames,1)
     %The heavy g2 is NOT copied into the results; it stays in *_g_d.mat.
     mName=['m',s.type];
     results.(mName)=fitDLSI(g2,lags,results.iniTau,'type',s.type, ...
-        'pointsMin',s.pointsMin,'isAdaptive',s.isAdaptive,'cLoss',s.cLoss,'mask',results.mask);
+        'pointsMin',s.pointsMin,'isAdaptive',s.isAdaptive,'cLoss',s.cLoss,'mask',results.mask, ...
+        'parforFit',s.parforFit);
     % To store more models side by side, uncomment (each is a lightweight struct):
     % results.mDSN=fitDLSI(g2,lags,results.iniTau,'type','DSN','pointsMin',s.pointsMin,'mask',results.mask);
     % results.mDN =fitDLSI(g2,lags,results.iniTau,'type','DN', 'pointsMin',s.pointsMin,'mask',results.mask);

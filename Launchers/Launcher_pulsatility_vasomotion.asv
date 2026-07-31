@@ -12,11 +12,11 @@
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
- libraryFolder = 'C:\Users\postn\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';%'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
+ libraryFolder = 'C:\Users\AU707705\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
  addpath(genpath(libraryFolder));
  setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
  rootFolder = 'G:\BP'; %root folder for the files lookup
-parallel.gpu.enableCUDAForwardCompatibility(true) 
+
 
 %% STEP 1 Process .rls files to get the temporal contrast for segmentation and vasomotion analysis
 clearvars -except fNames libraryFolder rootFolder
@@ -38,15 +38,15 @@ s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of fr
 s.manualMask=0; %allows manual subselection of the area to mask
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*c2.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
 %fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runContrastFromRLS',false);
 
 
 runContrastFromRLS(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
-%
-%% STEP 2 Process .rls files to get the internal cycle data
+%%
+% STEP 2 Process .rls files to get the internal cycle data
 clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
@@ -80,7 +80,7 @@ s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*c1.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
 %fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runInternalCycle',false);

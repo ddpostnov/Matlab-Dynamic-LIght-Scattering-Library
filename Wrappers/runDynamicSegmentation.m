@@ -70,6 +70,12 @@ function runDynamicSegmentation(s,fNames)
 if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.mat'), fNames(:)) )
     error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
 end
+% Resolved here, not only in the core, so the choice is RECORDED in the saved
+% settings like every other tunable.  getSegmentationLabels reads it as a worker
+% bound on its per-label parfor; true (the default) is today's behaviour.
+if ~isfield(s,'parforSegmentationLabels') || isempty(s.parforSegmentationLabels)
+    s.parforSegmentationLabels=true;
+end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
 % are resolved to no-ops when absent and ride in rep.  s is never mutated, and

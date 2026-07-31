@@ -86,6 +86,16 @@
 %                                   which per-segment analysis levels to compute and
 %                                   store; default (absent) is the COMPLETE set (all
 %                                   six levels, incl. the amplitude/phase spectrum grid)
+%                • parforVasomotionSegments   logical, default true - run the
+%                                   PER-SEGMENT loop in parallel
+%                • parforVasomotionPixels     logical, default true - run the true
+%                                   PER-PIXEL loop in parallel
+%                • parforVasomotionAveraging  logical, default true - run the
+%                                   per-segment AVERAGING loop in parallel
+%                                   Each is a WORKER BOUND on its own parfor, not a
+%                                   branch: false runs the identical loop body
+%                                   serially in the client and starts no pool.  One
+%                                   field per loop, so the three can be set apart.
 %     fNames   cell array of *_BFI_d.mat paths.
 %                • Optional workbench hooks in s (no-op when absent):
 %                  s.progressFcn(frac,label), s.stageFcn(stage,detail), s.cancelFcn()->tf.
@@ -208,6 +218,12 @@
 % %amp/fCent/fSprd/nPeak), 'clustering' (flare/silence scalars+spectra+maskFlare),
 % %'reconstruction' (timeVectors.VB.rData), 'spectrum' (spectrum.amp/phase). Default = all six.
 % s.segVsmReturn={'bands','moments','series','clustering','reconstruction','spectrum'};
+% %ADJUSTED IF NECESSARY - Parallel execution (all three default to true when absent)
+% s.parforVasomotionSegments=true;   % per-segment loop
+% s.parforVasomotionPixels=true;     % true per-pixel loop
+% s.parforVasomotionAveraging=true;  % per-segment averaging loop (TEMPORARY block)
+% %false runs that loop one item at a time in this MATLAB and starts no parallel pool -
+% %slower, but it costs no worker processes, which is what a small machine needs.
 
 function runVasomotion(s,fNames)
 
@@ -270,6 +286,24 @@ end
 %levels.  Its default (absent) is {'bands'} = the cheap band-amplitude [Y x X] scalar maps.
 %Absent-only default: an explicit [] must stay empty (off), so do NOT default on isempty.
 if ~isfield(s,'ppxVsmReturn'), s.ppxVsmReturn={'bands'}; end
+
+%PARALLELISM IS OPTIONAL, ONE FIELD PER LOOP.  This wrapper has three genuinely
+%different parfors - over segments, over pixels, and over the pixels of one segment
+%inside the averaging block - so it carries three switches rather than one.  Each is
+%a BOUND on its own parfor (Inf workers or 0), never a branch: parfor(...,0) runs the
+%identical loop body serially IN THE CLIENT and starts no pool at all, so not one
+%line of the loop bodies is duplicated to support the serial case.  Default true, so
+%an existing settings file that carries none of these fields behaves exactly as
+%before; false is the escape hatch for a machine that cannot afford a 16-worker pool.
+if ~isfield(s,'parforVasomotionSegments')  || isempty(s.parforVasomotionSegments)
+    s.parforVasomotionSegments=true;
+end
+if ~isfield(s,'parforVasomotionPixels')    || isempty(s.parforVasomotionPixels)
+    s.parforVasomotionPixels=true;
+end
+if ~isfield(s,'parforVasomotionAveraging') || isempty(s.parforVasomotionAveraging)
+    s.parforVasomotionAveraging=true;
+end
 
 %which analysis levels to compute/store is selected by s.segVsmReturn (a cell subset
 %of {'bands','moments','series','clustering','reconstruction','spectrum'}); resolved
@@ -372,7 +406,8 @@ for fidx=1:1:numel(fNames)
             wantClustering=want.clustering; wantRecon=want.reconstruction; keepSpectrum=want.spectrum;
 
             reportStage(rep,'Vasomotion per segment');
-            parfor i=1:nSeg
+            nwSeg=0; if s.parforVasomotionSegments, nwSeg=Inf; end   %worker bound, not a branch
+            parfor (i=1:nSeg, nwSeg)
                 m=getVasomotionMetrics(sig(:,i),layout,s);
                 if wantRecon
                     rData(:,i)=m.rData;   %already rescaled per series (NaN for a non-finite series, as before)
@@ -592,8 +627,13 @@ for fidx=1:1:numel(fNames)
                 %whole loop.  The count is over ALL pixels (not just masked ones)
                 %because the send now precedes the background skip - it measures
                 %how far through the image the sweep is, which is what a bar means.
+                %The queue is created and deleted regardless of whether the loop below
+                %runs parallel: it is the ONE piece of state that must stay switchable
+                %apart from the loop, or "parfor off" and "queue gone" become the same
+                %experiment and neither cause can be told from the other.
                 [dqPix,sendEvery]=reportProgress(rep,'queue',npx,'Vasomotion per pixel');
-                parfor p=1:npx
+                nwPix=0; if s.parforVasomotionPixels, nwPix=Inf; end   %worker bound, not a branch
+                parfor (p=1:npx, nwPix)
                     if mod(p,sendEvery)==0, send(dqPix,sendEvery); end
                     if sMapLin(p)==0, continue; end          %background: leave NaN
                     mp=getVasomotionMetrics(single(D(p,:))',layoutPix,sPix);
@@ -618,6 +658,7 @@ for fidx=1:1:numel(fNames)
                     end
                 end
                 reportProgress(rep,1,'Vasomotion per pixel');   %forced final tick
+                delete(dqPix);                                  %its afterEach pinned rep
 
                 accP=struct('vbAmpMean',pxVbAmpMean,'vbAmpStd',pxVbAmpStd,'vbAmpSkew',pxVbAmpSkew,'vbAmpPct',pxVbAmpPct, ...
                     'cbAmpMean',pxCbAmpMean,'cbAmpStd',pxCbAmpStd,'cbAmpSkew',pxCbAmpSkew,'cbAmpPct',pxCbAmpPct, ...
@@ -744,6 +785,7 @@ fb=layout.fb; fwt=layout.fwt; coi=layout.coi; f=layout.f;
 idxsVFR=layout.idxsVFR; idxsCFR=layout.idxsCFR; fs=layout.fs;
 keep=coi<0.05;
 nT=sum(keep); nf=numel(f);
+nwAvg=0; if s.parforVasomotionAveraging, nwAvg=Inf; end   %worker bound, not a branch
 shpA=identityShapes();
 nPixTotal=nnz(sMapLin>0);   %segmented pixels iterated per combine pass (progress total)
 
@@ -778,7 +820,7 @@ for combo=1:2
         if nPix==0, continue; end
         segData=D(pix,:);              %[nPix x T] sliced input for parfor
         wttsPix=complex(nan(nf,nT,nPix,'single'));
-        parfor pp=1:nPix
+        parfor (pp=1:nPix, nwAvg)
             %inlined copy of the old core returnComplex step: (x-c)/c -> wt -> coi-trim
             %-> interp1 onto the grid f (UNdecimated complex coefficients for the combine)
             nrmStat=tmpMakeNrmStat(s);

@@ -52,6 +52,10 @@
 %                • ppxPulsReturn  per-pixel level cell / gate (default {'markers'};
 %                                 [] = per-pixel analysis off)
 %                • fitOptions     (optional) fitoptions override for the model
+%                • parforPulsatilityPixels  logical, default true - run the per-pixel
+%                                 fit loop in parallel.  A WORKER BOUND, not a branch:
+%                                 false runs the identical loop body serially in the
+%                                 client and starts no pool.
 %     fNames   cell array of *_BFI_d.mat paths.
 %                • Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,
 %                  label), s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
@@ -92,6 +96,10 @@
 %                         % (reproduces the old always-computed imgPI/imgRI); add
 %                         % 'model'/'reconstruction' to fit every masked pixel (large
 %                         % cubes at full field resolution).
+% %ADJUSTED IF NECESSARY - Parallel execution
+% s.parforPulsatilityPixels=true;  % false fits the pixels one at a time in this MATLAB
+%                         % and starts no parallel pool - slower, but it costs no
+%                         % worker processes, which is what a small machine needs.
 
 function runPulsatility(s,fNames)
 
@@ -111,6 +119,13 @@ if ~isfield(s,'segPulsReturn') || isempty(s.segPulsReturn)
 end
 if ~isfield(s,'ppxPulsReturn')
     s.ppxPulsReturn={'markers'};
+end
+%PARALLELISM IS OPTIONAL.  s.parforPulsatilityPixels is a BOUND on the per-pixel fit
+%parfor below (Inf workers or 0), never a branch: parfor(...,0) runs the identical
+%loop body serially IN THE CLIENT and starts no pool at all.  Default true, so a
+%settings file that carries no such field behaves exactly as before.
+if ~isfield(s,'parforPulsatilityPixels') || isempty(s.parforPulsatilityPixels)
+    s.parforPulsatilityPixels=true;
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -276,8 +291,13 @@ for fidx=1:1:numel(fNames)
                 reportStage(rep,'Pulsatility per pixel');
                 %Throttled AT THE SEND: one send per pixel would cost ~10^5-10^6
                 %client-side callbacks; sendEvery makes it about two hundred.
+                %The queue is created and deleted regardless of whether the loop below
+                %runs parallel: it is the ONE piece of state that must stay switchable
+                %apart from the loop, or "parfor off" and "queue gone" become the same
+                %experiment and neither cause can be told from the other.
                 [dqPix,sendEvery]=reportProgress(rep,'queue',npx,'Pulsatility per pixel');
-                parfor p=1:npx
+                nwPix=0; if s.parforPulsatilityPixels, nwPix=Inf; end   %worker bound, not a branch
+                parfor (p=1:npx, nwPix)
                     if mod(p,sendEvery)==0, send(dqPix,sendEvery); end
                     if sMapLin(p)==0, continue; end          %background: model 0, fData raw
                     mp=getPulsatilityMetrics(Dpix(p,:).',layoutFit,sFit);
@@ -292,6 +312,7 @@ for fidx=1:1:numel(fNames)
                     end
                 end
                 reportProgress(rep,1,'Pulsatility per pixel');   %forced final tick
+                delete(dqPix);                                   %its afterEach pinned rep
 
                 fDataCube=reshape(fDataAcc,Y,X,nTp);
                 W=fDataCube;                                 %markers on the fitted cube

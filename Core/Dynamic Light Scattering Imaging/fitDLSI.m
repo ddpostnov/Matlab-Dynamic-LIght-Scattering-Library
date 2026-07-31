@@ -62,6 +62,13 @@
 %                   command window exactly as it always has been, so every
 %                   existing caller is unaffected.  Supplied, one bar spans all
 %                   the coherence-loss passes instead.
+%    'parforFit'  - (Logical) Fit the pixels of a batch in parallel.
+%                   Default: true - today's behaviour.  It is a WORKER BOUND on the
+%                   fit parfor, not a branch: false runs the identical loop body
+%                   serially in the client and starts no pool, which is what a
+%                   machine that cannot afford a full pool needs.  ONE switch covers
+%                   all four model types because they are four mutually exclusive
+%                   branches of a single loop - exactly one ever executes.
 %
 % Outputs:
 %    model - Lightweight fit struct (does NOT store g2) with fields:
@@ -109,11 +116,17 @@ addParameter(p, 'bs', 1, @(x) isnumeric(x) && isscalar(x) && x>0);
 addParameter(p, 'mask', [], @(x) isempty(x) || isnumeric(x) || islogical(x));
 addParameter(p, 'isAdaptive', true, @(x) islogical(x) || ismember(x,[0 1]));
 addParameter(p, 'progressFcn', [], @(x) isempty(x) || isa(x,'function_handle'));
+addParameter(p, 'parforFit', true, @(x) islogical(x) || ismember(x,[0 1]));
 parse(p, g2, lags, iniTau, varargin{:});
 
 % Absent (the default) the per-batch percentage is printed exactly as it always
 % has been, so the DLSI launchers and everything in Drafts/ are unaffected.
 progressFcn = p.Results.progressFcn;
+
+% Worker bound for the fit parfor below, not a branch: Inf = as many workers as the
+% pool offers (today's behaviour), 0 = the identical loop body run serially in the
+% client with no pool started at all.  One bound shared by all four type branches.
+nwFit = 0; if logical(p.Results.parforFit), nwFit = Inf; end
 
 type       = validatestring(p.Results.type, {'MDSN','DSN','DN','D'});
 pointsMin  = p.Results.pointsMin;
@@ -323,7 +336,7 @@ for fi=1:nForms
             end
         end
         if strcmp(type,'MDSN')
-            parfor i=ii+1:iEnd
+            parfor (i=ii+1:iEnd, nwFit)
                 if artifacts(i)==0 && mask(i)==1
                     ts=double(g2Sub{i});
                     xq=double(lagsSub{i});
@@ -351,7 +364,7 @@ for fi=1:nForms
             end
 
         elseif strcmp(type,'DSN')
-            parfor i=ii+1:iEnd
+            parfor (i=ii+1:iEnd, nwFit)
                 if artifacts(i)==0  && mask(i)==1
                     ts=double(g2Sub{i});
                     xq=double(lagsSub{i});
@@ -386,7 +399,7 @@ for fi=1:nForms
                 end
             end
         elseif strcmp(type,'DN')
-            parfor i=ii+1:iEnd
+            parfor (i=ii+1:iEnd, nwFit)
                 if artifacts(i)==0  && mask(i)==1
                     ts=double(g2Sub{i});
                     xq=double(lagsSub{i});
@@ -422,7 +435,7 @@ for fi=1:nForms
                 end
             end
         elseif strcmp(type,'D')
-            parfor i=ii+1:iEnd
+            parfor (i=ii+1:iEnd, nwFit)
                 if artifacts(i)==0  && mask(i)==1
                     ts=double(g2Sub{i});
                     xq=double(lagsSub{i});

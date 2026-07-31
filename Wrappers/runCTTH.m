@@ -49,6 +49,12 @@
 %                • promFrac  peak/trough prominence as fraction of amplitude(def 0.2)
 %                • minStep   smallest detectable change (uint16)           (def 1)
 %                • baseWin   baseline window (frames) for the median   (def 10% of frames)
+%                • parforCTTHPixels  logical - run the per-pixel loop  (def true)
+%                            in parallel.  A WORKER BOUND on the parfor, not a
+%                            branch: false runs the identical loop body serially in
+%                            the client and starts no pool.  NOTE the parfor is over
+%                            image COLUMNS inside a serial loop over ROWS, so a
+%                            parallel run enters the pool once per row.
 %     fNames   cell array of *b_I_d.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.progressFcn(frac,label),
 %     s.stageFcn(stage,detail), s.cancelFcn()->tf.
@@ -65,6 +71,7 @@
 %     s.hampWin=3;  s.hampSig=3;         % motion-spike rejection
 %     s.slopeWin=9; s.promFrac=0.2;      % robust upslope / peak
 %     s.minStep=1;                       % uint16 resolution
+%     s.parforCTTHPixels=true;           % false: no parallel pool (slower per-pixel pass)
 %     files=dir(fullfile(dataRoot,'*b_I_d.mat'));
 %     runCTTH(s,fullfile({files.folder}',{files.name}'));
 %
@@ -90,6 +97,12 @@ if ~isfield(s,'hampSig');  s.hampSig =3;  end          % Hampel n*MAD threshold
 if ~isfield(s,'slopeWin'); s.slopeWin=9;  end          % sustained-slope window
 if ~isfield(s,'promFrac'); s.promFrac=0.2;end          % prominence / amplitude
 if ~isfield(s,'minStep');  s.minStep =1;  end          % min detectable change (uint16)
+% Parallelism is optional: a BOUND on the per-pixel parfor (Inf workers or 0), never
+% a branch - parfor(...,0) runs the identical body serially in the client and starts
+% no pool.  Default true, so a settings file carrying no such field is unaffected.
+if ~isfield(s,'parforCTTHPixels') || isempty(s.parforCTTHPixels)
+    s.parforCTTHPixels=true;
+end
 s.sgFrame=s.sgFrame+1-mod(s.sgFrame,2);                % force odd
 s.sgFrame=max(s.sgFrame,s.sgOrder+3-mod(s.sgOrder,2)); % keep frame > order, odd
 
@@ -138,11 +151,12 @@ for fidx=1:numel(fNames)
         t=source.time(:);
         imgT=nan(R,C,4,'single');
         imgV=nan(R,C,4,'single');
+        nwPix=0; if s.parforCTTHPixels, nwPix=Inf; end   % worker bound, not a branch
         for i=1:R
             rowData=squeeze(data(i,:,:));            % C x T
             rowMask=mask(i,:);
             rowT=nan(C,4); rowV=nan(C,4);
-            parfor j=1:C
+            parfor (j=1:C, nwPix)
                 if rowMask(j)
                     [idx,y]=getBolusTimes(rowData(j,:),s,bw);
                     if all(~isnan(idx))

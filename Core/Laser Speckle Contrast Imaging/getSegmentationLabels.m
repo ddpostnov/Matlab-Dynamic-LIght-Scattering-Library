@@ -26,7 +26,10 @@
 %                (settings.runSegmentation.edgeSize, from getPixelCategories).
 %   s            parameter struct.  Reads: correctNodes, simR, difR (node
 %                correction), sMinL (min segment length), prchNSize (parenchyma
-%                cell size).
+%                cell size), parforSegmentationLabels (logical, default true - run
+%                the per-label geodesic loop in parallel; a WORKER BOUND on the
+%                parfor, not a branch, so false runs the identical loop body
+%                serially in the client and starts no pool).
 %   centerlines  OPTIONAL logical skeleton to use instead of the default
 %                bwskel(cMask==5) - e.g. from a manual centerline editor.  Pass []
 %                or omit for the automatic skeleton.
@@ -172,7 +175,15 @@ end
 
 labels=nonzeros(unique(sLines));
 distStack=inf([size(cMask) numel(labels)],'single');
-parfor k = 1:numel(labels)   % dtLumen broadcast below is intentional (full-image DT)
+% Parallelism is optional: a BOUND on the parfor (Inf workers or 0), never a branch -
+% parfor(...,0) runs the identical body serially in the client and starts no pool.
+% Default true when the field is absent, so every existing caller is unaffected.
+nwLbl=Inf;
+if isfield(s,'parforSegmentationLabels') && ~isempty(s.parforSegmentationLabels) ...
+        && ~s.parforSegmentationLabels
+    nwLbl=0;
+end
+parfor (k = 1:numel(labels), nwLbl)   % dtLumen broadcast below is intentional (full-image DT)
     distStack(:,:,k) = bwdistgeodesic(cMask>2, sLines == labels(k), 'quasi-euclidean')-mean(dtLumen(sLines == labels(k))); %#ok<PFBNS>
 end
 [~,tmp] = min(distStack,[],3);

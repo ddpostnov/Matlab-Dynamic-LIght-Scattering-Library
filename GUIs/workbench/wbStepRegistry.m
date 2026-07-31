@@ -44,6 +44,8 @@
 %       presets      struct of named default bundles (.default = launcher values)
 %       tips         struct field->tooltip           (from the %Example comments)
 %       enums        struct field->allowed values    (dropdown items)
+%       labels       struct field->row label         (OPT-IN; absent = the field
+%                    name, which is what a protocol is written in anyway)
 %       modalities   which modalities expose it       ({'LSCI'})
 %       branch       'contrast' | 'cardiac' | '' (which file branch this step's
 %                    column belongs to; wbFileModel also derives 'epoch'/'bolus')
@@ -191,6 +193,23 @@
 %     collapsed below under 'Advanced'.  It is a DISPLAY split only: both halves
 %     resolve, save and invalidate identically, and a step with no basicFields
 %     shows all of its fields as Basic.
+%   * PARALLEL SWITCHES, AND WHY THEY SAY 'parfor' (author, 2026-07-30).  Three steps
+%     carry a 'Parallel' group of logical fields that bound their own parfor: one
+%     field per distinct parallel LOOP, not per step, which is why vasomotion has
+%     three of them.  They are ADVANCED (no step lists them in basicFields) because a
+%     protocol is never written around them - they are a machine decision.
+%     Their labels ('Use parfor: segments', 'Use parfor: per pixel', ...) come from
+%     the author verbatim and are a DELIBERATE exception to the house rule that a
+%     user-visible string carries no code vocabulary: 'parfor' is jargon, and it is
+%     the right jargon for an audience that runs MATLAB and knows what a pool costs.
+%     Do not "helpfully" rewrite them to 'Parallel: per pixel'.
+%     LABELS is the mechanism that made this possible - the settings panel used the
+%     raw field name as the row label, and 'parforVasomotionSegments' is not a label.
+%     It is opt-in per field, so nothing else in the panel changed.
+%     Three more axes exist in the library and are NOT here, because their steps are
+%     not in the v1 registry: parforCTTHPixels (.cxd/CTTH), parforMyographLines
+%     (.avi/myograph) and fitDLSI's 'parforFit' name/value (DLSI).  They are reachable
+%     from their launchers and inherit the same true-when-absent default.
 %
 % See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
 %           wbPrereqs, wbRefBranch, wbTypeSelection, wbTypePresets
@@ -335,21 +354,28 @@ s.legacyArtifacts={'_cm.jpg','_vs.jpg'};              % '_vs' came from showSegm
 s.branch=''; s.branchScope='copy';                % computed on contrast side, copied to cardiac
 s.settingGroups={ 'Contrast',{'trustLimitsK'};
                   'Categorization',{'lSizeN','sSizeN','sens','sSizeScale','deSens','lThinN','imOpen','iEdge','eEdge'};
-                  'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'} };
+                  'Labelling & traces',{'sStat','sMinL','prchNSize','correctNodes','simR','difR'};
+                  'Parallel',{'parforSegmentationLabels'} };
                   % no 'Copy to siblings' panel: branchScope 'copy' means wbExecutor
                   % derives s.fNamesCopyTo from the recording's own branch products
 s.basicFields={'lSizeN','sSizeN','sens','sMinL'};
-s.sharedKeys={'trustLimitsK','prchNSize','sMinL','correctNodes','simR','difR','sStat','libraryFolder'};
+% parforSegmentationLabels is SHARED with dynamicSegmentation: both steps drive the
+% same core (getSegmentationLabels), so the machine-level choice is one tick, not two.
+s.sharedKeys={'trustLimitsK','prchNSize','sMinL','correctNodes','simR','difR','sStat', ...
+    'parforSegmentationLabels','libraryFolder'};
 s.enums=struct('sStat',{{'median','mean'}});
 s.presets=struct('default',struct('trustLimitsK',[0.001 0.99],'lSizeN',141,'sSizeN',9, ...
     'sens',0.1,'sSizeScale',1,'deSens',1,'lThinN',2,'imOpen',0,'iEdge',2,'eEdge',2, ...
     'categories',{{'background','parenchyma','unsegmented','outerEdge','innerEdge','lumen'}}, ...
-    'sStat','median','sMinL',15,'prchNSize',50,'correctNodes',true,'simR',0.3,'difR',0.4));
+    'sStat','median','sMinL',15,'prchNSize',50,'correctNodes',true,'simR',0.3,'difR',0.4, ...
+    'parforSegmentationLabels',true));
+s.labels=struct('parforSegmentationLabels','Use parfor: segment labels');
 s.tips=struct('lSizeN','odd, ~2x the largest vessel', ...
     'sSizeN','odd, ~2x the small-vessel diameter', ...
     'sens','segmentation sensitivity (raise to catch faint vessels)', ...
     'sMinL','minimum segment length', ...
-    'prchNSize','parenchymal pixel neighbourhood');
+    'prchNSize','parenchymal pixel neighbourhood', ...
+    'parforSegmentationLabels',parforTip('the per-segment label growing'));
 reg(end+1)=s;
 
 % ---- 7. dynamicSegmentation -------------------------------------------------
@@ -361,15 +387,20 @@ s.artifacts={'_rep_segments.jpg'};                    % re-emitted, overwriting 
 s.legacyArtifacts={'_vs.jpg'}; s.branch=''; s.branchScope='all';
 s.settingGroups={ 'Labelling (match segmentation)',{'sMinL','prchNSize','correctNodes','simR','difR'};
                   'Dynamic segmentation',{'sMinP2R2','sMaxLBI','sMaxCLR','sMaxKK','iniNSize','sMaxP2D'};
-                  'Quality & interpolation',{'gSizeN','minOverlapMask','minOverlapSelf','pInterpF'} };
+                  'Quality & interpolation',{'gSizeN','minOverlapMask','minOverlapSelf','pInterpF'};
+                  'Parallel',{'parforSegmentationLabels'} };
 s.basicFields={'sMinL','minOverlapMask'};
-s.sharedKeys={'sMinL','prchNSize','correctNodes','simR','difR','libraryFolder'};
+s.sharedKeys={'sMinL','prchNSize','correctNodes','simR','difR','parforSegmentationLabels', ...
+    'libraryFolder'};
 s.presets=struct('default',struct('sMinL',15,'prchNSize',50,'correctNodes',true,'simR',0.3, ...
     'difR',0.4,'sMinP2R2',0.95,'sMaxLBI',(1/7)/15,'sMaxCLR',1.3,'sMaxKK',0.3,'iniNSize',7, ...
-    'sMaxP2D',3,'gSizeN',3,'minOverlapMask',0.6,'minOverlapSelf',0.2,'pInterpF',4));
+    'sMaxP2D',3,'gSizeN',3,'minOverlapMask',0.6,'minOverlapSelf',0.2,'pInterpF',4, ...
+    'parforSegmentationLabels',true));
+s.labels=struct('parforSegmentationLabels','Use parfor: segment labels');
 s.tips=struct('sMinP2R2','min accepted R^2 of the 3-degree polynomial fit', ...
     'sMaxCLR','max chord-length ratio (1 straight, 2 coiled)', ...
-    'minOverlapMask','min overlap of centre line with the per-frame mask');
+    'minOverlapMask','min overlap of centre line with the per-frame mask', ...
+    'parforSegmentationLabels',parforTip('the per-segment label growing'));
 reg(end+1)=s;
 
 % ---- 8. guided --------------------------------------------------------------
@@ -433,7 +464,9 @@ s.branch='contrast';
 s.settingGroups={ 'Bands',{'vFR','cFR','wFR','wVPO'};
                   'Normalisation',{'normalisation','normsize','tgtFS'};
                   'Peaks & percentiles',{'pcts','otsuMaxN','otsuElbow','nPeakProm'};
-                  'Signals & levels',{'vsmSignals','segVsmReturn','ppxVsmReturn'} };
+                  'Signals & levels',{'vsmSignals','segVsmReturn','ppxVsmReturn'};
+                  'Parallel',{'parforVasomotionSegments','parforVasomotionPixels', ...
+                              'parforVasomotionAveraging'} };
 s.basicFields={'vFR','cFR','tgtFS','vsmSignals'};
 s.sharedKeys={'libraryFolder'};
 s.enums=struct('normalisation',{{'mean','median','mmean','mmedian'}});
@@ -441,12 +474,22 @@ s.presets=struct('default',struct('vFR',[0.05 0.25],'cFR',[0.4 0.6],'wFR',[0.01 
     'normalisation','median','normsize',101,'tgtFS',1,'pcts',0:10:100,'otsuMaxN',5, ...
     'otsuElbow',0.05,'nPeakProm',0.10, ...
     'vsmSignals',{{'sData','dvsData','dvsDiameter','gsData'}}, ...
-    'segVsmReturn',{{'bands','moments','series','clustering','spectrum'}},'ppxVsmReturn',[]));
+    'segVsmReturn',{{'bands','moments','series','clustering','spectrum'}},'ppxVsmReturn',[], ...
+    'parforVasomotionSegments',true,'parforVasomotionPixels',true, ...
+    'parforVasomotionAveraging',true));
+% This step has THREE different parallel loops, so it gets three switches; the wording
+% is the author's own and deliberately says 'parfor' (see the note under LABELS below).
+s.labels=struct('parforVasomotionSegments','Use parfor: segments', ...
+    'parforVasomotionPixels','Use parfor: per pixel', ...
+    'parforVasomotionAveraging','Use parfor: segment averaging');
 s.tips=struct('vFR','vasomotion frequency band [lo hi], Hz', ...
     'cFR','control (cardiac) frequency band [lo hi], Hz', ...
     'nPeakProm','VB peak-count prominence as a fraction of the band range', ...
     'segVsmReturn','which per-segment levels to store (set of tokens)', ...
-    'ppxVsmReturn','per-pixel analysis ([] = off; e.g. {''bands''} to enable)');
+    'ppxVsmReturn','per-pixel analysis ([] = off; e.g. {''bands''} to enable)', ...
+    'parforVasomotionSegments',parforTip('the per-segment analysis'), ...
+    'parforVasomotionPixels',parforTip('the per-pixel analysis'), ...
+    'parforVasomotionAveraging',parforTip('the per-segment averaging'));
 reg(end+1)=s;
 
 % ---- 12. pulsatility --------------------------------------------------------
@@ -456,14 +499,18 @@ s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runPulsatility'; s.requires={'BFI','internalCycle'}; s.produces={'pulsatility'};
 s.branch='cardiac';
 s.settingGroups={ 'Harmonic model',{'nHarm'};
-                  'Analysis levels',{'segPulsReturn','ppxPulsReturn'} };
+                  'Analysis levels',{'segPulsReturn','ppxPulsReturn'};
+                  'Parallel',{'parforPulsatilityPixels'} };
 s.basicFields={'nHarm'};
 s.sharedKeys={'libraryFolder'};
 s.presets=struct('default',struct('nHarm',5, ...
-    'segPulsReturn',{{'markers','model','reconstruction'}},'ppxPulsReturn',{{'markers'}}));
+    'segPulsReturn',{{'markers','model','reconstruction'}},'ppxPulsReturn',{{'markers'}}, ...
+    'parforPulsatilityPixels',true));
+s.labels=struct('parforPulsatilityPixels','Use parfor: per pixel');
 s.tips=struct('nHarm','number of harmonics in the sinusoidal cardiac model', ...
     'segPulsReturn','per-segment levels: markers / model / reconstruction', ...
-    'ppxPulsReturn','per-pixel maps ([] = off; non-empty enables marker maps)');
+    'ppxPulsReturn','per-pixel maps ([] = off; non-empty enables marker maps)', ...
+    'parforPulsatilityPixels',parforTip('the per-pixel fit'));
 reg(end+1)=s;
 
 % ---- 13. vesselTypes (per animal) --------------------------------------------
@@ -520,6 +567,15 @@ s = struct( ...
     'interactive',false, 'needsRaw',false, 'artifacts',{{}}, 'legacyArtifacts',{{}}, ...
     'settingGroups',{{}}, 'basicFields',{{}}, 'sharedKeys',{{}}, ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
+    'labels',struct(), ...
     'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'fanOut','flat', ...
     'refBranch','');
+end
+
+% =====================================================================
+function t = parforTip(what)
+%parforTip  One sentence, same shape for every parallel switch: what it parallelises,
+%   and what turning it off actually costs.  The trade is time against worker
+%   processes, and that is the only thing the user has to decide.
+t = sprintf('on: run %s on several CPU workers.  off: one item at a time in this MATLAB - slower, but no worker processes and no extra memory.', what);
 end
