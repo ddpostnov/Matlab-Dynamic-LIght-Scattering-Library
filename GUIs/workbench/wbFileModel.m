@@ -67,6 +67,7 @@
 %    model = wbFileModel(path)                         % decompose one path
 %    name  = wbFileModel('compose', model, chain, role)% build a sibling .mat name
 %    p     = wbFileModel('identity', model)            % [RoiN_]stem (no flags)
+%    b     = wbFileModel('branch', stage, product)     % the pipeline a file sits on
 %    ms    = wbFileModel('modalities')                 % the whole vocabulary
 %    ms    = wbFileModel('modalities', ext)            % those an extension allows
 %    es    = wbFileModel('extensions')                 % the raw containers it knows
@@ -76,6 +77,8 @@
 %    model  - a struct returned by the decompose form.
 %    chain  - flag chain to compose, e.g. '_t_K', '_c_BFI', '_e_K' or '' .
 %    role   - 'd' | 'r' | 's' (SOURCE/RESULTS/SETTINGS).
+%    stage  - a single stage flag: 't' | 's' | 'c' | 'e' | 'b' | '' .
+%    product- a product token: 'K' | 'BFI' | 'I' | 'g' | 'MYO' | '' .
 %
 % Outputs:
 %    model - struct with fields: path, folder, name, ext, modality, roi (double
@@ -124,6 +127,12 @@ if nargin>=1 && (ischar(varargin{1}) || (isstring(varargin{1}) && isscalar(varar
         case 'identity'
             m = varargin{2};
             out = fullfile(m.folder,[m.roiPrefix m.stem]);
+            return
+        case 'branch'
+            % PROMOTED so a caller that already has a (stage, product) pair - the
+            % explorer's pipeline filter parses the stage through wbProducts - can
+            % name the branch without re-deriving the rule.  ONE definition.
+            out = branchOf(varargin{2:end});
             return
         case 'modalities'
             if numel(varargin)>=2, out = modalitiesFor(varargin{2});
@@ -221,6 +230,8 @@ end
 
 % =====================================================================
 function b = branchOf(stage,product)
+if nargin<2, product = ''; end
+stage = char(stage); product = char(product);
 %branchOf  Which analysis pipeline a file sits on - the key everything per-branch is
 %   filtered and keyed by.
 %

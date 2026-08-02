@@ -67,6 +67,13 @@ before it starts and carries a running total for exactly this reason.
 | LSCI | `testLSCIFast` | `testLSCIExhaustive` |
 | Reporting | `testReportingFast` | — whole module is ~2 min |
 | Registration | run the two files directly (~12 s) | — |
+| Explore | inside `testWorkbenchFast` | `testExploreExhaustive` (~8 min, **T3**) |
+
+The explorer has no fast runner of its own: `testExploreTool` plus the `('synthetic')`
+mode of `testExploreIndex` and `testExplorePlan` live in `testWorkbenchFast`.
+`testExploreExhaustive` adds their real-set parts and `testExploreCascade`, and **needs
+the reference data at `C:\Dropbox\Work\Data`** — those tests fail rather than skip
+without it, on purpose.
 
 `claude-docs/test-cost-inventory.md` holds the measured wall time of every test.
 Consult it before running something you have not run before.
