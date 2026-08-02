@@ -122,11 +122,11 @@ q=struct('path',{},'name',{},'state',{},'timeCrop',{},'rowRange',{}, ...
     'pixelSize',{},'fps',{},'intervals',{},'intervalNames',{},'resultPath',{});
 end
 function s=launcherDefaults()
-s=struct('edgeMode','center','tau',0.85,'rowRange',[1 Inf],'smoothSigma',1.2,'dustRadius',8, ...
+s=struct('edgeMode','mid','tau',0.85,'rowRange',[1 Inf],'smoothSigma',1.2,'dustRadius',8, ...
     'tSpan',25,'ySpan',31,'outlierK',3,'subpixel',true,'smoothSpan',15, ...
     'vFR',[0.05 0.25],'cFR',[0.4 0.6],'wFR',[0.01 1],'wVPO',10,'normalisation','median', ...
     'normsize',inf,'tgtFS',1,'pcts',0:10:100,'otsuMaxN',5,'otsuElbow',0.05, ...
-    'propNShuffle',200,'propSignal','diameter','detectPerInterval',false);
+    'propNShuffle',200,'detectPerInterval',false);
 s.segVsmReturn={'bands','moments','series','clustering','reconstruction','spectrum'};   %analysis levels to compute/store ('moments' stores the per-frequency fVectors; 'spectrum' stores the spectrum.amp/.phase grid for the spectrogram)
 end
 
@@ -170,7 +170,7 @@ function g=vasoGroups()
 g={ 'Vasomotion bands',   {'vFR','cFR','wFR','wVPO'};
     'Vasomotion options', {'normalisation','normsize','tgtFS'};
     'Analysis levels',    {'segVsmReturn'};
-    'Propagation',        {'propNShuffle','propSignal'} };
+    'Propagation',        {'propNShuffle'} };
 end
 function ctrls=buildParamEditor(fig,parent,groups)
 tips=paramTips();
@@ -188,11 +188,9 @@ for gi=1:size(groups,1)
         if islogical(val)
             ctrls.(f)=uicheckbox(gg,'Value',logical(val),'Text','','ValueChangedFcn',@(s,~)onParamEdit(fig,f,s.Value));
         elseif strcmp(f,'edgeMode')
-            ctrls.(f)=uidropdown(gg,'Items',{'center','min','outer','inner'},'Value',valOr(val,'center'),'ValueChangedFcn',@(s,~)onParamEdit(fig,f,s.Value));
+            ctrls.(f)=uidropdown(gg,'Items',{'mid','outer','inner','min'},'Value',valOr(val,'mid'),'ValueChangedFcn',@(s,~)onParamEdit(fig,f,s.Value));
         elseif strcmp(f,'normalisation')
             ctrls.(f)=uidropdown(gg,'Items',{'mean','median','mmean','mmedian'},'Value',valOr(val,'median'),'ValueChangedFcn',@(s,~)onParamEdit(fig,f,s.Value));
-        elseif strcmp(f,'propSignal')
-            ctrls.(f)=uidropdown(gg,'Items',{'diameter','rData'},'Value',valOr(val,'diameter'),'ValueChangedFcn',@(s,~)onParamEdit(fig,f,s.Value));
         elseif strcmp(f,'segVsmReturn')
             % analysis levels are a SET (s.segVsmReturn); render one checkbox per level
             levels={'bands','moments','series','clustering','reconstruction','spectrum'};
@@ -363,7 +361,7 @@ c.vsmMarker=exDrop(s2,3,'vsmMarker',{'ampMeanVB','ampStdVB','ampSkewVB','ampMean
     'durFlareMeanVB','durFlareStdVB','durSilenceMeanVB','durSilenceStdVB','ampFlareMeanVB','ampFlareStdVB','ampSilenceMeanVB','ampSilenceStdVB', ...
     'durFlareMeanCB','durFlareStdCB','durSilenceMeanCB','durSilenceStdCB','ampFlareMeanCB','ampFlareStdCB','ampSilenceMeanCB','ampSilenceStdCB'},@(~,~)exploreRender(fig));
 c.vsmMarker.Tooltip='Per-Y vasomotion scalar for "group: vsmMarker (box)". The band is the name suffix VB (s.vFR) / CB (s.cFR); read from scalars.<band>.* in the results tree. ampMeanVB/CB = per-Y band-mean amplitude.';
-c.propMetric=exDrop(s2,4,'Prop. scalar',{'speed','confidence','R2','domFreq','phaseSpeed'},@(~,~)exploreRender(fig));
+c.propMetric=exDrop(s2,4,'Prop. scalar',{'speed','confidence','R2','domFreq'},@(~,~)exploreRender(fig));
 c.propMetric.Tooltip='Scalar used by "group: propagation (box)" - one value per file x interval.';
 hHint=uilabel(s2,'Text','"group: ..." plots compare the selected files; single-file plots use the focus file.', ...
     'FontColor',[0.5 0.5 0.5],'WordWrap','on','FontSize',10);
@@ -473,7 +471,7 @@ function onParamEdit(fig,field,rawval)
 app=getApp(fig);
 if islogical(app.s.(field)) || ismember(field,{'subpixel','detectPerInterval'})
     app.s.(field)=logical(rawval);
-elseif (ischar(rawval)||isstring(rawval)) && ismember(field,{'edgeMode','normalisation','propSignal'})
+elseif (ischar(rawval)||isstring(rawval)) && ismember(field,{'edgeMode','normalisation'})
     app.s.(field)=char(rawval);
 else
     app.s.(field)=str2paramValue(rawval);
@@ -551,7 +549,7 @@ try
     end
     sA=s; sA.runVasomotion=true; sA.runPropagation=true;
     [intervals,tim]=analyzeMyographIntervals(sA,intervals,s.stageFcn);
-    s=sSaved; save(rp,'intervals','s','meta','-v7.3');
+    s=sSaved; save(rp,'intervals','s','meta','-v7.3','-nocompression');
     out.status='done'; out.message='ok'; out.path=rp; out.nIntervals=numel(intervals);
     out.timings.vasomotion=tim.vasomotion; out.timings.propagation=tim.propagation;
     out.intervals=intervals; out.meta=meta;
@@ -690,21 +688,24 @@ setApp(fig,app); drawIntervalTrace(fig);
 end
 function big=stitchIntervals(intervals)
 %STITCHINTERVALS  reconstruct one continuous diameter from a set of interval slices
+%   idxL/idxR/diameter are [frames x nY x measure] (outer/mid/inner), so the pieces
+%   concatenate along FRAMES (dim 1) and the measure dimension is carried through.
 if numel(intervals)==1, big=intervals(1); if ~isfield(big,'name')||isempty(big.name), big.name='full'; end, return; end
 t=[]; L=[]; R=[]; D=[]; M=[]; V=[];
 for k=1:numel(intervals)
     t=[t; double(intervals(k).time(:))]; %#ok<AGROW>
-    L=[L; intervals(k).idxL]; R=[R; intervals(k).idxR]; D=[D; intervals(k).diameter]; %#ok<AGROW>
+    L=cat(1,L,intervals(k).idxL); R=cat(1,R,intervals(k).idxR); D=cat(1,D,intervals(k).diameter);
     nf=size(intervals(k).diameter,1);
     if isfield(intervals,'mask')&&~isempty(intervals(k).mask), M=[M; intervals(k).mask]; else, M=[M; ones(nf,size(intervals(k).diameter,2),'single')]; end %#ok<AGROW>
     if isfield(intervals,'valid')&&~isempty(intervals(k).valid), V=[V; intervals(k).valid(:)]; else, V=[V; true(nf,1)]; end %#ok<AGROW>
 end
 [tu,iu]=unique(t);                                          % sorted, de-duplicated in time
-big=struct('name','full','time',tu,'idxL',L(iu,:),'idxR',R(iu,:),'diameter',D(iu,:),'mask',M(iu,:),'valid',V(iu));
+big=struct('name','full','time',tu,'idxL',L(iu,:,:),'idxR',R(iu,:,:),'diameter',D(iu,:,:),'mask',M(iu,:),'valid',V(iu));
+if isfield(intervals,'measures'), big.measures=intervals(1).measures; end
 end
 function drawIntervalTrace(fig)
 app=getApp(fig); iv=app.detIntervals; if isempty(iv), return; end
-t=double(iv.time); D=double(iv.diameter); med=median(D,2,'omitnan');
+t=double(iv.time); D=ivDiameter(iv,app.s.edgeMode); med=median(D,2,'omitnan');
 if isfield(iv,'valid') && ~isempty(iv.valid), valid=logical(iv.valid(:)); else, valid=true(numel(t),1); end
 ax=app.c.intervals.axTrace; cla(ax); hold(ax,'on');
 plot(ax,t,med,'-','Color',[0 0.3 0.8]);                    % valid diameter (blue)
@@ -798,7 +799,7 @@ if isempty(rp)||~exist(rp,'file')
 end
 big=app.detIntervals; intervals=cutMyographIntervals(big,ivT,names); %#ok<NASGU>
 [~,sSaved,meta]=loadMyographResults(rp); s=sSaved; %#ok<NASGU>
-save(rp,'intervals','s','meta','-v7.3');
+save(rp,'intervals','s','meta','-v7.3','-nocompression');
 alertUser(fig,sprintf('%d interval(s) saved to %s.',size(ivT,1),getApp(fig).queue(idx).name),'Saved','success');
 end
 function alertUser(fig,msg,titl,icon)
@@ -845,8 +846,9 @@ try, pv.vr.CurrentTime=min(max(t,0),max(0,pv.vr.Duration-1/pv.vr.FrameRate)); fr
 if ndims(fr)<3, fr=repmat(fr,1,1,3); end
 cla(ax); image(ax,fr); axis(ax,'image'); set(ax,'XTick',[],'YTick',[]); hold(ax,'on');
 [~,fi]=min(abs(double(big.time)-t)); nY=size(big.idxL,2);
-plot(ax,big.idxL(fi,:),1:nY,'g-','LineWidth',1.2);
-plot(ax,big.idxR(fi,:),1:nY,'g-','LineWidth',1.2);
+kM=ivMeasure(big,app.s.edgeMode);                            % overlay the analysed measure
+plot(ax,big.idxL(fi,:,kM),1:nY,'g-','LineWidth',1.2);
+plot(ax,big.idxR(fi,:,kM),1:nY,'g-','LineWidth',1.2);
 title(ax,sprintf('t=%.1f s  (frame %d/%d)',t,pv.curIdx,numel(pv.times))); hold(ax,'off');
 end
 function previewPlay(fig)
@@ -882,8 +884,8 @@ if isempty(pv.vr)||isempty(pv.times), error('No interval selected for preview.')
 t=pv.times(min(pv.curIdx,numel(pv.times)));
 pv.vr.CurrentTime=min(max(t,0),max(0,pv.vr.Duration-1/pv.vr.FrameRate)); fr=readFrame(pv.vr);
 if ndims(fr)<3, fr=repmat(fr,1,1,3); end
-[~,fi]=min(abs(double(big.time)-t));
-imwrite(drawWalls(im2uint8(fr),big.idxL(fi,:),big.idxR(fi,:)),path);
+[~,fi]=min(abs(double(big.time)-t)); kM=ivMeasure(big,app.s.edgeMode);
+imwrite(drawWalls(im2uint8(fr),big.idxL(fi,:,kM),big.idxR(fi,:,kM)),path);
 end
 function uiExportPreviewVideo(fig)
 [f,p]=uiputfile('*.avi','Export overlaid video'); if isequal(f,0), return; end
@@ -895,12 +897,13 @@ app=getApp(fig); pv=app.preview; big=app.detIntervals;
 if isempty(pv.vr)||isempty(pv.times), error('No interval selected for preview.'); end
 vw=VideoWriter(path,'Motion JPEG AVI'); vw.FrameRate=pv.vr.FrameRate; vw.Quality=90; open(vw);
 dec=max(1,round(numel(pv.times)/1500));                     % cap ~1500 frames
+kM=ivMeasure(big,app.s.edgeMode);
 for k=1:dec:numel(pv.times)
     t=pv.times(k);
     try, pv.vr.CurrentTime=min(max(t,0),max(0,pv.vr.Duration-1/pv.vr.FrameRate)); fr=readFrame(pv.vr); catch, continue; end
     if ndims(fr)<3, fr=repmat(fr,1,1,3); end
     [~,fi]=min(abs(double(big.time)-t));
-    writeVideo(vw,drawWalls(im2uint8(fr),big.idxL(fi,:),big.idxR(fi,:)));
+    writeVideo(vw,drawWalls(im2uint8(fr),big.idxL(fi,:,kM),big.idxR(fi,:,kM)));
 end
 close(vw);
 end
@@ -1191,7 +1194,7 @@ x=[]; y=[]; ok=false; xl=''; yl=''; xlog=false;
 switch kind
     case {'diam','ndiam'}
         t=double(ivk.time); if isempty(t), return; end
-        D=double(ivk.diameter);
+        D=ivDiameter(ivk);
         if isfield(ivk,'valid') && ~isempty(ivk.valid), D(~logical(ivk.valid(:)),:)=NaN; end  % drop off-FOV frames
         y=median(D,2,'omitnan'); x=t-t(1);                                  % align to interval start
         if strcmp(kind,'ndiam'), mm=mean(y,'omitnan'); if isfinite(mm)&&mm>0, y=y/mm; end, yl='normalised diameter'; else, yl='diameter (px)'; end % normalise to own interval mean
@@ -1253,10 +1256,24 @@ switch name
     case 'confidence', sc=gvp(p,'confidence');
     case 'R2',         sc=gvp(p,'R2');
     case 'domFreq',    sc=gvp(p,'domFreq');
-    case 'phaseSpeed', if isfield(p,'phase')&&isstruct(p.phase), sc=gvp(p.phase,'speed'); end
 end
 end
 function y=gvp(s,f), if isfield(s,f)&&~isempty(s.(f))&&isnumeric(s.(f)), y=double(s.(f)); y=y(1); else, y=NaN; end, end
+function k=ivMeasure(ivk,edgeMode)
+%IVMEASURE  index into the 3rd (measure) dimension of an interval's idxL/idxR/diameter
+%   getMyographDiameter returns outer / wall-centre / luminal positions; EDGEMODE (a
+%   name, not a detection rule any more) says which one to show.  Omitted, or an
+%   interval measured before the three-measure change, gives the wall-centre one.
+if nargin<2, edgeMode=''; end
+if isfield(ivk,'measures'), meas=ivk.measures; else, meas={}; end
+k=myographMeasureIndex(edgeMode,meas);
+k=min(k,size(ivk.diameter,3));                              % a legacy 2-D result is itself
+end
+function D=ivDiameter(ivk,edgeMode)
+%IVDIAMETER  one interval's analysed diameter as [frames x nY], double
+if nargin<2, edgeMode=''; end
+D=double(ivk.diameter(:,:,ivMeasure(ivk,edgeMode)));
+end
 
 %% ===================== EXPLORE logic - group renderers ============= %%
 function renderGroupCurve(ax,obs,meta,organize,statName)
@@ -1448,7 +1465,7 @@ end
 %% ===================== plotting primitives ========================= %%
 function plotMedianDiam(ax,iv,ivIdx,norm)
 hold(ax,'on'); for k=ivIdx(:)'
-    t=double(iv(k).time); D=double(iv(k).diameter);
+    t=double(iv(k).time); D=ivDiameter(iv(k));
     if isfield(iv,'valid')&&~isempty(iv(k).valid), D(~logical(iv(k).valid(:)),:)=NaN; end   % ignore off-FOV frames
     m=median(D,2,'omitnan');
     if norm, mm=mean(m,'omitnan'); if isfinite(mm)&&mm>0, m=m/mm; end, end                  % normalise to own interval mean
@@ -1457,7 +1474,7 @@ end
 grid(ax,'on'); xlabel(ax,'time (s)'); ylabel(ax,ternary(norm,'normalised diameter','diameter (px)')); legend(ax,'show');
 end
 function plotPerYDiam(ax,iv,ivIdx,norm)
-k=ivIdx(1); t=double(iv(k).time); D=double(iv(k).diameter);
+k=ivIdx(1); t=double(iv(k).time); D=ivDiameter(iv(k));
 if isfield(iv,'valid')&&~isempty(iv(k).valid), D(~logical(iv(k).valid(:)),:)=NaN; end
 step=max(1,round(size(D,2)/8)); hold(ax,'on');
 for y=1:step:size(D,2)
@@ -1468,7 +1485,7 @@ end
 grid(ax,'on'); xlabel(ax,'time (s)'); ylabel(ax,ternary(norm,'normalised diameter','diameter (px)')); legend(ax,'show'); title(ax,iv(k).name);
 end
 function plotYtMap(ax,iv,k)
-t=double(iv(k).time); D=double(iv(k).diameter); dec=max(1,round(size(D,1)/2000));
+t=double(iv(k).time); D=ivDiameter(iv(k)); dec=max(1,round(size(D,1)/2000));
 imagesc(ax,t(1:dec:end),1:size(D,2),D(1:dec:end,:)'); set(ax,'YDir','normal'); colorbar(ax);
 xlabel(ax,'time (s)'); ylabel(ax,'Y'); title(ax,sprintf('%s : diameter (px)',iv(k).name));
 end
@@ -1698,7 +1715,7 @@ function y=num0(p,f), if isfield(p,f)&&~isempty(p.(f)), y=double(p.(f)); y=y(1);
 function t=getTip(tips,f), if isKey(tips,f), t=tips(f); else, t=f; end, end
 function tips=paramTips()
 tips=containers.Map();
-tips('edgeMode')='Wall rule: center (darkness-weighted band centre; robust default), min (darkest point), outer/inner edge.';
+tips('edgeMode')='Which diameter to analyse: mid (wall centre to wall centre; robust default), outer (outer wall to outer wall), inner (the lumen). All three are always measured. min measures the wall centre as the darkest point instead.';
 tips('tau')='Wall threshold on the row-normalised image (<tau = wall).';
 tips('rowRange')='[lo hi] rows to measure; others are interpolated.';
 tips('smoothSigma')='Gaussian pre-smoothing, px.';
@@ -1706,7 +1723,7 @@ tips('dustRadius')='Vertical half-extent of dust blobs to remove (0=off).';
 tips('tSpan')='Temporal outlier window, frames (slow-change prior).';
 tips('ySpan')='Along-Y outlier window, rows (straight-vessel prior; set 0 for propagation-safe).';
 tips('outlierK')='Outlier threshold factor (scaled MADs).';
-tips('subpixel')='Parabolic sub-pixel refinement for min mode.';
+tips('subpixel')='Parabolic sub-pixel refinement of the darkest-point wall centre (min only).';
 tips('smoothSpan')='Final along-Y Savitzky-Golay span (0=off; 0 is propagation-safe).';
 tips('vFR')='Vasomotion band [lo hi] Hz.';
 tips('cFR')='Comparison band [lo hi] Hz.';
@@ -1720,10 +1737,9 @@ tips('segVsmReturn_bands')='(I) Band scalars: ampMean/ampStd/ampSkew per band + 
 tips('segVsmReturn_moments')='(II) Per-frequency spectra (fVectors ampMean/ampStd/ampSkew + VB percentile spectra).';
 tips('segVsmReturn_series')='(III) Amplitude / fCent / fSprd / nPeak time series (timeVectors.VB amp/fCent/fSprd/nPeak, timeVectors.CB amp).';
 tips('segVsmReturn_clustering')='(IV) Otsu flare/silence markers + amplitude & flare time series.';
-tips('segVsmReturn_reconstruction')='(V) Band-limited reconstruction rData (preferred propagation input).';
+tips('segVsmReturn_reconstruction')='(V) Band-limited reconstruction of the signal (rData).';
 tips('segVsmReturn_spectrum')='(VI) Decimated amplitude/phase wavelet grid spectrum.amp/.phase (large; needed for the spectrogram).';
 tips('propNShuffle')='Surrogate iterations for the propagation p-value.';
-tips('propSignal')='Signal for the max-correlation lag: diameter (default, drift-removed) or rData (band-limited).';
 tips('detectPerInterval')='OFF = detect once then slice (Path B, default). ON = re-detect per interval (Path A).';
 tips('pixelSize')='µm per px; empty or 0 -> report in px.';
 end

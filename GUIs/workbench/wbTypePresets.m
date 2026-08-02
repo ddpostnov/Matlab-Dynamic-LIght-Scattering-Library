@@ -18,10 +18,21 @@
 %                           drives two branches at once (spec §6 branchScope 'one':
 %                           vasomotion resolves to _t, pulsatility to _c, with no
 %                           ambiguity to expose in the UI)
+%     Pressure myograph     a vessel video: diameter, intervals, propagation and
+%                           vasomotion, all on one '_MYO' product
+%     Wire myograph         a LabChart recording: read it, choose the windows,
+%                           analyse each interval's channels - the same '_MYO'
+%                           product and the same two later steps
 %
 %   perAnimal steps (registration, vessel typing) are listed here too, in
 %   .animalSteps, because a protocol is not complete without them - the caller
-%   applies those to the animal panel rather than to the type matrix.
+%   applies those to the animal panel rather than to the type matrix.  A protocol
+%   whose modality has none (the myograph) simply lists none.
+%
+%   A PRESET MAY NAME A STEP THAT IS NOT THERE.  It is applied per step against the
+%   type's own modality-filtered registry, and a step that registry does not offer
+%   is skipped - so a protocol can be written whole while the steps behind it are
+%   still arriving, and a modality that never gains one is never broken by it.
 %
 %   Pure data, no graphics: the Constructor reads it, the tests read it, and
 %   adding a protocol is a data edit here.
@@ -44,7 +55,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 02-August-2026
 
 %------------- BEGIN CODE --------------
 function out = wbTypePresets(action, name)
@@ -92,6 +103,26 @@ P(end+1) = mk('Pulsatility+Vasomotion', ...
      'BFI','vasomotion','pulsatility'}, ...
     {'registration','vesselTypes'}, ...
     'both raw entry steps: the recording drives the contrast AND the cardiac branch');
+
+% The myograph protocols.  A preset is applied step by step and a step the type's
+% registry does not offer is simply skipped, so listing the interval editor here
+% before it exists costs nothing and saves the list being edited twice: the crop
+% and the pre-set intervals stay OUT, because "optional" is what off by default
+% means, and the interval editor stays IN, because "enabled by default" is what on
+% means.
+P(end+1) = mk('Pressure myograph', ...
+    {'myoVideo','myoDiameter','myoIntervals','myoPropagation','myoVasomotion'}, ...
+    {}, ...
+    'a vessel video: diameter, then how it travels along the vessel and how it oscillates');
+
+% The wire myograph is three steps, and that is the whole protocol: reading the
+% LabChart file IS the measurement, so there is nothing between it and choosing the
+% windows.  Propagation is absent rather than off - it compares locations ALONG one
+% vessel, and a wire myograph records one number per chamber.
+P(end+1) = mk('Wire myograph', ...
+    {'labChart','myoIntervals','myoVasomotion'}, ...
+    {}, ...
+    'a LabChart recording: the windows to compare, and how each channel oscillates in them');
 end
 
 % =====================================================================

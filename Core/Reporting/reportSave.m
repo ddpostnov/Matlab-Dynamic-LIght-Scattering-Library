@@ -5,6 +5,15 @@
 %   report with its data when a folder is copied, and it is how wbArtifacts finds
 %   report images at all - it globs on the stem and matches by tail.
 %
+%   AND THE PAGE SAYS WHICH RECORDING IT IS.  The same stem is written across the
+%   top of the page, so a PDF column assembled from ten steps is a stack of NAMED
+%   pages rather than a stack of images.  It is done here, once, because here is
+%   the only place that knows the answer: a wrapper writing a page for a SIBLING
+%   (fName below) does not have the sibling's name in the banner, and left to
+%   themselves the wrappers disagreed - five of ten titled their page, five did
+%   not, and one titled one of its two pages and not the other.  A wrapper that
+%   wants its page titled now does nothing at all.
+%
 %   A REPORT IS A BY-PRODUCT AND MUST NEVER KILL A RUN - NOR NARRATE ONE.  A
 %   failed export costs nothing at all: no line, no warning, no entry in the
 %   ledger, and THE FIGURE IS DELETED ON EVERY PATH - the cleanup object below
@@ -39,14 +48,17 @@
 %    rep   - the context from reportOpen, with a current file armed by reportFile.
 %    fh    - the figure from reportFigure.  It is deleted before this returns.
 %    tag   - short stage name; the image's tail is _rep_<tag>.jpg.
-%    fName - (optional) name the image from THIS file instead of the current one.
-%            For a page that describes a recording the banner did not name: a copy
-%            target inheriting a mask (setRegions, runSegmentation) or a report
-%            written outside the per-file loop (runRegistration's overlays).
+%    fName - (optional) name the image from THIS file instead of the current one,
+%            and TITLE THE PAGE with it too - the page is about that recording, so
+%            it says so.  For a page that describes a recording the banner did not
+%            name: a copy target inheriting a mask (setRegions, runSegmentation) or
+%            a report written outside the per-file loop (runRegistration's
+%            overlays).
 %
 % Outputs:
-%    None - the path is appended to rep's ledger, which reportClose hands back for
-%    whoever assembles the document between the steps.
+%    None - the page is titled with the recording it is named after and the path is
+%    appended to rep's ledger, which reportClose hands back for whoever assembles
+%    the document between the steps.
 %
 % Example:
 %    fh = reportFigure(rep,'segments');
@@ -59,7 +71,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function reportSave(rep, fh, tag, fName)
@@ -86,6 +98,7 @@ end
 outFile      = fullfile(fPath, [stem '_rep_' tag '.jpg']);
 
 try
+    titlePage(fh, stem);
     anchorPage(fh);
     exportgraphics(fh, outFile, 'ContentType','image', 'Resolution', min(DPI,DPI_MAX));
 catch
@@ -95,6 +108,21 @@ end
 imgs         = st('images');
 imgs{end+1}  = outFile;
 st('images') = imgs; %#ok<NASGU>  % st is a handle Map, so this lands in rep's ledger
+end
+
+% =====================================================================
+function titlePage(fh, stem)
+%titlePage  The recording's name across the top of the page (see the header).
+%   Underscores are softened to spaces because the default interpreter reads them
+%   as subscripts, which is the form the wrappers used before this moved here.
+%   IT GOES ON BEFORE THE ANCHOR: sgtitle attaches to whichever grid the figure
+%   holds, and anchorPage's full-canvas axes is a grid of its own, so a title added
+%   after it would sit on the frame instead of on the page.  A failure here costs
+%   the title and nothing else - the page is still exported, untitled.
+try
+    sgtitle(fh, strrep(stem,'_',' '));
+catch
+end
 end
 
 % =====================================================================

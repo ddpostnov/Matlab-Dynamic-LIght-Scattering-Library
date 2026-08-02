@@ -53,6 +53,20 @@
 %   the stage-preferred file, 'all' every branch product, 'copy' the contrast file
 %   with its siblings routed into the copy list.
 %
+%   THE WORKING SET IS A FENCE (round-2 item 8).  branchScope says how many of a
+%   recording's branch products a step covers; it does NOT say which products the
+%   SESSION is about.  The input glob below is a directory listing filtered only by
+%   identity, so for an 'all' or 'copy' step every product on disk joined the
+%   wrapper's fNames - including a '_c_K' triplet a project processed last month
+%   left behind, in a session that only ever configured the contrast branch.  The
+%   host now hands the answer down through ctx.admits, built from the very
+%   wbTypeSelection rows the derived monitor table is built from (wbProducts), so a
+%   file that is not in the table cannot reach a wrapper either.  ABSENT HOOK = NO
+%   FENCE: a ctx without .admits (the headless tests, any other caller) resolves
+%   exactly as it always did.  When the fence is what emptied the list the caller
+%   is told SO, in its own words - an operator must never be told a file is missing
+%   while it is sitting in the folder.
+%
 %   PLANNING AND RESOLVING ARE TWO DIFFERENT MOMENTS (author, 2026-07-31).  Until
 %   now this module answered "which files does this call get" for EVERY entry in one
 %   pass, before the run started - and a step whose input its own run had not
@@ -86,7 +100,8 @@
 %    b       - ONE batch from 'build', to be resolved against the disk as it is now.
 %    ctx     - the wbExecutor context struct.  This module uses .reg, .modelOf,
 %              .animalModels, .resolve, .contrastStage and the OPTIONAL .refFile
-%              (see wbExecutor for what each of them promises).
+%              and .admits(identity,path) (see wbExecutor for what each of them
+%              promises).
 %
 % Outputs:
 %    batches - 1xN struct array, one element per WRAPPER CALL, in run order:
@@ -119,7 +134,9 @@
 %       Fields: entry, stepId, stepLabel, who, reason, mark (true = the caller
 %       should mark the cell as an error).
 %    ok      - 'resolve': whether every unit of the batch found its input.
-%    reason  - 'resolve': 'input file not found' when it did not, else ''.
+%    reason  - 'resolve': why it did not, else ''.  TWO different answers, because
+%              they mean two different things to the operator: nothing on disk at
+%              all, or a file that is there but is not part of this session.
 %
 % Notes:
 %    * The entry list is authoritative for ORDER.  Nothing here sorts, and folding
@@ -140,7 +157,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function varargout = wbBatchPlan(action, varargin)
@@ -220,9 +237,9 @@ step = b.step;
 for k = 1:numel(b.units)
     u      = b.units{k};
     cstage = ctx.contrastStage(u.head);
-    [files, copies, raws, found] = entryFiles(step, u.models, cstage, ...
-        refFileFor(ctx, u.entry, step));
-    if ~found, reason = 'input file not found'; return; end
+    [files, copies, raws, found, why] = entryFiles(step, u.models, cstage, ...
+        refFileFor(ctx, u.entry, step), ctx);
+    if ~found, reason = why; return; end
     u.files = files; u.copies = copies; u.raws = raws;
     [u.fNames, u.copyTo, u.rawNames] = shapeUnits({u}, step);
     u.refName = refOf(b.arity, u.fNames);
@@ -391,7 +408,7 @@ end
 end
 
 % =====================================================================
-function [files, copies, raws, ok] = entryFiles(step, models, cstage, refPath)
+function [files, copies, raws, ok, why] = entryFiles(step, models, cstage, refPath, ctx)
 %entryFiles  ONE entry's contribution to a call: the concrete files it brings, the
 %   copy targets each of them carries, and the raw partner of each (needsRaw only).
 %   Everything is 1xK and parallel, so the shapers can lay it out either way.
@@ -406,17 +423,18 @@ function [files, copies, raws, ok] = entryFiles(step, models, cstage, refPath)
 %   branchScope: 'one' the stage-preferred file alone, 'all' every branch (the
 %   wrapper's own loop covers them), 'copy' the stage-preferred file with the rest
 %   returned as its copy targets.
-files = {}; copies = {}; raws = {}; ok = false;
+files = {}; copies = {}; raws = {}; ok = false; why = '';
 if nargin < 4, refPath = ''; end
+if nargin < 5, ctx = struct(); end
 
 if strcmp(step.arity,'perAnimal')
     wide = ~strcmp(scopeOf(step),'one');
     for k = 1:numel(models)
-        p = resolveStepInputs(models(k), step, cstage);       % stage-preferred first
+        [p, fenced] = resolveStepInputs(models(k), step, cstage, ctx);  % preferred first
         if k==1 && ~isempty(refPath) && isfile(refPath)
             p = [{refPath}, p(~strcmp(p,refPath))];           % the pinned reference leads
         end
-        if isempty(p), return; end                            % a member has no input
+        if isempty(p), why = missingReason(fenced); return; end   % a member has no input
         if ~wide, p = p(1); end
         files  = [files, p];                                  %#ok<AGROW>
         copies = [copies, repmat({{}},1,numel(p))];           %#ok<AGROW>
@@ -425,8 +443,8 @@ if strcmp(step.arity,'perAnimal')
     ok = true; return
 end
 
-p = resolveStepInputs(models(1), step, cstage);
-if isempty(p), return; end
+[p, fenced] = resolveStepInputs(models(1), step, cstage, ctx);
+if isempty(p), why = missingReason(fenced); return; end
 switch scopeOf(step)
     case 'all'
         files = p; copies = repmat({{}},1,numel(p));          % every branch, one call
@@ -456,21 +474,24 @@ end
 end
 
 % =====================================================================
-function p = resolveStepInputs(model, step, cstage)
+function [p, fenced] = resolveStepInputs(model, step, cstage, ctx)
 %resolveStepInputs  EVERY concrete _d.mat (or raw) file this step could consume for
 %   this recording, ORDERED with the stage-preferred branch first.  Located by base
-%   name + the step's input glob and filtered to this recording's identity; mirrors
+%   name + the step's input glob and filtered to this recording's identity AND to
+%   the session's own working set (ctx.admits - see the header); mirrors
 %   getFileNamesList scoped to one recording, so it is robust to the BFI rename and
 %   the t|s|c|e branches.  Callers take p{1} for a single-branch step and the whole
 %   list (or its tail) for the 'all' / 'copy' scopes - see entryFiles.  {} = the
-%   step has no input on disk yet.
-p = {};
+%   step has no input it may use, and 'fenced' says which of the two that was: a
+%   folder with nothing in it, or one whose candidates all belong to some other
+%   session.
+p = {}; fenced = false;
+if nargin < 4, ctx = struct(); end
 
-% entry step consuming the raw recording (contrast / internalCycle)
+% entry step consuming the raw recording (contrast / internalCycle).  NEVER fenced:
+% the raw recording is the working set, not a product of a configuration.
 if isempty(step.requires) && ~contains(step.inGlob,'.mat')
-    [~,~,ext] = fileparts(step.inGlob);
-    cand = fullfile(model.folder,[model.stem ext]);
-    if isfile(cand), p = {cand}; end
+    p = rawEntryFile(model, step);
     return
 end
 
@@ -480,11 +501,13 @@ d = dir(fullfile(model.folder,[base '*' tail]));
 if isempty(d), return; end
 
 want = desiredStage(step, cstage);                       % 't'|'s'|'c' or '' (any)
-exact = {}; rest = {};
+exact = {}; rest = {}; mine = 0;
 for i = 1:numel(d)
     fp = fullfile(d(i).folder, d(i).name);
     cm = wbFileModel(fp);
     if ~strcmp(cm.identity, model.identity), continue; end
+    mine = mine + 1;
+    if ~admitted(ctx, model.identity, fp), continue; end  % not part of this session
     if ~isempty(want) && strcmp(cm.stage, want)
         exact{end+1} = fp; %#ok<AGROW>
     else
@@ -492,6 +515,54 @@ for i = 1:numel(d)
     end
 end
 p = [exact, rest];                                       % preferred branch first, then the others
+fenced = isempty(p) && mine > 0;
+end
+
+% =====================================================================
+function p = rawEntryFile(model, step)
+%rawEntryFile  THE RAW RECORDING an entry step reads.  The step's inGlob names ONE
+%   extension ('*.rls', '*.avi'), but a container is a family - a video recording
+%   the user scanned may legitimately be a .mp4 - so the glob is the FALL-BACK and
+%   the model's own path is the answer whenever the model IS the raw recording.
+%   Which entry step a raw file may drive is settled long before this, by the
+%   modality gate (wbStateEngine), so nothing is lost by not re-testing it here;
+%   deriving the name from the glob instead sent the workbench looking for a file
+%   that was never written.
+p = {};
+if isfield(model,'isRaw') && model.isRaw && ~isempty(model.path) && isfile(model.path)
+    p = {model.path};  return
+end
+[~,~,ext] = fileparts(step.inGlob);
+cand = fullfile(model.folder,[model.stem ext]);
+if isfile(cand), p = {cand}; end
+end
+
+% =====================================================================
+function tf = admitted(ctx, identity, path)
+%admitted  THE FENCE (item 8).  The host answers it from the configuration; this
+%   module only asks.  A ctx without the hook - every headless caller and every
+%   test written before the fence existed - resolves exactly as it always did, and
+%   a hook that throws is treated as no answer, because a fence that cannot say
+%   what a session contains may never be the reason a file disappears from it.
+tf = true;
+if ~isstruct(ctx) || ~isfield(ctx,'admits') || ~isa(ctx.admits,'function_handle'), return; end
+try
+    tf = logical(ctx.admits(identity, path));
+catch
+    tf = true;
+end
+end
+
+% =====================================================================
+function r = missingReason(fenced)
+%missingReason  Why a unit found no input, in the operator's words.  The two cases
+%   have to read differently: being told a file is missing while it sits in the
+%   folder is the one message that sends someone looking in the wrong place.
+if fenced
+    r = 'the file it needs is on disk but this session does not use it';
+else
+    r = 'input file not found';
+end
 end
 
 % =====================================================================
@@ -517,9 +588,16 @@ end
 
 % =====================================================================
 function r = rawPathFor(model)
-%rawPathFor  The raw recording beside a processed product (guided steps).
-for ext = {'.rls','.cxd'}
-    cand = fullfile(model.folder,[model.stem ext{1}]);
+%rawPathFor  The raw recording beside a processed product (guided steps).  The
+%   candidate extensions are the ones wbFileModel knows as raw containers, in its
+%   order - the modality vocabulary lives there and this list must not become a
+%   second copy of it that grows a modality late.
+if isfield(model,'isRaw') && model.isRaw && ~isempty(model.path)
+    r = model.path; return                               % it IS the raw recording
+end
+exts = wbFileModel('extensions');
+for i = 1:numel(exts)
+    cand = fullfile(model.folder,[model.stem exts{i}]);
     if isfile(cand), r = cand; return; end
 end
 r = fullfile(model.folder,[model.stem '.rls']);          % derived default (may not exist yet)

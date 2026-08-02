@@ -12,7 +12,7 @@
 %   INPUT
 %     fName   path to a *_myograph.mat file.
 %   OUTPUT
-%     intervals  struct array (name,time,idxL,idxR,diameter,mask,vasomotion,prop)
+%     intervals  struct array (name,measures,time,idxL,idxR,diameter,mask,vasomotion,prop)
 %     s          parameter struct that produced it ({} if absent)
 %     meta       struct: formatVersion, fName, frameRate, pixelSize (µm/px; []
 %                or 0 = uncalibrated), timeCrop, rowRange, codeVersion,
@@ -88,12 +88,15 @@ end
 % =====================================================================
 function intervals=ensureIntervalFields(intervals)
 %ENSUREINTERVALFIELDS  guarantee the full field set so old files behave like new ones
-need={'name','time','idxL','idxR','diameter','mask','valid','vasomotion','prop'};
+need={'name','measures','time','idxL','idxR','diameter','mask','valid','vasomotion','prop'};
 for k=1:numel(need)
     if ~isfield(intervals,need{k})
         [intervals.(need{k})]=deal([]);
     end
 end
+% files written before the three-measure change carry ONE diameter, not three: an
+% empty .measures is the marker for that, and every consumer reads such a result as
+% a plain [frames x nY] array (see myographMeasureIndex).
 % legacy files predate the off-FOV 'valid' flag: treat every measured frame as valid
 for j=1:numel(intervals)
     if isempty(intervals(j).valid) && ~isempty(intervals(j).diameter)

@@ -471,9 +471,9 @@ for fidx=1:1:size(fNames,1)
         settings.runRegistration=reportSettings(s);
         %Save the data
         reportWriting(rep);
-        save(fNames{fidx},'source','-v7.3');
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        save(fNames{fidx},'source','-v7.3','-nocompression');
+        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

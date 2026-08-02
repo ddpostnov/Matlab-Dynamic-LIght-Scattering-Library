@@ -67,11 +67,18 @@ clearvars -except fNames libraryFolder rootFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
-s.trustLimitsK=[0.01,0.3]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast. Usually [0.01,0.3], but can be e.g. [0.01,0.5] for stroke
-s.trustLimitsI=[5,250]; %minimum (first value) and maximum (second value) of expected intensity.
 s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
 s.maxFrqIni=20; % initial max frequency of the activity of interest, Hz
 s.minFrqIni=1; % initial min frequency of the activity of interest, Hz
+
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - PULSE DETECTION
+s.maskLimitsK=[0.01,0.3]; %contrast range of the pixels averaged to detect the pulse
+s.maskLimitsI=[5,250]; %intensity range of the pixels averaged to detect the pulse
+
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - OUTPUT MASKING
+s.trustLimitsK=[0.001,0.99]; %minimum (first value, fastest flows) and maximum (second value, slowest flows) expected contrast
+s.trustLimitsI=[1,254]; %minimum (first value) and maximum (second value) of expected intensity.
+s.minTrust=[0.99,0.99]; %per-pixel trust limits in relation to the portion of frames with minimum (0) or maximum (usually 255) intensity.
 
 %ADJUSTED IF NECESSARY - EXCLUSION CRITERIA
 s.excludeFirstNCycles=0; %reject given number of cycles

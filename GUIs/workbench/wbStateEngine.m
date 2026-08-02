@@ -280,9 +280,22 @@ else
     tf = requiresDone;                            % the prereq's output IS the input
 end
 % guided-style steps additionally need the raw recording alongside the product
-if tf && step.needsRaw
-    tf = isfile(fullfile(model.folder,[model.stem '.rls'])) || ...
-         isfile(fullfile(model.folder,[model.stem '.cxd']));
+if tf && step.needsRaw, tf = rawBeside(model); end
+end
+
+% =====================================================================
+function tf = rawBeside(model)
+%rawBeside  Is the recording this product came from still next to it?  The
+%   candidate extensions are the ones wbFileModel knows as raw containers, in its
+%   order - the modality vocabulary lives THERE and a second copy of it here would
+%   silently stop recognising a modality the moment one is added.  It did: the pair
+%   this replaced named '.rls' and '.cxd' only, so every needsRaw step of a video
+%   modality read 'no input file' however plainly the video sat beside it.
+tf = false;
+if isempty(model.folder), return; end
+exts = wbFileModel('extensions');
+for i = 1:numel(exts)
+    if isfile(fullfile(model.folder,[model.stem exts{i}])), tf = true; return; end
 end
 end
 

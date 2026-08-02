@@ -10,7 +10,8 @@
 %                   t = temporal contrast    s = spatial contrast
 %                   c = internal/cardiac cycle    e = external/epoch cycle
 %                   b = bolus
-%       product : K (speckle contrast) | I (intensity) | g (g2/DLSI) | BFI
+%       product : K (speckle contrast) | I (intensity) | g (g2/DLSI) | BFI |
+%                 MYO (myograph - diameter or force channels)
 %       role    : d (SOURCE) | r (RESULTS) | s (SETTINGS)
 %
 %   RATIONALE for the single flag (author decision, 2026-07-28).  A strictly
@@ -24,8 +25,15 @@
 %   interchangeable "contrast" branch and are not expected to coexist in one run
 %   by default.
 %
-%   Raw recordings (.rls/.cxd/.avi/.mraw) carry no flags.  A region crop keeps
-%   its leading 'RoiN_' prefix as part of the recording identity.
+%   A myograph product carries NO stage flag, only the product token: both
+%   myograph modalities write one '_MYO' triplet per recording and every later
+%   step appends to it, so there is no stage for a name to carry.  It is still on a
+%   BRANCH, though - 'myograph', the one its registry steps declare - because the
+%   branch is the pipeline a file belongs to and a flagless name does not make it
+%   belong to none.
+%
+%   Raw recordings (.rls/.cxd/.avi/.mraw/.adicht) carry no flags.  A region crop
+%   keeps its leading 'RoiN_' prefix as part of the recording identity.
 %
 %   This function both DECOMPOSES a path into that model and COMPOSES a sibling
 %   file name for a given flag chain + role - the workbench needs the latter to
@@ -44,6 +52,16 @@
 %
 %   Most are stubs for modalities the library will grow into; the RULE is what
 %   matters - the vocabulary lives here, once, and nothing hardcodes it elsewhere.
+%   A wire myograph records FORCE CHANNELS, not video: its container is the
+%   LabChart '.adicht' file, and a video is guessed to be the PRESSURE myograph.
+%
+%   THE MODALITY OF A '_MYO' PRODUCT IS NOT LOAD-BEARING.  One product token
+%   serves both myograph modalities - the interval editor and the vasomotion step
+%   are literally the same registry step for each - so a '_MYO' name cannot say
+%   which of the two wrote it and the guess is simply PMYO.  Nothing may depend on
+%   that: a workbench row is a RAW RECORDING whose modality the user set on the
+%   Files tab, and anything that genuinely needs a product's modality reads
+%   source.modality out of the file.
 %
 % Syntax:
 %    model = wbFileModel(path)                         % decompose one path
@@ -51,6 +69,7 @@
 %    p     = wbFileModel('identity', model)            % [RoiN_]stem (no flags)
 %    ms    = wbFileModel('modalities')                 % the whole vocabulary
 %    ms    = wbFileModel('modalities', ext)            % those an extension allows
+%    es    = wbFileModel('extensions')                 % the raw containers it knows
 %
 % Inputs:
 %    path   - char/string full path (or bare name) of a recording or product.
@@ -63,7 +82,8 @@
 %            or []), roiPrefix, stem, identity, flags (cellstr, name order),
 %            stage, branch, product, role, isRaw, isReference, animal, type,
 %            index, expGroup.  branch is derived from stage: t|s -> 'contrast',
-%            c -> 'cardiac', e -> 'epoch', b -> 'bolus'.
+%            c -> 'cardiac', e -> 'epoch', b -> 'bolus'; a stage-less product falls
+%            back to its product token, so 'MYO' -> 'myograph'.
 %
 %   LABEL AXES.  'animal' is the SUBJECT id (what getFileNamesList calls the
 %   animalIdentifier) - the scope of registration / vessel typing / the reference
@@ -90,7 +110,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function out = wbFileModel(varargin)
@@ -109,6 +129,9 @@ if nargin>=1 && (ischar(varargin{1}) || (isstring(varargin{1}) && isscalar(varar
             if numel(varargin)>=2, out = modalitiesFor(varargin{2});
             else,                  out = allModalities(); end
             return
+        case 'extensions'
+            tbl = extTable();  out = reshape(tbl(:,1),1,[]);   % raw containers, in order
+            return
     end
 end
 
@@ -122,7 +145,7 @@ pth = char(pth);
 [folder,name,ext] = fileparts(pth);
 
 roleSet    = {'d','r','s'};
-productSet = {'BFI','K','I','g'};
+productSet = {'BFI','K','I','g','MYO'};          % MYO carries no stage flag
 stageSet   = {'t','s','c','e','b'};              % one stage slot; t|s|c|e|b
 
 % ---- leading region-crop prefix (part of the identity) --------------
@@ -176,7 +199,7 @@ model = struct( ...
     'identity',    fullfile(folder,[roiPrefix stem]), ...
     'flags',       {flags}, ...
     'stage',       stage, ...
-    'branch',      branchOf(stage), ...
+    'branch',      branchOf(stage,product), ...
     'product',     product, ...
     'role',        role, ...
     'isRaw',       isRaw, ...
@@ -197,14 +220,24 @@ name = fullfile(model.folder,[model.roiPrefix model.stem chain '_' role '.mat'])
 end
 
 % =====================================================================
-function b = branchOf(stage)
-%branchOf  Map a stage flag to the analysis branch used for column filtering.
+function b = branchOf(stage,product)
+%branchOf  Which analysis pipeline a file sits on - the key everything per-branch is
+%   filtered and keyed by.
+%
+%   THE STAGE FLAG SAYS IT, EXCEPT WHEN THERE IS NO STAGE FLAG.  A myograph
+%   recording writes ONE '_MYO' triplet and every step of the pipeline appends to
+%   it, so the name carries a product token and no flag at all - and the file is
+%   nonetheless on the myograph pipeline, which is the branch its registry steps
+%   declare.  Left empty, nothing keyed by (recording, pipeline) could find it: the
+%   run expansion's resume test asks for a file of the row's branch, found none, and
+%   so re-ran a finished myograph chain on every Run.
 switch stage
     case {'t','s'}, b = 'contrast';   % temporal / spatial contrast (interchangeable)
     case 'c',       b = 'cardiac';    % internal cycle
     case 'e',       b = 'epoch';      % external / NVC cycle
     case 'b',       b = 'bolus';      % bolus (CTTH)
-    otherwise,      b = '';
+    otherwise
+        if strcmp(product,'MYO'), b = 'myograph'; else, b = ''; end
 end
 end
 
@@ -215,39 +248,67 @@ ms = {'LSCI','HSLSCI','DLSI','EPFL','HYPER','WMYO','PMYO'};
 end
 
 % =====================================================================
-function ms = modalitiesFor(ext)
-%modalitiesFor  What a given file extension can legitimately be.
-%   The container constrains the physics: a .rls holds raw speckle frames, so it
-%   is one of the speckle modalities; a video can be a myograph or a wide-field
-%   fluorescence/speckle recording.  A processed .mat can have come from any of
-%   them, so it is left unconstrained.
+function tbl = extTable()
+%extTable  THE extension vocabulary, in one place: each raw container, what it
+%   can legitimately be, and the best guess among those.
+%
+%   The container constrains the physics.  A .rls holds raw speckle frames, so it
+%   is one of the speckle modalities; a video can be a pressure myograph (a
+%   diameter is measured from it) or a wide-field fluorescence/speckle recording;
+%   a .adicht is a LabChart file and nothing but a wire myograph writes one.  A
+%   processed .mat can have come from any of them and is left unconstrained.
+%
+%   The GUESS is the first column's most likely member, not a claim: the Files tab
+%   offers the whole allowed list in a dropdown and the user's answer wins.
+sp = setdiff(allModalities(),{'WMYO','PMYO'},'stable');   % everything imaging
+vid = {'PMYO','EPFL','LSCI'};                             % a video: myograph first
+tbl = { '.rls',    {'LSCI','HSLSCI','DLSI'}, 'LSCI'
+        '.cxd',    {'EPFL','HYPER'},         'EPFL'       % vendor fluorescence stack
+        '.mraw',   sp,                       'DLSI'
+        '.cihx',   sp,                       'DLSI'
+        '.avi',    vid,                      'PMYO'
+        '.mp4',    vid,                      'PMYO'
+        '.mov',    vid,                      'PMYO'
+        '.mkv',    vid,                      'PMYO'
+        '.adicht', {'WMYO'},                 'WMYO' };
+end
+
+function k = extRow(ext)
+%extRow  The table row of one extension (0 when it is not a raw container).
 ext = lower(char(ext));
 if ~isempty(ext) && ext(1)~='.', ext = ['.' ext]; end
-switch ext
-    case '.rls',                        ms = {'LSCI','HSLSCI','DLSI'};
-    case {'.mraw','.cihx'},             ms = setdiff(allModalities(),{'WMYO','PMYO'},'stable');
-    case {'.avi','.mp4','.mov','.mkv'}, ms = {'WMYO','EPFL','LSCI'};
-    case '.cxd',                        ms = {'EPFL','HYPER'};   % vendor fluorescence stack
-    otherwise,                          ms = allModalities();    % .mat products: any origin
+tbl = extTable();
+k = find(strcmp(ext, tbl(:,1)),1);
+if isempty(k), k = 0; end
 end
+
+% =====================================================================
+function ms = modalitiesFor(ext)
+%modalitiesFor  What a given file extension can legitimately be.
+k = extRow(ext);
+if k==0, ms = allModalities(); return; end    % .mat products: any origin
+tbl = extTable();
+ms = tbl{k,2};
 end
 
 % =====================================================================
 function m = modalityOf(ext,product)
 %modalityOf  The BEST GUESS at a file's modality (the user can override it).
-switch lower(ext)
-    case '.rls',                     m = 'LSCI';
-    case '.cxd',                     m = 'EPFL';
-    case {'.avi','.mp4','.mov','.mkv'}, m = 'WMYO';
-    case {'.mraw','.cihx'},          m = 'DLSI';
-    case '.mat'
-        switch product
-            case 'K',   m = 'LSCI';
-            case 'I',   m = 'EPFL';
-            case 'g',   m = 'DLSI';
-            case 'BFI', m = 'LSCI';   % BFI is produced from _K in the LSCI path
-            otherwise,  m = 'LSCI';
-        end
-    otherwise,                       m = '';
+%   A '.mat' is read from its PRODUCT token, and 'MYO' guesses the pressure
+%   myograph - see the header: that guess is not load-bearing.
+if strcmpi(ext,'.mat')
+    switch product
+        case 'K',   m = 'LSCI';
+        case 'I',   m = 'EPFL';
+        case 'g',   m = 'DLSI';
+        case 'BFI', m = 'LSCI';   % BFI is produced from _K in the LSCI path
+        case 'MYO', m = 'PMYO';   % one token, two modalities: source.modality decides
+        otherwise,  m = 'LSCI';
+    end
+    return
 end
+k = extRow(ext);
+if k==0, m = ''; return; end
+tbl = extTable();
+m = tbl{k,3};
 end

@@ -46,6 +46,7 @@
 %    model = wbSettingsModel('setTypeStep',   model, type, stepId, field, value)
 %    model = wbSettingsModel('copyType',      model, srcType, dstType)
 %    model = wbSettingsModel('resetType',     model, type)
+%    model = wbSettingsModel('renameStepField', model, stepId, oldField, newField)
 %    types = wbSettingsModel('types', model)
 %            wbSettingsModel('save',  model, path)
 %    model = wbSettingsModel('load',  path)
@@ -83,6 +84,7 @@ switch action
     case 'setTypeStep',   out = setTypeStep(varargin{:});
     case 'copyType',      out = copyType(varargin{:});
     case 'resetType',     out = resetType(varargin{:});
+    case 'renameStepField', out = renameStepField(varargin{:});
     case 'types',         out = configuredTypes(varargin{:});
     case 'save',          saveModel(varargin{:});  out = [];
     case 'load',          out = loadModel(varargin{:});
@@ -243,6 +245,69 @@ end
 end
 
 % =====================================================================
+function model = renameStepField(model, stepId, oldField, newField)
+%renameStepField  Move a field from oldField to newField in every layer scoped to ONE
+%   step - the per-step override, the per-(type,step) override and the legacy per-file
+%   override.  This is what a stored settings layer needs when a WRAPPER renames a
+%   parameter: the layers are keyed by step id and field name, so an override recorded
+%   against the old name would otherwise keep being applied, under a name that now
+%   means something else.
+%
+%   THE SHARED BAGS ARE DELIBERATELY NOT TOUCHED.  A shared key is shared BY NAME with
+%   other steps (see sharedKeys in wbStepRegistry), so renaming it in the bag would
+%   rewrite their settings too - and a key that is shared is, by definition, one whose
+%   meaning did not diverge.  Only the step-scoped layers are this step's alone.
+%
+%   Warns when something actually moved, because a resumed session quietly changing
+%   which parameter a number lands on is the one thing a migration must not do silently.
+model = fillModel(model);
+n = 0;
+if isfield(model.stepOverrides, stepId)
+    [model.stepOverrides.(stepId), moved] = moveField(model.stepOverrides.(stepId), oldField, newField);
+    n = n + moved;
+end
+n = n + renameInMap(model.typeOverrides, stepId, oldField, newField);
+n = n + renameInMap(model.fileOverrides, stepId, oldField, newField);
+if n > 0
+    warning('wbSettingsModel:fieldRenamed', ...
+        ['%d saved setting(s) of the %s step were recorded under the old name "%s" ' ...
+        'and have been moved to "%s".'], n, stepId, oldField, newField);
+end
+end
+
+% =====================================================================
+function n = renameInMap(m, stepId, oldField, newField)
+%renameInMap  The rename over one Map whose keys END in '||stepId'.
+%   Both Maps use that shape ('type||stepId' and 'identity||stepId'), and matching the
+%   SUFFIX rather than splitting means nothing depends on what the first segment is or
+%   how many separators it contains.  containers.Map is a handle, so the caller's Map is
+%   updated in place and only the count comes back.
+n = 0;
+k = keys(m);
+tail = ['||' stepId];
+for i = 1:numel(k)
+    if ~endsWith(k{i}, tail), continue; end
+    [ov, moved] = moveField(m(k{i}), oldField, newField);
+    m(k{i}) = ov;
+    n = n + moved;
+end
+end
+
+% =====================================================================
+function [s, moved] = moveField(s, oldField, newField)
+%moveField  oldField -> newField in one override struct; 0/1 for whether it was there.
+%   A layer already carrying the NEW name was written after the rename, so its value
+%   wins and the stale one is simply dropped.
+moved = 0;
+if ~isstruct(s) || ~isfield(s, oldField), return; end
+if ~isfield(s, newField)
+    s.(newField) = s.(oldField);
+    moved = 1;
+end
+s = rmfield(s, oldField);
+end
+
+% =====================================================================
 function t = configuredTypes(model)
 %configuredTypes  Every type carrying its own settings (order of the Map keys).
 model = fillModel(model);
@@ -272,10 +337,19 @@ end
 end
 
 % =====================================================================
+function v = presetVersion(), v = 2; end
+
+% =====================================================================
 function saveModel(model, pth)
 %saveModel  Serialise the model to a .mat (containers.Map -> plain struct).
+%   wbPreset.schema is the PRESET layout version - 1 (or absent, which is how every
+%   preset written before this field reads) is the layout in which runInternalCycle
+%   still called its reference-trace limits trustLimitsK/I; 2 is after that rename.
+%   A preset carries the same step-scoped override layers a session does, so it needs
+%   the same migration on load and therefore the same way of dating itself.
 model = fillModel(model);
 wbPreset = model;
+wbPreset.schema = presetVersion();
 % store the Map layers as parallel cell arrays so the preset is Map-free on disk
 wbPreset.fileOverrides = [];
 wbPreset.foKeys = keys(model.fileOverrides);
@@ -286,7 +360,7 @@ wbPreset.tbVals = values(model.typeBag);
 wbPreset.typeOverrides = [];
 wbPreset.toKeys = keys(model.typeOverrides);
 wbPreset.toVals = values(model.typeOverrides);
-save(pth,'wbPreset','-v7.3');
+save(pth,'wbPreset','-v7.3','-nocompression');
 end
 
 % =====================================================================
@@ -306,6 +380,27 @@ end
 if isfield(p,'toKeys')
     for i = 1:numel(p.toKeys), model.typeOverrides(p.toKeys{i}) = p.toVals{i}; end
 end
+model = migrateMaskLimits(model, presetOf(p));
+end
+
+% =====================================================================
+function v = presetOf(p)
+if isfield(p,'schema') && isnumeric(p.schema) && isscalar(p.schema), v = p.schema; else, v = 1; end
+end
+
+% =====================================================================
+function model = migrateMaskLimits(model, version)
+%migrateMaskLimits  Preset layout 2: runInternalCycle's reference-trace mask limits.
+%   They used to be called trustLimitsK/trustLimitsI - the names the contrast step uses
+%   for the mask it PROPAGATES - and are now maskLimitsK/maskLimitsI, while
+%   trustLimitsK/trustLimitsI on the internal cycle mean the propagated mask, as they do
+%   everywhere else.  An override stored under the old name is therefore MOVED rather
+%   than dropped: it is the user's tuning of the pulse-detection area and it still means
+%   exactly that, whereas left alone the same number would silently start masking the
+%   OUTPUT.  wbSession runs the same migration for a saved session.
+if version >= presetVersion(), return; end
+model = renameStepField(model, 'internalCycle', 'trustLimitsK', 'maskLimitsK');
+model = renameStepField(model, 'internalCycle', 'trustLimitsI', 'maskLimitsI');
 end
 
 % =====================================================================

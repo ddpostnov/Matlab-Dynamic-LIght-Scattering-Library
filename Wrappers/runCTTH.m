@@ -175,8 +175,8 @@ for fidx=1:numel(fNames)
 
     settings.ctthCalculation=reportSettings(s);
     reportWriting(rep);
-    save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-    save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+    save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+    save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
     reportSaved(rep);
 end
 end

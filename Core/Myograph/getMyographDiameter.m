@@ -1,23 +1,34 @@
-%getMyographDiameter  Wall-to-wall diameter of a near-vertical vessel in myograph video
+%getMyographDiameter  Outer, wall-centre and luminal diameter of a vessel in myograph video
 %
 %   intervals = getMyographDiameter(s,fName) reads the myograph recording
 %   fName (any VideoReader-readable file, e.g. AVI) and, for every row Y of
 %   every processed frame, locates the two dark vessel walls and returns the
-%   left/right wall x-positions and the wall-to-wall diameter as (frame x Y)
-%   arrays.  The vessel is near-vertical: two dark walls sit in a bright field
-%   and the lumen/centre and the outer field may be saturated while the walls
-%   stay dark.
+%   left/right wall x-positions and the wall-to-wall diameter as
+%   (frame x Y x measure) arrays.  The vessel is near-vertical: two dark walls sit
+%   in a bright field and the lumen/centre and the outer field may be saturated
+%   while the walls stay dark.
+%
+%   THREE MEASURES, ALWAYS.  Each wall is a dark BAND, not a line, so there is no
+%   single correct wall position - there are three, and all three are returned from
+%   the same per-row relative-contrast rule in one pass over the band:
+%     • 'outer'  the band edge nearest the image border  -> outer-wall to outer-wall
+%                diameter (the widest of the three),
+%     • 'mid'    the darkness-weighted band centre       -> wall-centre to wall-centre
+%                diameter (the default analysed measure),
+%     • 'inner'  the band edge nearest the lumen         -> the lumen (the narrowest).
+%   The third dimension of idxL/idxR/diameter is ordered exactly like .measures,
+%   i.e. {'outer','mid','inner'}.  The three share one per-row validity test (a
+%   genuine wall dip, contrast > s.wallContrast): a row with no wall has none of
+%   the three.
 %
 %   A centreline is located from the average column-darkness profile (the midpoint
 %   of the two wall peaks - the bright lumen when dilated, the middle of the dark
 %   region when constricted); the left wall is then searched between the left edge
 %   and the centreline and the right wall between the centreline and the right edge,
 %   using the SAME relative-contrast rule so a faint/thick wall on one side is
-%   measured identically to a strong/thin wall on the other.  s.edgeMode selects how
-%   the wall position is taken within its band ('center' relative darkness-weighted
-%   centre - default, 'min' darkest point, 'outer' external edge, 'inner' luminal
-%   edge).  The raw per-(frame,Y) estimates are then made physically plausible:
-%   the diameter is forced non-negative, estimates that jump unnaturally in time
+%   measured identically to a strong/thin wall on the other.  The raw per-(frame,Y)
+%   estimates are then made physically plausible, INDEPENDENTLY PER MEASURE: the
+%   diameter is forced non-negative, estimates that jump unnaturally in time
 %   (slow-change prior) or along Y (straight-vessel prior) are rejected, and
 %   rejected/failed points are filled by interpolation between the nearest valid
 %   points (nearest-repeat at the ends).  The mask marks measured points with 1
@@ -26,11 +37,30 @@
 %   TIME INTERVALS
 %     If s.intervals is non-empty the diameter analysis is restricted to those
 %     time windows and returned per interval; s.intervalNames labels them.  With
-%     no intervals a single interval named 'default' spans the whole recording.
+%     no intervals a single interval named 'default' spans the whole recording, or
+%     the s.timeCrop window when one is given.
+%
+%     A CROP OR A SET OF INTERVALS MAKES THE RECORDING SHORTER, everywhere.  Frames
+%     outside the analysed window are never read, never stored and never returned:
+%     each interval carries its own time vector and its own diameter arrays, exactly
+%     as long as that interval has frames, and the internal per-frame arrays are
+%     sized by the analysed span rather than by the video.  Measuring 200 s of a
+%     2-hour recording costs 200 s of memory.  Times stay ABSOLUTE seconds from the
+%     start of the recording (they are not re-based to zero per interval), so an
+%     interval can always be located back in the original footage.
 %
 %   INPUTS
 %     s        parameter struct with fields (defaults filled if missing/empty):
-%                • edgeMode      'center' | 'min' | 'outer' | 'inner' wall-position rule
+%                • edgeMode      name of the DEFAULT ANALYSED measure, 'mid' (default)
+%                                | 'outer' | 'inner'.  It is NO LONGER a selector: all
+%                                three measures are always returned, and this field only
+%                                tells the consumers (propagation, vasomotion, export,
+%                                the GUI) which one to analyse and plot by default.
+%                                'center' is accepted as a synonym of 'mid'.  'min'
+%                                also means 'mid', but switches the CENTRE rule from the
+%                                darkness-weighted centroid to the darkest point (with
+%                                s.subpixel refinement) - it is an alternative rule for
+%                                the centre measure only, and never affects outer/inner.
 %                • wallContrast  min local (bright-dark) contrast for a row to count as
 %                                a wall (relative, so faint walls are still measured)
 %                • wall2Frac     2nd wall peak must be >= this fraction of the 1st to be
@@ -47,7 +77,8 @@
 %                • tSpan         temporal outlier window, frames (0 = off)
 %                • ySpan         along-Y outlier window, rows (0 = off)
 %                • outlierK      outlier threshold factor (scaled MADs)
-%                • subpixel      parabolic sub-pixel refinement for 'min' (true/false)
+%                • subpixel      parabolic sub-pixel refinement of the darkest-point
+%                                centre rule, i.e. only when edgeMode='min' (true/false)
 %                • smoothSpan    optional final along-Y smoothing span (0 = off)
 %                • wallProm      a half's darkest peak must be >= this fraction of the
 %                                other half's to count as a wall; below it the vessel is
@@ -62,13 +93,18 @@
 %   OUTPUT
 %     intervals  struct array, one element per interval, with fields
 %                • name      interval name
+%                • measures  {'outer','mid','inner'} - the order of the 3rd dimension
 %                • time      [nFrames x 1] frame times, s
-%                • idxL      [nFrames x nY] left  wall position (x), px
-%                • idxR      [nFrames x nY] right wall position (x), px
-%                • diameter  [nFrames x nY] idxR - idxL, px (>= 0)
-%                • mask      [nFrames x nY] 1 = measured, 0 = interpolated
+%                • idxL      [nFrames x nY x 3] left  wall position (x), px
+%                • idxR      [nFrames x nY x 3] right wall position (x), px
+%                • diameter  [nFrames x nY x 3] idxR - idxL, px (>= 0)
+%                • mask      [nFrames x nY] 1 = measured, 0 = interpolated.  ONE mask
+%                            for the three: it is the wall-centre ('mid') measure's,
+%                            because the three come from the same per-row wall test
+%                            and differ only in second-order outlier rejection.
 %                • valid     [nFrames x 1] false = a wall was off-FOV (dilated out of
-%                            view) so the diameter is only a lower bound (invalid)
+%                            view) so the diameter is only a lower bound (invalid).
+%                            A property of the FRAME, so shared by the three measures.
 %
 %   DEPENDS ON
 %     MATLAB base VideoReader, Image Processing Toolbox (imgaussfilt/imclose/
@@ -77,12 +113,13 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 01-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
 % %ADJUSTED (OR VERIFIED) PER PROTOCOL - Wall detection
-% s.edgeMode='min';       % 'min' (darkest point) | 'outer' | 'inner'
+% s.edgeMode='mid';       % default analysed measure: 'mid' | 'outer' | 'inner'
+%                         % ('min' = 'mid' measured as the darkest point instead)
 % s.tau=0.85;             % wall threshold on the row-normalised image
 % s.rowRange=[1 Inf];     % rows to measure (others are interpolated)
 % %ADJUSTED IF NECESSARY - Robustness / smoothing
@@ -98,8 +135,12 @@
 
 function intervals = getMyographDiameter(s,fName)
 
+MEASURES={'outer','mid','inner'};   %the 3rd dimension of idxL/idxR/diameter, in this order
+nM=numel(MEASURES);
+iMid=2;                             %the wall-centre measure - the one whose mask is reported
+
 % ---- default parameters (filled if missing or empty) ----
-def.edgeMode='center';    def.tau=0.85;          def.brightPrctile=90;
+def.edgeMode='mid';       def.tau=0.85;          def.brightPrctile=90;
 def.smoothSigma=1.2;      def.dustRadius=8;      def.dustContrast=0.06;
 def.colDarkFrac=0.2;      def.rowRange=[1 Inf];  def.minWallGap=3;
 def.tSpan=25;             def.ySpan=31;          def.outlierK=3;
@@ -160,12 +201,21 @@ end
 r0=max(1,round(s.rowRange(1)));
 r1=min(H,round(s.rowRange(2)));
 seDust=strel('line',2*max(round(s.dustRadius),1)+1,90); %vertical: removes short dark blobs (dust) but keeps tall vessel walls
-idxLraw=nan(nFrames,H,'single');
-idxRraw=nan(nFrames,H,'single');
+%A crop (or a set of intervals) makes the recording SHORTER: only frames fStart..fEnd
+%are ever read, so only those are stored.  The raw arrays are the biggest thing this
+%function allocates - three positions per wall per row, single, 12 B per frame-row per
+%wall - and sizing them by the whole video would cost the untouched footage as well.
+%Row g of the raw arrays is absolute frame fStart+g-1 (rawRows does the mapping back).
+fStart=find(inAny,1,'first'); fEnd=find(inAny,1,'last');
+if isempty(fStart), fStart=1; fEnd=0; end
+nProc=max(fEnd-fStart+1,0);                                % frames actually read
+idxLraw=nan(nProc,H,nM,'single');
+idxRraw=nan(nProc,H,nM,'single');
+%the off-FOV flags stay on the ABSOLUTE frame index: 1 byte per frame is nothing, and
+%it keeps the per-interval read a plain offLraw(fr).
 offLraw=false(nFrames,1);                                  % left  wall dilated beyond the FOV this frame
 offRraw=false(nFrames,1);                                  % right wall dilated beyond the FOV this frame
-fStart=find(inAny,1,'first'); fEnd=find(inAny,1,'last');
-if ~isempty(fStart)
+if nProc>0
     if fStart>1, v.CurrentTime=time(fStart); end          % seek past leading skipped footage
     f=fStart-1;
     while hasFrame(v) && f<fEnd
@@ -173,9 +223,9 @@ if ~isempty(fStart)
         frame=readFrame(v);
         if ~inAny(f), continue; end
         if ndims(frame)==3, I=im2double(rgb2gray(frame)); else, I=im2double(frame); end
-        [L,R,offL,offR]=detectWalls(I,s,seDust,r0,r1);
-        idxLraw(f,:)=L(:).';
-        idxRraw(f,:)=R(:).';
+        [L,R,offL,offR]=detectWalls(I,s,seDust,r0,r1);   % [H x nM] each
+        idxLraw(f-fStart+1,:,:)=reshape(L,[1 H nM]);
+        idxRraw(f-fStart+1,:,:)=reshape(R,[1 H nM]);
         offLraw(f)=offL; offRraw(f)=offR;
         if mod(f,500)==0
             myoProgress(s,f,fEnd);
@@ -186,17 +236,26 @@ if ~isempty(fStart)
     end
 end
 
-% ---- per-interval post-processing and output ----
-intervals=struct('name',{},'time',{},'idxL',{},'idxR',{},'diameter',{},'mask',{},'valid',{});
+% ---- per-interval post-processing (INDEPENDENTLY PER MEASURE) and output ----
+intervals=struct('name',{},'measures',{},'time',{},'idxL',{},'idxR',{},'diameter',{},'mask',{},'valid',{});
+[Lc,Rc,Dc,Mc]=deal(cell(1,nM));
 for iv=1:nIv
-    fr=find(time>=ivT(iv,1) & time<=ivT(iv,2));
-    [L,R,D,mask,valid]=postProcessWalls(idxLraw(fr,:),idxRraw(fr,:),offLraw(fr),offRraw(fr),s,frameRate);
+    fr=find(time>=ivT(iv,1) & time<=ivT(iv,2));         % this interval's OWN frames
+    [rawL,rawR]=rawRows(idxLraw,idxRraw,fr,fStart,nProc,H,nM);
+    for m=1:nM
+        %the slow-change-in-time prior, the along-Y prior, the minWallGap clamp and the
+        %interpolation fill are all per measure - an outer edge and a luminal edge are
+        %different physical series and must not be filtered as one.
+        [Lc{m},Rc{m},Dc{m},Mc{m},valid]=postProcessWalls(rawL(:,:,m),rawR(:,:,m), ...
+            offLraw(fr),offRraw(fr),s,frameRate);       % valid is per FRAME: identical for the three
+    end
     intervals(iv).name=char(ivNames{iv});
+    intervals(iv).measures=MEASURES;
     intervals(iv).time=time(fr);
-    intervals(iv).idxL=L;
-    intervals(iv).idxR=R;
-    intervals(iv).diameter=D;
-    intervals(iv).mask=mask;
+    intervals(iv).idxL=cat(3,Lc{:});
+    intervals(iv).idxR=cat(3,Rc{:});
+    intervals(iv).diameter=cat(3,Dc{:});
+    intervals(iv).mask=Mc{iMid};                        % the wall-centre measure's (see header)
     intervals(iv).valid=valid;                          % per-frame: false = a wall was off-FOV (diameter invalid)
 end
 end
@@ -215,8 +274,25 @@ end
 end
 
 % =====================================================================
+function [A,B]=rawRows(idxLraw,idxRraw,fr,fStart,nProc,H,nM)
+%RAWROWS  the raw wall positions of the ABSOLUTE frames fr, as [numel(fr) x H x nM]
+%   The raw arrays hold only the frames that were read (absolute fStart..fStart+nProc-1).
+%   An interval may legitimately name frames outside that window - it can reach past a
+%   time crop, and the union of intervals can have gaps - and those frames were never
+%   measured, so they come back NaN here and are filled by postProcessWalls exactly as
+%   an unmeasurable frame inside the window is.
+A=nan(numel(fr),H,nM,'single'); B=nan(numel(fr),H,nM,'single');
+in = fr>=fStart & fr<=fStart+nProc-1;
+if any(in)
+    g=fr(in)-fStart+1;
+    A(in,:,:)=idxLraw(g,:,:);
+    B(in,:,:)=idxRraw(g,:,:);
+end
+end
+
+% =====================================================================
 function [L,R,offL,offR]=detectWalls(I,s,seDust,r0,r1)
-%DETECTWALLS  raw left/right wall x-position per row for one frame (NaN where absent)
+%DETECTWALLS  raw left/right wall x-positions per row for one frame ([H x 3], NaN where absent)
 %   The two vessel walls ALWAYS lie on opposite sides of the field-of-view centre
 %   (the vessel is mounted centred), so the search is split at the FOV centre: the
 %   left wall is the strongest column-darkness peak in the left half, the right wall
@@ -226,9 +302,12 @@ function [L,R,offL,offR]=detectWalls(I,s,seDust,r0,r1)
 %   no real wall the vessel has dilated beyond the FOV on that side: the wall is
 %   reported at the window edge and offL/offR flags that frame invalid.  Each wall is
 %   then refined per row by the SAME relative-contrast rule within an adaptive band,
-%   so a thick/faint wall is measured identically to a thin/strong one.
+%   so a thick/faint wall is measured identically to a thin/strong one.  The refinement
+%   returns THREE positions per row - outer edge, band centre, luminal edge - so L and R
+%   are [H x 3], columns ordered {'outer','mid','inner'}.  offL/offR stay per FRAME:
+%   being off-FOV is a property of the frame, not of the measure.
 [H,W]=size(I);
-L=nan(H,1); R=nan(H,1); offL=false; offR=false;
+L=nan(H,3); R=nan(H,3); offL=false; offR=false;
 if s.smoothSigma>0, Is=imgaussfilt(I,s.smoothSigma); else, Is=I; end
 
 %dust removal: bottom-hat finds small dark blobs -> inpaint to local background
@@ -262,9 +341,9 @@ if leftOn
     [loL,hiL]=bandExtent(P,xL,0.4); padL=max(3,round(0.5*(hiL-loL)));
     loL=max(loL,mg); hiL=min(hiL+padL,imgC-1);
     if ~isempty(s.searchWin), loL=max(loL,xL-s.searchWin); hiL=min(hiL,xL+s.searchWin); end
-    if hiL>loL, [iL,okL]=wallInWindow(Inorm,loL:hiL,s,'L'); L(okL)=iL(okL); end
+    if hiL>loL, [iL,okL]=wallInWindow(Inorm,loL:hiL,s,'L'); L(okL,:)=iL(okL,:); end
 else
-    L(r0:r1)=1;                                       % dilated beyond FOV -> left window edge (invalid)
+    L(r0:r1,:)=1;                                     % dilated beyond FOV -> left window edge (invalid)
 end
 
 %--- RIGHT wall: adaptive band around xR (clamped right of centre, padded toward lumen) ---
@@ -272,11 +351,11 @@ if rightOn
     [loR,hiR]=bandExtent(P,xR,0.4); padR=max(3,round(0.5*(hiR-loR)));
     loR=max(loR-padR,imgC+1); hiR=min(hiR,W-mg);
     if ~isempty(s.searchWin), loR=max(loR,xR-s.searchWin); hiR=min(hiR,xR+s.searchWin); end
-    if hiR>loR, [iR,okR]=wallInWindow(Inorm,loR:hiR,s,'R'); R(okR)=iR(okR); end
+    if hiR>loR, [iR,okR]=wallInWindow(Inorm,loR:hiR,s,'R'); R(okR,:)=iR(okR,:); end
 else
-    R(r0:r1)=W;                                       % dilated beyond FOV -> right window edge (invalid)
+    R(r0:r1,:)=W;                                     % dilated beyond FOV -> right window edge (invalid)
 end
-L([1:r0-1,r1+1:H])=NaN; R([1:r0-1,r1+1:H])=NaN;
+L([1:r0-1,r1+1:H],:)=NaN; R([1:r0-1,r1+1:H],:)=NaN;
 end
 
 % =====================================================================
@@ -289,34 +368,45 @@ end
 
 % =====================================================================
 function [pos,ok]=wallInWindow(Inorm,cols,s,side)
-%WALLINWINDOW  per-row wall x-position within a column band, by a RELATIVE-contrast rule
+%WALLINWINDOW  per-row OUTER/CENTRE/LUMINAL wall x-positions within a column band
 %   The wall is located relative to the LOCAL bright level (lumen side) inside the
 %   band, NOT an absolute threshold - so a faint wall (a shallow dip) is measured
 %   exactly like a strong one, which is what makes the two walls symmetric.  A row
 %   is valid (ok) only if its band shows a real dip: local (bright-dark) > wallContrast.
+%
+%   All three positions come out of ONE pass over seg, from that single rule: the
+%   dark run (seg below the per-row half-drop level) has a first and a last column,
+%   and which of the two is the OUTER edge depends only on the side; the CENTRE is
+%   the darkness-weighted centroid of the same band.  No loop, and no per-measure
+%   re-thresholding - hence the three cannot disagree about whether a wall is there.
+%
+%   pos is [H x 3], columns ordered {'outer','mid','inner'}; ok is [H x 1], shared.
 seg=Inorm(:,cols);
 segBright=max(seg,[],2); segDark=min(seg,[],2);
 contrast=segBright-segDark;
 ok=contrast>s.wallContrast;                          % a genuine wall dip is present in this row
 thr=segBright-0.5*contrast;                          % per-row half-drop level (relative)
-switch s.edgeMode
-    case 'outer'                                     % edge nearest the image border
-        dk=seg<thr;
-        if side=='L', [~,j]=max(dk,[],2); pos=cols(1)+j-1;
-        else,         [~,j]=max(fliplr(dk),[],2); pos=cols(end)-j+1; end
-        pos=pos(:);
-    case 'inner'                                     % edge nearest the lumen (centre)
-        dk=seg<thr;
-        if side=='L', [~,j]=max(fliplr(dk),[],2); pos=cols(end)-j+1;
-        else,         [~,j]=max(dk,[],2); pos=cols(1)+j-1; end
-        pos=pos(:);
-    case 'min'                                       % single darkest point (sharp walls)
-        [~,j]=min(seg,[],2); pos=(cols(1)+j-1); pos=pos(:);
-        if s.subpixel, pos=subpix(Inorm,pos,ok); end
-    otherwise                                        % 'center' (default): darkness-weighted band centre, relative to the local bright level
-        wdk=max(segBright-seg,0); wsum=sum(wdk,2);
-        pos=(wdk*cols(:))./max(wsum,eps); pos=pos(:);
+
+%--- the two band edges: first and last column of the dark run ---
+dk=seg<thr;
+[~,jF]=max(dk,[],2);          posFirst=cols(1)+jF-1;   posFirst=posFirst(:);
+[~,jL]=max(fliplr(dk),[],2);  posLast =cols(end)-jL+1; posLast =posLast(:);
+if side=='L'                                         % the border is on the low-column side
+    outer=posFirst; inner=posLast;
+else                                                 % the border is on the high-column side
+    outer=posLast;  inner=posFirst;
 end
+
+%--- the band centre: darkness-weighted centroid, or the darkest point when asked ---
+if strcmpi(s.edgeMode,'min')                         % alternative centre rule (sharp walls)
+    [~,j]=min(seg,[],2); mid=(cols(1)+j-1); mid=mid(:);
+    if s.subpixel, mid=subpix(Inorm,mid,ok); end
+else                                                 % default: relative to the local bright level
+    wdk=max(segBright-seg,0); wsum=sum(wdk,2);
+    mid=(wdk*cols(:))./max(wsum,eps); mid=mid(:);
+end
+
+pos=[outer mid inner];
 end
 
 % =====================================================================
@@ -340,6 +430,7 @@ end
 % =====================================================================
 function [L,R,D,mask,valid]=postProcessWalls(L,R,offL,offR,s,frameRate)
 %POSTPROCESSWALLS  enforce physical plausibility, filter in time/Y, fill, build masks
+%   Runs on ONE measure at a time ([nFrames x nY] L and R); the caller loops the three.
 %   valid (per frame) is false where a wall was off-FOV (dilated out of view); those
 %   frames keep their edge-clamped position (a lower-bound diameter) and are excluded
 %   from the temporal statistics/filtering so they cannot bias the valid frames.

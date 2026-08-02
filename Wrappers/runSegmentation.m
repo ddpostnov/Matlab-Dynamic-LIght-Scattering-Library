@@ -239,8 +239,8 @@ for fidx=1:1:numel(fNames)
     %Save the data
     settings.runSegmentation=reportSettings(s);
     reportWriting(rep);
-    save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
-    save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
+    save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+    save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
     reportSaved(rep);
 
     % --- assign the segmentation to co-registered siblings (s.fNamesCopyTo) ---
@@ -306,8 +306,8 @@ reportSave(rep,fh,'segments',targetName);
 
 settings.runSegmentation=reportSettings(sT);  % carry edgeSize / sStat onto the sibling
 reportWriting(rep);
-save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
-save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
+save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
 reportSaved(rep);
 end
 

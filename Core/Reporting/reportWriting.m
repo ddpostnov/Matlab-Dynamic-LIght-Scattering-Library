@@ -28,9 +28,9 @@
 %
 % Example:
 %    reportWriting(rep);
-%    save(dName,'source','-v7.3');
-%    save(rName,'results','-v7.3');
-%    save(sName,'settings','-v7.3');
+%    save(dName,'source','-v7.3','-nocompression');
+%    save(rName,'results','-v7.3','-nocompression');
+%    save(sName,'settings','-v7.3','-nocompression');
 %    reportSaved(rep);
 %
 % See also: reportOpen, reportFile, reportSaved

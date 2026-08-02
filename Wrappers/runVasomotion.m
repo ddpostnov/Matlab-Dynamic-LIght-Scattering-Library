@@ -179,8 +179,8 @@
 %     Core/Vasomotion/getVasomotionMetrics (shared wavelet vasomotion core),
 %     MATLAB Wavelet Toolbox (cwtfilterbank/wt/icwt), Image Processing
 %     Toolbox (multithresh/bwareaopen), Statistics/Signal Toolboxes
-%     (skewness/prctile/findpeaks) and the Parallel Computing Toolbox (parfor +
-%     parallel.pool.DataQueue per-pixel progress); core LSCI library utilities.
+%     (skewness/prctile/findpeaks) and the Parallel Computing Toolbox (parfor over
+%     segments, and over pixels for the per-pixel twin); core LSCI library utilities.
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -669,8 +669,8 @@ for fidx=1:1:numel(fNames)
 
         settings.runVasomotion=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 

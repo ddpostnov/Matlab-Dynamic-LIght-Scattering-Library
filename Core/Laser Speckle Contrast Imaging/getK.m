@@ -30,6 +30,11 @@
 %                    for batch processing (0 to 1). Default: 0.8.
 %    'time'        - (Vector) Input time vector matching size(dataIn, 3).
 %                    If provided, the function returns a decimated time vector.
+%    'outputType'  - 'cpu' (default) returns a normal array; 'gpu' returns a gpuArray
+%                    and skips the gather.  Use it when the caller reduces or
+%                    decimates the contrast immediately and never needs the
+%                    full-resolution cube in RAM - a 100 GB recording cannot hold it.
+%                    Requires procType 'gpu'.
 %
 % Outputs:
 %    data         - Processed contrast data as a 3D matrix [Y, X, OutputTime].
@@ -53,7 +58,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 31-July-2026
 %------------- BEGIN CODE --------------
 function [data, time] = getK(dataIn,contrastType, varargin)
 p = inputParser;
@@ -68,6 +73,7 @@ addParameter(p, 'decimFactor', 1, @isnumeric);
 addParameter(p, 'decimMethod', 'leaking', @(x) any(validatestring(x, {'leaking', 'sharp'})));
 addParameter(p, 'memoryCoef', 0.8, @(x) isnumeric(x) && isscalar(x) && x > 0 && x <= 1);
 addParameter(p, 'time', [], @isnumeric);
+addParameter(p, 'outputType', 'cpu', @(x) any(validatestring(x, {'cpu', 'gpu'})));
 
 parse(p, dataIn, contrastType, varargin{:});
 
@@ -77,8 +83,13 @@ decimFactor  = p.Results.decimFactor;
 decimMethod = p.Results.decimMethod;
 memoryCoef  = p.Results.memoryCoef;
 timeIn      = p.Results.time;
+outputType  = p.Results.outputType;
 time        = [];
 
+if strcmpi(outputType,'gpu') && strcmpi(procType,'cpu')
+    error('getK:InvalidOutput', ...
+        "outputType 'gpu' requires procType 'gpu'.");
+end
 
 if isempty(kernelSize)
     if strcmpi(contrastType, 'temporal')
@@ -107,10 +118,21 @@ outT = floor(sz(3) / decimFactor);
 outSz = [sz(1), sz(2), outT];
 framesToProc = outT * decimFactor;
 
-[~, memAvailRAM] = memory;
-memAvailRAM = memAvailRAM.PhysicalMemory.Available;
-if memAvailRAM*memoryCoef<prod(outSz)*4
-    error('Insufficient memory available for keeping the processed file.');
+%The output is the thing being guarded, so the guard follows it: a 'cpu' output has
+%to fit in RAM, a 'gpu' output has to fit on the card.  memory() costs ~50 ms, so it
+%is called once here and reused by the cpu branches below.
+memAvailRAM = [];
+if strcmpi(outputType,'gpu')
+    memAvailGPU = gpuDevice;
+    if memAvailGPU.AvailableMemory*memoryCoef<prod(outSz)*4
+        error('Insufficient GPU memory available for keeping the processed file.');
+    end
+else
+    [~, memAvailRAM] = memory;
+    memAvailRAM = memAvailRAM.PhysicalMemory.Available;
+    if memAvailRAM*memoryCoef<prod(outSz)*4
+        error('Insufficient memory available for keeping the processed file.');
+    end
 end
 
 if ~isempty(timeIn)
@@ -128,7 +150,7 @@ end
 switch contrastType
     case 'temporal'
         dataIn=reshape(dataIn,sz(1)*sz(2),sz(3));
-        data=zeros(sz(1)*sz(2),outT,'single');
+        data=allocOut([sz(1)*sz(2),outT],outputType);
         switch procType
             case 'gpu'
                 memAvailGPU = gpuDevice;
@@ -164,11 +186,17 @@ switch contrastType
                             dataGPU = reshape(dataGPU, currentBatchSize, outT);
                         end
                     end
-                    data(i:i2,:)=gather(dataGPU);
+                    if strcmpi(outputType,'gpu')
+                        data(i:i2,:)=dataGPU;
+                    else
+                        data(i:i2,:)=gather(dataGPU);
+                    end
                 end
             case 'cpu'
-                [~, memAvailRAM] = memory;
-                memAvailRAM = memAvailRAM.PhysicalMemory.Available;
+                if isempty(memAvailRAM)                 % the 'gpu' outputType branch skipped it above
+                    [~, memAvailRAM] = memory;
+                    memAvailRAM = memAvailRAM.PhysicalMemory.Available;
+                end
                 batchNum=ceil(max((4*numel(dataIn)*4)./(memAvailRAM*memoryCoef),1)); % operations below should take aprox 2x batch array size, but, we allocate 3x just for safety
                 batchSize=floor(size(dataIn,1)./batchNum);
                 for i=1:batchSize:size(dataIn,1)
@@ -203,7 +231,7 @@ switch contrastType
 
         switch procType
             case 'gpu'
-                data=zeros(outSz,'single');
+                data=allocOut(outSz,outputType);
                 memAvailGPU = gpuDevice;
                 memAvailGPU = memAvailGPU.AvailableMemory;
                 batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches. 
@@ -231,12 +259,18 @@ switch contrastType
 
                     j = (i-1)/decimFactor + 1;
                     j2 = j + size(dataGPU,3) - 1;
-                    data(:,:,j:j2)=gather(dataGPU);
+                    if strcmpi(outputType,'gpu')
+                        data(:,:,j:j2)=dataGPU;
+                    else
+                        data(:,:,j:j2)=gather(dataGPU);
+                    end
                 end
             case 'cpu' %convn can be replaced with imboxfilt for a minor (less than 5% boost in performance)
-                data=zeros(outSz,'single');
-                [~, memAvailRAM] = memory;
-                memAvailRAM = memAvailRAM.PhysicalMemory.Available;
+                data=allocOut(outSz,outputType);
+                if isempty(memAvailRAM)                 % the 'gpu' outputType branch skipped it above
+                    [~, memAvailRAM] = memory;
+                    memAvailRAM = memAvailRAM.PhysicalMemory.Available;
+                end
                 batchNum=ceil(max((4*numel(dataIn)*4)./(memAvailRAM*memoryCoef),1)); % operations below should take aprox 2x batch array size, but, we allocate 3x just for safety
                 batchSize=floor(size(dataIn,3)./batchNum);
 
@@ -263,5 +297,17 @@ switch contrastType
                     data(:,:,j:j2) = chunk;
                 end
         end
+end
+end
+
+% =====================================================================
+function d = allocOut(sz,outputType)
+%allocOut  The result buffer, on the device the caller asked for.  'gpu' skips the
+%   gather in the batch loops below - which is the whole point of the option for
+%   callers that reduce or decimate the contrast immediately (runInternalCycle).
+if strcmpi(outputType,'gpu')
+    d = zeros(sz,'single','gpuArray');
+else
+    d = zeros(sz,'single');
 end
 end

@@ -133,9 +133,9 @@ for fidx=1:1:numel(fNames)
             settings.splitRegions=reportSettings(s);
             [path,name,extension]=fileparts(fNames{fidx});
             fName = fullfile(path,['Roi' num2str(ridx) '_' name extension]);
-            save(fName,'source','-v7.3');
-            save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
-            save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
+            save(fName,'source','-v7.3','-nocompression');
+            save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+            save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
         end
         reportSaved(rep);
         if s.deleteOriginal

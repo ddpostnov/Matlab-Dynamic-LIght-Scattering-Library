@@ -145,8 +145,8 @@ for fidx=1:1:numel(fNames)
         s.rawFrameRate=1./median(diff(results.gsTime));
         settings.runGuidedContrast=reportSettings(s);
         reportWriting(rep);
-        save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3');
-        save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3');
+        save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

@@ -208,8 +208,8 @@ for fidx=1:1:numel(fNames)
 
         settings.setVascularTree=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
 
         % auto-propagate the hierarchy to registered partner recordings
@@ -242,11 +242,11 @@ for i=1:numel(parts)
         continue;               % a different segmentation - the partner is skipped
     end
     presults=applyHierarchy(presults,H);
-    tmp.results=presults; save(partnerR,'-struct','tmp','-v7.3'); clear tmp
+    tmp.results=presults; save(partnerR,'-struct','tmp','-v7.3','-nocompression'); clear tmp
     if exist(partnerS,'file')==2
         ps=load(partnerS,'settings'); psettings=ps.settings;
         psettings.setVascularTree=reportSettings(s); psettings.setVascularTree.propagatedFrom=s.fName;
-        tmp.settings=psettings; save(partnerS,'-struct','tmp','-v7.3'); clear tmp
+        tmp.settings=psettings; save(partnerS,'-struct','tmp','-v7.3','-nocompression'); clear tmp
     end
 end
 end

@@ -22,7 +22,7 @@
 %
 % Example:
 %    settings.runContrastFromRLS = reportSettings(s);
-%    save(fName,'settings','-v7.3');
+%    save(fName,'settings','-v7.3','-nocompression');
 %
 % See also: reportOpen, reportCancelled
 %

@@ -143,7 +143,7 @@ settings.runContrastFromMRAW.ROI=ROI;
 
 
 if saveContrast
-    save(strrep(mrawFileName,'.mraw',['_',contrastType,'.mat']),'dataLSCI','time','timeStamp','trustMatrix','settings','-v7.3');
+    save(strrep(mrawFileName,'.mraw',['_',contrastType,'.mat']),'dataLSCI','time','timeStamp','trustMatrix','settings','-v7.3','-nocompression');
 end
 end
 %------------- END OF CODE --------------

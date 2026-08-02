@@ -94,9 +94,9 @@ for fidx=1:1:numel(fNames)
 
     reportWriting(rep);
     settings.calculateBFI=reportSettings(s);
-    save(strrep(fNames{fidx},'_K_d.mat','_BFI_d.mat'),'source','-v7.3');
-    save(strrep(fNames{fidx},'_K_d.mat','_BFI_r.mat'),'results','-v7.3');
-    save(strrep(fNames{fidx},'_K_d.mat','_BFI_s.mat'),'settings','-v7.3');
+    save(strrep(fNames{fidx},'_K_d.mat','_BFI_d.mat'),'source','-v7.3','-nocompression');
+    save(strrep(fNames{fidx},'_K_d.mat','_BFI_r.mat'),'results','-v7.3','-nocompression');
+    save(strrep(fNames{fidx},'_K_d.mat','_BFI_s.mat'),'settings','-v7.3','-nocompression');
 
     if s.deleteOriginal
         delete(fNames{fidx});

@@ -15,7 +15,10 @@
 %   'spectrum'}, default all six) selects which analysis levels are computed.
 %   s.parforMyographLines (logical, default true) decides whether the per-image-line
 %   loop runs in parallel; it is a WORKER BOUND on the parfor, not a branch, so false
-%   runs the identical loop body serially in the client and starts no pool.  The
+%   runs the identical loop body serially in the client and starts no pool.  A single
+%   line (a line-AVERAGED trace, [nFrames x 1]) is bounded to no workers whatever the
+%   setting says: one iteration cannot be shared out, and a pool opened for it is
+%   pure cost.  The
 %   metric maths matches runVasomotion because both call the shared core
 %   getVasomotionMetrics, and both assemble the result with assembleVasomotionTree.
 %
@@ -134,7 +137,11 @@ wantBandsPct=want.bandsPct; wantBandsPeak=want.bandsPeak;
 wantMoments=want.moments; wantSeries=want.series;
 wantClustering=want.clustering; wantRecon=want.reconstruction; keepSpectrum=want.spectrum;
 
-nwLine=0; if s.parforMyographLines, nwLine=Inf; end   % worker bound, not a branch
+% Worker BOUND, not a branch: parfor(...,0) runs the identical body serially in the
+% client and starts no pool.  A SINGLE line is bounded to 0 whatever the setting says
+% - the line-averaged myograph signal is one iteration, and opening a sixteen-worker
+% pool to run it costs twenty seconds to save none.
+nwLine=0; if s.parforMyographLines && nY>1, nwLine=Inf; end
 parfor (i=1:nY, nwLine)
     m=getVasomotionMetrics(data(:,i),layout,s);
     if wantRecon

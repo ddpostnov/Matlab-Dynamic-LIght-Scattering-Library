@@ -211,17 +211,15 @@ for fidx=1:1:numel(fNames)
     xlabel(ax,'Time, s')
     xlim(ax,[time(1),time(end)]);
     ylim(ax,[double(min(data(:))),double(max(data(:)))])
-    [~,fStem,fExt]=fileparts(s.fName);      % fileparts, not split on a backslash
-    sgtitle(fh,strrep([fStem fExt],'_',' '));
-    reportSave(rep,fh,'bolus');
+    reportSave(rep,fh,'bolus');             % reportSave titles the page
 
     %save the settings and results
     reportWriting(rep);
     source.data=data;
     source.time=time;
-    save(strrep(s.fName,'.cxd','_b_I_d.mat'),'source','-v7.3');
-    save(strrep(s.fName,'.cxd','_b_I_r.mat'),'results','-v7.3');
-    save(strrep(s.fName,'.cxd','_b_I_s.mat'),'settings','-v7.3');
+    save(strrep(s.fName,'.cxd','_b_I_d.mat'),'source','-v7.3','-nocompression');
+    save(strrep(s.fName,'.cxd','_b_I_r.mat'),'results','-v7.3','-nocompression');
+    save(strrep(s.fName,'.cxd','_b_I_s.mat'),'settings','-v7.3','-nocompression');
     reportSaved(rep);
      end
 end

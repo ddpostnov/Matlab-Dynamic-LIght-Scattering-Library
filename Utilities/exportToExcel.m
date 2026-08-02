@@ -1,4 +1,4 @@
-%exportToExcel  Dump processed LSCI metrics and traces to an .xlsx workbook
+%exportToExcel  Dump processed metrics and traces to an .xlsx workbook
 %
 %   exportToExcel(fNames) opens each processed *.mat dataset in fNames
 %   (contrast-derived *_BFI_d / _BFI_r / _BFI_s or later), converts numeric
@@ -30,6 +30,54 @@
 %   the ps*/pd* pulsatility columns.  The per-pixel maps results.pulsatility.ppx
 %   are image data and are NOT exported here.
 %
+%   MYOGRAPH RECORDINGS TAKE A SECOND SHEET SET, chosen FROM THE DATA and never
+%   from the file name: a recording whose RESULTS carry analysed WINDOWS is a
+%   myograph recording (pressure or wire), it has no per-segment table for the
+%   sheets above to be about, and it writes these instead.  A pressure myograph
+%   keeps them in a flat results.intervals; a wire myograph splits them by CHANNEL
+%   (results.channel(i).intervals(k)) because one LabChart file is several
+%   chambers, and myographIntervals flattens the two into one list of rows:
+%
+%       Sheet             Content
+%       ─────────────────────────────────────────────────────────────────
+%       settings          one row per parameter: which step wrote it, its name and
+%                         its value, plus the recording's analysed window and code
+%                         version - read from the triplet's SETTINGS member
+%       comments          WIRE MYOGRAPH ONLY: the operator's LabChart log - time,
+%                         text, channel and record - which is what the analysed
+%                         windows were placed against.  A pressure myograph has no
+%                         log and skips the sheet
+%       intervals         one row per analysed window (per CHANNEL, on a wire
+%                         myograph): its name, the channel it is about, what the
+%                         operator assigned it to, start, end, duration, frame
+%                         count, and the statistics of every diameter measured
+%                         inside it
+%       propagation       interval × diameter measure: speed and direction, the
+%                         confidence interval, R², p, and the evidence behind them
+%       vasomotion        interval × signal × unit: the band-suffixed vasomotion
+%                         scalars (scalars.VB/CB.*), the same markers a speckle
+%                         recording reports per segment
+%       ampPct            interval × signal × unit × band × percentile: the band
+%                         envelope amplitude at each percentile level
+%       spectra           interval × signal: amplitude spectrum mean and standard
+%                         deviation vs frequency, averaged over units, decimated
+%       ampPctSpectra     interval × signal: the vasomotion-band spectrum SPLIT BY
+%                         envelope amplitude - one column per amplitude bin, so a
+%                         change in the size of the oscillation can be told from a
+%                         change in its shape.  Decimated in frequency
+%       diameterTraces    interval × time: the line-averaged diameter of each
+%                         measure, decimated
+%
+%   THE SHEET LIMITS ARE RESPECTED BY DECIMATING, and the factor is written into
+%   the sheet, so a reader can always see how coarse a curve is: both spectra
+%   sheets are decimated in frequency and the diameter traces in time (opts.fDecim /
+%   opts.tDecim override the automatic choice), and no sheet exceeds opts.maxRows.
+%
+%   A SIGNAL is what was analysed: the diameter MEASURE ('outer' / 'mid' /
+%   'inner') for a pressure myograph, the CHANNEL for a wire one.  A UNIT is one
+%   result inside it - a single line-averaged trace, or one image row when the
+%   vasomotion was run per line.
+%
 %   INPUT
 %     fNames   cell array of *.mat file paths.  Each must contain SOURCE,
 %              RESULTS, SETTINGS structures created by the LSCI pipeline.
@@ -40,17 +88,25 @@
 %              fills the struct in).  EVERY field is additive and default-off.
 %              Fields:
 %                .sheets  cellstr / string of sheet names to write, a subset of
-%                         {sMetrics, sData, sMetricsROI, sDataROI, sMetricsType,
-%                          sDataType, dvsMetrics, dvsData, dvsDiameter,
-%                          pulsatility, dvsPulsatility}.
+%                         the UNION of both sheet sets - {sMetrics, sData,
+%                          sMetricsROI, sDataROI, sMetricsType, sDataType,
+%                          dvsMetrics, dvsData, dvsDiameter, pulsatility,
+%                          dvsPulsatility} for a segmented recording and
+%                         {settings, comments, intervals, propagation, vasomotion,
+%                          ampPct, spectra, ampPctSpectra, diameterTraces} for a
+%                         myograph one.
 %                         Absent / empty = the default set for .groupBy (below).
 %                         A selected sheet whose data is absent from a given file
-%                         is simply skipped, exactly as in the full path.
+%                         is simply skipped, exactly as in the full path - which is
+%                         also how a mixed list of both kinds writes each file the
+%                         sheets that are about it and no others.
 %                .format  output extension, '.xlsx' (default) or '.xls'.
 %                .groupBy the ROW GRANULARITY of the metric sheets, and with it
 %                         the DEFAULT sheet set:
 %                           ''       (default) per-segment rows - all 9 legacy
-%                                    sheets, including the label-averaged ROI pair;
+%                                    sheets, including the label-averaged ROI pair,
+%                                    plus the 9 myograph sheets, so a bare call
+%                                    writes whichever of them the file is about;
 %                           'label'  average over results.sMetrics.label - the
 %                                    sMetricsROI / sDataROI pair alone (the SAME
 %                                    aggregation the legacy path writes, not a
@@ -58,22 +114,35 @@
 %                           'type'   average over results.sMetrics.type, the
 %                                    VESSEL type written by setVesselTypes - the
 %                                    sMetricsType / sDataType pair alone.
+%                         Both averaging axes are per-SEGMENT axes, so a myograph
+%                         recording contributes nothing to them; its own averaging
+%                         axis is the interval, which it always has.
 %                         .sheets, when given, still selects freely across all
-%                         eleven names.
+%                         twenty names.
 %                .weightByArea  logical, TRUE by default: aggregated rows are
 %                         weighted by results.sMetrics.area, the weights the ROI
 %                         sheets have always used.  FALSE gives a plain unweighted
 %                         mean.  It applies to the .groupBy AXIS ONLY - every other
 %                         aggregation in the same call keeps its historical area
 %                         weighting, so a legacy sheet can never change silently.
-%                .columns cellstr subset of the sMetrics VARIABLE NAMES to export.
-%                         Absent = all.  Taken LITERALLY (include 'idx' / 'label' /
-%                         'type' yourself if you want them) and applied to the
-%                         sMetrics / sMetricsROI / sMetricsType sheets only - the
-%                         trace and dvs sheets are untouched.  A column absent from
-%                         a given file is skipped for that file, exactly as an
-%                         absent sheet already is; a sheet left with no column at
-%                         all is skipped for that file.
+%                .columns cellstr subset of the METRIC-SHEET variable names to
+%                         export.  Absent = all.  Taken LITERALLY (include 'idx' /
+%                         'label' / 'type' yourself if you want them) and applied to
+%                         the metric sheets only - sMetrics / sMetricsROI /
+%                         sMetricsType for a segmented recording, intervals /
+%                         propagation / vasomotion for a myograph one.  The trace,
+%                         dvs, spectra and percentile sheets are untouched.  A
+%                         column absent from a given file is skipped for that file,
+%                         exactly as an absent sheet already is; a sheet left with
+%                         no column at all is skipped for that file.
+%                .fDecim  MYOGRAPH ONLY.  Keep every Nth frequency point of the
+%                         spectra sheet.  Absent = automatic (about 60 points per
+%                         curve), which is what keeps a sheet readable.
+%                .tDecim  MYOGRAPH ONLY.  Keep every Nth sample of the diameter
+%                         traces.  Absent = automatic (about 5000 points).
+%                .maxRows MYOGRAPH ONLY.  Row ceiling per sheet (default 1e6, under
+%                         Excel's 1,048,576); a sheet that reaches it is written
+%                         truncated rather than failing.
 %                .merge   logical.  FALSE (default) = one workbook per input file,
 %                         as always.  TRUE = ONE workbook for the whole call, its
 %                         sheets accumulated across files and every row prefixed
@@ -110,17 +179,19 @@
 %                                                         % unweighted per-vessel-type means
 %     exportToExcel(fNames, struct('merge',true,'labels',L,'outFile',out));
 %                                                         % one workbook for statistics
+%     exportToExcel({'Mouse1_MYO_d.mat'});                 % the myograph workbook
 %
 %   DEPENDS ON
 %     MATLAB R2019b+ (for writetable with 'Sheet' option) and data schema
 %     used throughout the Dynamic Light Scattering Imaging toolbox.
 %
-% See also: guiExport, setVesselTypes, guiWorkbench, wbSession
+% See also: guiExport, setVesselTypes, guiWorkbench, wbSession, myographProduct,
+%           guiExplore
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 02-August-2026
 
 function exportToExcel(fNames, opts)
 
@@ -142,6 +213,30 @@ for fidx=1:1:numel(fNames)
 
     fName=strrep(fName,'_d.mat',O.ext);
     sink=openFile(sink,fName,fNames{fidx},fidx);        % target file / merged row prefix
+
+    % WHICH SHEET SET, DECIDED BY THE DATA.  A myograph recording carries analysed
+    % WINDOWS and no per-segment table; a segmented recording carries the table and
+    % no windows.  Dispatching on the window fields rather than on the file name is
+    % what lets one call take a mixed list and give each file the sheets that are
+    % about it - and it is the only place either kind is recognised.  BOTH are
+    % tested: a wire myograph stores its windows under results.channel and leaves
+    % results.intervals empty, so a test on the flat field alone would hand a wire
+    % recording to the segment exporter.
+    if isfield(results,'intervals') || isfield(results,'channel')
+        sink=emitMyographSheets(sink,results,O,wantSheet,fNames{fidx});
+    else
+        sink=emitSegmentSheets(sink,results,O,wantSheet);
+    end
+     end
+end
+
+finishSink(sink);                                   % merged mode: write the one workbook
+end
+
+function sink = emitSegmentSheets(sink, results, O, wantSheet)
+%emitSegmentSheets  THE per-segment sheet set: the nine legacy sheets plus the two
+%   opt-in vessel-type ones.  This is the body a bare exportToExcel(fNames) has
+%   always run, unchanged - the myograph branch is beside it, never inside it.
 
     catNames = ["background"  "parenchyma"  "unsegmented" ...
         "outerWall"   "innerWall"   "lumen"];          % 1×6
@@ -236,12 +331,580 @@ for fidx=1:1:numel(fNames)
             sink=emitSheet(sink,Tp,'dvsPulsatility',wantSheet);
         end
     end
-     end
 end
 
-finishSink(sink);                                   % merged mode: write the one workbook
+%% ===================== THE MYOGRAPH SHEET SET ========================== %%
+function sink = emitMyographSheets(sink, results, O, wantSheet, dPath)
+%emitMyographSheets  THE myograph sheet set: the windows a recording was analysed
+%   in, what was measured inside each of them, and what it was all measured with.
+%
+%   A myograph recording has no segments, so there is no per-segment table for the
+%   sheets above to be about; its rows are INTERVALS, and inside an interval a
+%   SIGNAL (the diameter measure, or the channel) and a UNIT (the line-averaged
+%   trace, or one image row when the vasomotion ran per line).  Everything else -
+%   which sheets are written, the merged row prefix, the column narrowing, the
+%   workbook - is the ordinary machinery, unchanged.
+%
+%   THE SETTINGS SHEET IS THE ONE THING THAT NEEDS A SECOND FILE.  Parameters live
+%   in the triplet's own SETTINGS member, not in its RESULTS, so this branch opens
+%   it - and only it, and only when that sheet is wanted.  A recording whose
+%   settings file has gone missing simply contributes no settings sheet, which is
+%   the same "skip what is absent" rule everything else here follows.
+%
+%   THE TABLES ARE BUILT ONLY WHEN THEY ARE ASKED FOR.  The spectra and the traces
+%   are the expensive ones in this file and a narrower selection must not pay for
+%   them, so each goes through emitLazy rather than being built and then dropped.
+%
+%   THE WINDOWS COME THROUGH myographIntervals, which is where the two shapes of the
+%   tree are known about: a pressure myograph's flat results.intervals and a wire
+%   myograph's results.channel(i).intervals(k).  What comes back is one flat list
+%   with the channel written onto every element, so a sheet is one row per window
+%   per channel and nothing here has to ask which myograph it is looking at.
+iv = myographIntervals(results);
+if isempty(iv), return; end
+
+sink = emitLazy(sink,wantSheet,'settings',       @() settingsTable(results,dPath));
+sink = emitLazy(sink,wantSheet,'comments',       @() commentsTable(results));
+sink = emitLazy(sink,wantSheet,'intervals',      @() pickColumns(intervalsTable(iv),O.columns));
+sink = emitLazy(sink,wantSheet,'propagation',    @() pickColumns(propagationTable(iv),O.columns));
+sink = emitLazy(sink,wantSheet,'vasomotion',     @() pickColumns(vasomotionTable(iv),O.columns));
+sink = emitLazy(sink,wantSheet,'ampPct',         @() ampPctTable(iv,O));
+sink = emitLazy(sink,wantSheet,'spectra',        @() spectraTable(iv,O));
+sink = emitLazy(sink,wantSheet,'ampPctSpectra',  @() ampPctSpectraTable(iv,O));
+sink = emitLazy(sink,wantSheet,'diameterTraces', @() diameterTraceTable(iv,O));
 end
 
+function T = settingsTable(results, dPath)
+%settingsTable  WHAT THE RECORDING WAS PROCESSED WITH: one row per parameter, so
+%   the sheet stacks across recordings in a merged workbook and two protocols can be
+%   read side by side.  (The old myograph exporter wrote this as a two-column block
+%   per file with a '=== file N ===' separator, which cannot be merged or filtered.)
+%
+%   THE 'step' COLUMN IS THE FUNCTION THAT WROTE THE PARAMETERS, verbatim - that is
+%   what settings.<field> is named after, and this sheet's whole use is tracing a
+%   number back to the call that would reproduce it, or pasting it into a launcher.
+%   Plus a leading 'recording' block for the provenance the settings do not carry:
+%   which absolute window was analysed, and which version of the code did it.
+T = table();
+C = {};
+% ---- the recording's own provenance ----
+C = addSetting(C,'recording','timeCrop',      fieldOrEmpty(results,'timeCrop'));
+if isfield(results,'meta') && isstruct(results.meta)
+    for f = {'formatVersion','codeVersion','createdTimestamp'}
+        C = addSetting(C,'recording',f{1},fieldOrEmpty(results.meta,f{1}));
+    end
+end
+% ---- one block per step that wrote settings ----
+S = loadSettings(dPath);
+fn = fieldnames(S);
+for i = 1:numel(fn)
+    st = S.(fn{i});
+    if ~isstruct(st) || ~isscalar(st), continue; end
+    p = fieldnames(st);
+    for j = 1:numel(p)
+        C = addSetting(C,fn{i},p{j},st.(p{j}));
+    end
+end
+if isempty(C), return; end
+T = cell2table(C,'VariableNames',{'step','parameter','value'});
+end
+
+function T = commentsTable(results)
+%commentsTable  THE OPERATOR'S LOG, as LabChart recorded it: what was done to the
+%   preparation and when.  It is the record the analysed windows were placed
+%   against - a drug added, a wash started, a stimulus given - and until now it
+%   never left the interval editor, so a finished export could not say what any
+%   window WAS.  Long rather than wide, so it stacks across recordings in a merged
+%   workbook and can be filtered like every other sheet here.
+%
+%   Times are ABSOLUTE seconds from the start of the recording, the same base the
+%   intervals sheet uses, so the two can be read against each other directly.  A
+%   pressure myograph has no operator log and simply contributes no sheet, which is
+%   the ordinary "skip what is absent" rule.
+T = table();
+if ~isfield(results,'comments'), return; end
+cm = results.comments;
+if isempty(cm) || ~isstruct(cm), return; end
+n = numel(cm);
+T = table('Size',[n 4],'VariableTypes',{'double','string','string','double'}, ...
+    'VariableNames',{'time_s','text','channel','record'});
+for k = 1:n
+    T.time_s(k)  = fieldNum(cm(k),'time');
+    T.text(k)    = string(charOrEmpty(fieldOrEmpty(cm(k),'text')));
+    T.channel(k) = string(charOrEmpty(fieldOrEmpty(cm(k),'channel')));
+    T.record(k)  = fieldNum(cm(k),'record');
+end
+end
+
+function s = charOrEmpty(v)
+%charOrEmpty  A comment's text or channel as char, whatever the SDK handed back.
+s = '';
+if ischar(v), s = v; elseif isstring(v) && ~isempty(v), s = char(v(1)); end
+end
+
+function S = loadSettings(dPath)
+%loadSettings  The SETTINGS member of this recording's triplet, or an empty struct.
+S = struct();
+if isempty(dPath), return; end
+sName = strrep(char(dPath),'_d.mat','_s.mat');
+if ~isfile(sName), return; end
+try
+    L = load(sName,'settings');
+    if isfield(L,'settings') && isstruct(L.settings), S = L.settings; end
+catch
+end
+end
+
+function C = addSetting(C, step, name, v)
+%addSetting  One parameter row, with the value rendered as text a person can read
+%   AND paste back into a script.  Anything that is not a plain value - a nested
+%   struct, a function handle a caller failed to strip - is skipped rather than
+%   printed as a class name, because a settings sheet that lies is worse than one
+%   with a gap in it.
+if isempty(v) || isa(v,'function_handle') || isstruct(v), return; end
+if isnumeric(v) || islogical(v)
+    txt = mat2str(double(v));
+elseif ischar(v)
+    txt = v;
+elseif isstring(v)
+    txt = strjoin(cellstr(v(:)'),', ');
+elseif iscellstr(v)                  % the shape settings use for a list of names
+    txt = strjoin(v(:)',', ');
+else
+    return
+end
+C(end+1,:) = {step, name, txt};
+end
+
+function v = fieldOrEmpty(st,f)
+v = [];
+if isstruct(st) && isfield(st,f), v = st.(f); end
+end
+
+function T = ampPctSpectraTable(iv,O)
+%ampPctSpectraTable  The vasomotion-band spectrum SPLIT BY ENVELOPE AMPLITUDE:
+%   fVectors.VB.ampMeanPct is the mean spectrum of the moments when the band
+%   envelope sat in each amplitude bin, so it separates "the oscillation is always
+%   this shape, just bigger sometimes" from "big and small episodes are different
+%   oscillations" - which one number per interval cannot.
+%
+%   Averaged over the units and DECIMATED IN FREQUENCY, one column per bin labelled
+%   by its bin CENTRE.  NOTE those centres are not the percentile LEVELS that index
+%   the scalar ampPct sheet - they key different things and are deliberately kept in
+%   different sheets.  The columns are fixed by the FIRST tree that has them and
+%   later ones are padded or trimmed to match, so one recording's sheet has one
+%   shape; a recording binned differently unions its own columns in a merged book.
+T = table();
+C = {}; labs = {}; nB = 0;
+for k = 1:numel(iv)
+    if atCap(C,O), break, end
+    V = subStruct(iv(k),'vasomotion');
+    sigs = fieldnames(V);
+    for j = 1:numel(sigs)
+        if atCap(C,O), break, end
+        v = V.(sigs{j});
+        if ~isstruct(v) || ~isfield(v,'fVectors') || ~isfield(v.fVectors,'VB') || ...
+                ~isfield(v.fVectors.VB,'ampMeanPct') || isempty(v.fVectors.VB.ampMeanPct)
+            continue
+        end
+        f = double(v.f(:)); nf = numel(f);
+        if nf==0, continue; end
+        M = squeeze(mean(double(v.fVectors.VB.ampMeanPct),1,'omitnan'));   % [nF x nBin]
+        if isvector(M), M = M(:); end
+        if isempty(labs)
+            nB = size(M,2); labs = binLabels(v,nB);
+        end
+        dec = decimation(O.fDecim, nf, 60);
+        for q = 1:dec:nf
+            C(end+1,:) = [{intervalName(iv(k),k), signalName(v,sigs{j}), f(q)}, ...
+                num2cell(padRow(M(q,:),nB)), {dec}]; %#ok<AGROW>
+        end
+    end
+end
+if isempty(C), return; end
+T = cell2table(C,'VariableNames',[{'interval','signal','f_Hz'}, labs, {'fDecim'}]);
+end
+
+function labs = binLabels(v,nB)
+%binLabels  A column name per amplitude bin, from its centre; a bin the tree gives
+%   no centre for is named by its index rather than left nameless.
+labs = cell(1,nB);
+pc = [];
+if isfield(v,'pctCenters'), pc = double(v.pctCenters(:)); end
+for b = 1:nB
+    if b<=numel(pc), labs{b} = sprintf('pct_%g',pc(b)); else, labs{b} = sprintf('bin%d',b); end
+end
+labs = matlab.lang.makeValidName(labs);      % a fractional centre is not a name
+labs = matlab.lang.makeUniqueStrings(labs);
+end
+
+function y = padRow(x,n)
+%padRow  The first n values of a row, NaN-padded - a fixed sheet width.
+x = double(x(:)'); y = nan(1,n); m = min(n,numel(x)); y(1:m) = x(1:m);
+end
+
+function sink = emitLazy(sink, wantSheet, sheet, builder)
+%emitLazy  Build one sheet only when the selection actually wants it.
+if ~wantSheet(sheet), return; end
+sink = emitSheet(sink, builder(), sheet, wantSheet);
+end
+
+function T = intervalsTable(iv)
+%intervalsTable  One row per analysed window: WHAT THE WINDOW IS, and the level and
+%   the swing of every diameter that was measured inside it.
+%   The times are ABSOLUTE seconds from the start of the recording (spec §3), so a
+%   window can always be found again in the original footage.  A wire myograph has
+%   no diameter and simply leaves those columns empty, as an absent column already
+%   is everywhere else here.
+%
+%   THE 'channel' COLUMN IS THE AXIS, not the operator's assignment: it says which
+%   channel this row is about.  Two chambers whose baseline windows are both called
+%   'baseline' are two rows that differ only in it, so a sheet without it could not
+%   be read at all; 'scope' is the assignment the operator made, and says whether
+%   that window belongs to the one channel or to the whole file.
+n = numel(iv);
+T = table('Size',[n 8], ...
+    'VariableTypes',{'string','string','string','double','double','double','double','double'}, ...
+    'VariableNames',{'interval','channel','scope','tStart_s','tEnd_s','duration_s','nFrames','nY'});
+[meas,stats] = diameterAxes(iv);
+for m = 1:numel(meas)
+    for q = 1:numel(stats)
+        T.([meas{m} '_' stats{q}]) = nan(n,1);
+    end
+end
+for k = 1:n
+    d = subStruct(iv(k),'diameter');
+    T.interval(k)   = string(intervalName(iv(k),k));
+    T.channel(k)    = string(charOrEmpty(fieldOrEmpty(iv(k),'channelName')));
+    T.scope(k)      = string(intervalScope(iv(k)));
+    T.tStart_s(k)   = fieldNum(iv(k),'tStart');
+    T.tEnd_s(k)     = fieldNum(iv(k),'tEnd');
+    T.duration_s(k) = T.tEnd_s(k) - T.tStart_s(k);
+    T.nFrames(k)    = frameCount(iv(k),d);
+    if isfield(d,'nY'), T.nY(k) = double(d.nY); end
+    if ~isfield(d,'stats') || ~isstruct(d.stats), continue; end
+    for m = 1:numel(meas)
+        if ~isfield(d.stats,meas{m}), continue; end
+        S = d.stats.(meas{m});
+        for q = 1:numel(stats)
+            T.([meas{m} '_' stats{q}])(k) = fieldNum(S,stats{q});
+        end
+    end
+end
+end
+
+function T = propagationTable(iv)
+%propagationTable  One row per interval × analysed measure: the answer (speed and
+%   direction), the interval around it, and the evidence the confidence was built
+%   from - which is what makes a reported speed something a reader can judge.
+C = {};
+for k = 1:numel(iv)
+    p = subStruct(iv(k),'propagation');
+    sigs = fieldnames(p);
+    for j = 1:numel(sigs)
+        q = p.(sigs{j});
+        if ~isstruct(q) || isempty(q), continue; end
+        m = subStruct(q,'metrics');
+        C(end+1,:) = { intervalName(iv(k),k), sigs{j}, ...
+            fieldNum(q,'speed'), fieldStr(q,'speedUnit'), fieldStr(q,'direction'), ...
+            ciBound(q,1), ciBound(q,2), fieldNum(q,'R2'), fieldNum(q,'pValue'), ...
+            fieldNum(q,'confidence'), fieldStr(q,'confidenceLevel'), ...
+            fieldNum(m,'medianCorr'), fieldNum(m,'rowFraction'), ...
+            fieldNum(m,'totalLagSamples'), fieldNum(q,'belowResolution'), ...
+            fieldNum(q,'domFreq'), fieldNum(q,'nRows'), ...
+            strjoin(fieldCellstr(q,'qualityFlags'),'; '), fieldStr(q,'confidenceText') }; %#ok<AGROW>
+    end
+end
+T = cellRows(C,{'interval','measure','speed','speedUnit','direction', ...
+    'speedCI_lo','speedCI_hi','R2','pValue','confidence','confidenceLevel', ...
+    'medianCorr','rowFraction','totalLagSamples','belowResolution','domFreq', ...
+    'nRows','qualityFlags','confidenceText'});
+end
+
+function T = vasomotionTable(iv)
+%vasomotionTable  One row per interval × signal × unit, carrying the vasomotion
+%   markers of both bands.  These are the SAME markers a speckle recording reports
+%   per segment - the analysis is the shared core - so a myograph result and an
+%   imaging result can be put side by side in one statistics package.  The band is
+%   the name suffix: VB is the vasomotion band, CB the comparison band.
+mk = vsmMarkerNames();
+C  = {};
+for k = 1:numel(iv)
+    V = subStruct(iv(k),'vasomotion');
+    sigs = fieldnames(V);
+    for j = 1:numel(sigs)
+        v = V.(sigs{j});
+        if ~isstruct(v) || ~isfield(v,'scalars'), continue; end
+        for u = 1:vsmUnitCount(v)
+            row = [{intervalName(iv(k),k), signalName(v,sigs{j}), u}, ...
+                   arrayfun(@(b) bandScalar(v,mk{b,2},mk{b,3},u), 1:size(mk,1), 'UniformOutput',false)];
+            C(end+1,:) = row; %#ok<AGROW>
+        end
+    end
+end
+T = cellRows(C,[{'interval','signal','unit'}, mk(:,1)']);
+end
+
+function T = ampPctTable(iv,O)
+%ampPctTable  The band-envelope amplitude at each PERCENTILE LEVEL, long: one row
+%   per interval × signal × unit × band × level.  scalars.<band>.ampPct is
+%   prctile(a(t),levels) of the band-mean envelope, so it says how much of the
+%   recording sat at each amplitude rather than only what the average was.
+%
+%   NOTE the levels here are not the bin CENTRES that key the percentile-resolved
+%   SPECTRA: a RESULTS file carries no settings struct, so the levels are recovered
+%   from how many of them there are, exactly as guiExplore recovers them.
+C = {};
+for k = 1:numel(iv)
+    if atCap(C,O), break, end
+    V = subStruct(iv(k),'vasomotion');
+    sigs = fieldnames(V);
+    for j = 1:numel(sigs)
+        if atCap(C,O), break, end
+        v = V.(sigs{j});
+        if ~isstruct(v) || ~isfield(v,'scalars'), continue; end
+        for bc = {'VB','CB'}
+            if atCap(C,O), break, end
+            band = bc{1};
+            if ~isfield(v.scalars,band) || ~isfield(v.scalars.(band),'ampPct'), continue; end
+            P = double(v.scalars.(band).ampPct);          % [nUnit x nLevel]
+            if isempty(P), continue; end
+            lev = percentileLevels(size(P,2));
+            for u = 1:size(P,1)
+                if atCap(C,O), break, end
+                for q = 1:numel(lev)
+                    C(end+1,:) = {intervalName(iv(k),k), signalName(v,sigs{j}), u, ...
+                        band, lev(q), P(u,q)}; %#ok<AGROW>
+                end
+            end
+        end
+    end
+end
+T = cellRows(C,{'interval','signal','unit','band','percentile','amp'});
+end
+
+function T = spectraTable(iv,O)
+%spectraTable  The amplitude spectrum of every interval × signal, averaged over its
+%   units and DECIMATED IN FREQUENCY so the sheet stays readable.  The factor is
+%   written into the sheet rather than left implicit - a curve nobody can tell the
+%   resolution of is not evidence.
+C = {};
+for k = 1:numel(iv)
+    if atCap(C,O), break, end
+    V = subStruct(iv(k),'vasomotion');
+    sigs = fieldnames(V);
+    for j = 1:numel(sigs)
+        if atCap(C,O), break, end
+        v = V.(sigs{j});
+        if ~isstruct(v) || ~isfield(v,'fVectors') || ~isfield(v.fVectors,'ampMean'), continue; end
+        f = double(v.f(:)); nf = numel(f);
+        if nf==0, continue; end
+        am = mean(double(v.fVectors.ampMean),1,'omitnan'); am = am(:);
+        as = nan(nf,1);
+        if isfield(v.fVectors,'ampStd')
+            as = mean(double(v.fVectors.ampStd),1,'omitnan'); as = as(:);
+        end
+        dec = decimation(O.fDecim, nf, 60);
+        for q = 1:dec:nf
+            C(end+1,:) = {intervalName(iv(k),k), signalName(v,sigs{j}), f(q), ...
+                pick(am,q), pick(as,q), dec}; %#ok<AGROW>
+        end
+    end
+end
+T = cellRows(C,{'interval','signal','f_Hz','ampMean','ampStd','fDecim'});
+end
+
+function T = diameterTraceTable(iv,O)
+%diameterTraceTable  The line-averaged diameter of every measure, DECIMATED IN TIME:
+%   time runs down the rows because each interval has its own stretch of the
+%   recording and they do not share a time base, and the three measures run across
+%   because they are sampled together.
+[meas,~] = diameterAxes(iv);
+if isempty(meas), T = table(); return; end
+C = {};
+for k = 1:numel(iv)
+    if atCap(C,O), break, end
+    d = subStruct(iv(k),'diameter');
+    if ~isfield(d,'time') || isempty(d.time), continue; end
+    t = double(d.time(:)); nT = numel(t);
+    dec = decimation(O.tDecim, nT, 5000);
+    for q = 1:dec:nT
+        row = [{intervalName(iv(k),k), t(q)}, ...
+               cellfun(@(m) traceValue(d,m,q), meas, 'UniformOutput',false), {dec}];
+        C(end+1,:) = row; %#ok<AGROW>
+    end
+end
+T = cellRows(C,[{'interval','t_s'}, meas, {'tDecim'}]);
+end
+
+% ---------------------------------------------------------------------------
+function [meas,stats] = diameterAxes(iv)
+%diameterAxes  The diameter MEASURES and the STATISTIC names this recording actually
+%   carries, unioned over its intervals in the order the tree lists them.  Read from
+%   the data rather than assumed, so a result written before a measure existed reads
+%   back with the measures it has.
+meas = {}; stats = {};
+for k = 1:numel(iv)
+    d = subStruct(iv(k),'diameter');
+    if ~isfield(d,'stats') || ~isstruct(d.stats), continue; end
+    fn = fieldnames(d.stats)';
+    meas = [meas, fn(~ismember(fn,meas))]; %#ok<AGROW>
+    for m = 1:numel(fn)
+        sn = fieldnames(d.stats.(fn{m}))';
+        stats = [stats, sn(~ismember(sn,stats))]; %#ok<AGROW>
+    end
+end
+end
+
+function n = vsmUnitCount(v)
+%vsmUnitCount  How many results one signal's tree holds: one for a line-averaged
+%   trace or a channel, one per image row when the vasomotion ran per line.
+n = 0;
+if isfield(v.scalars,'VB') && isfield(v.scalars.VB,'ampMean')
+    n = numel(v.scalars.VB.ampMean);
+elseif isfield(v.scalars,'CB') && isfield(v.scalars.CB,'ampMean')
+    n = numel(v.scalars.CB.ampMean);
+end
+end
+
+function y = bandScalar(v,band,name,u)
+%bandScalar  One per-unit band marker, NaN when this tree does not carry it.
+y = NaN;
+if isfield(v.scalars,band) && isfield(v.scalars.(band),name)
+    d = double(v.scalars.(band).(name));
+    if numel(d)>=u, y = d(u); end
+end
+end
+
+function mk = vsmMarkerNames()
+%vsmMarkerNames  The vasomotion markers a flat sheet carries, and where each lives
+%   in the band-branched tree: {column name, band, field}.  The frequency-shape and
+%   multiplicity markers exist for the vasomotion band only; the flare / silence
+%   clustering exists for both, each from its own threshold.
+mk = { 'ampMeanVB','VB','ampMean';   'ampStdVB','VB','ampStd';   'ampSkewVB','VB','ampSkew'; ...
+       'ampMeanCB','CB','ampMean';   'ampStdCB','CB','ampStd';   'ampSkewCB','CB','ampSkew'; ...
+       'fCentMeanVB','VB','fCentMean';   'fCentStdVB','VB','fCentStd'; ...
+       'fSprdMeanVB','VB','fSprdMean';   'fSprdStdVB','VB','fSprdStd'; ...
+       'shapePeakVB','VB','shapePeak';   'nPeakMeanVB','VB','nPeakMean';   'nPeakStdVB','VB','nPeakStd'; ...
+       'durFlareMeanVB','VB','durFlareMean';       'durFlareStdVB','VB','durFlareStd'; ...
+       'durSilenceMeanVB','VB','durSilenceMean';   'durSilenceStdVB','VB','durSilenceStd'; ...
+       'ampFlareMeanVB','VB','ampFlareMean';       'ampFlareStdVB','VB','ampFlareStd'; ...
+       'ampSilenceMeanVB','VB','ampSilenceMean';   'ampSilenceStdVB','VB','ampSilenceStd'; ...
+       'durFlareMeanCB','CB','durFlareMean';       'durFlareStdCB','CB','durFlareStd'; ...
+       'durSilenceMeanCB','CB','durSilenceMean';   'durSilenceStdCB','CB','durSilenceStd'; ...
+       'ampFlareMeanCB','CB','ampFlareMean';       'ampFlareStdCB','CB','ampFlareStd'; ...
+       'ampSilenceMeanCB','CB','ampSilenceMean';   'ampSilenceStdCB','CB','ampSilenceStd' };
+end
+
+function lev = percentileLevels(nP)
+%percentileLevels  The percentile LEVELS ampPct was evaluated at.  A RESULTS file
+%   carries no settings struct, so they are recovered from their count - which is
+%   right for the default 0:10:100 and for any other evenly spaced choice, and is
+%   the same fallback guiExplore uses.
+lev = linspace(0,100,max(nP,1));
+end
+
+function tf = atCap(C,O)
+%atCap  Has this sheet reached its row ceiling?  Tested at the top of EVERY loop
+%   level rather than only the innermost, so accumulation actually stops instead of
+%   the outer loops carrying on past the cap.
+tf = size(C,1) >= O.maxRows;
+end
+
+function d = decimation(requested, n, target)
+%decimation  Keep every dth point: what the caller asked for, or enough to bring a
+%   curve down to about `target` points.
+if ~isempty(requested), d = max(1,round(double(requested(1)))); return; end
+d = max(1,ceil(n/target));
+end
+
+function v = traceValue(d,measure,q)
+%traceValue  One sample of one line-averaged diameter trace.
+v = NaN;
+if isfield(d,measure)
+    x = double(d.(measure));
+    if numel(x)>=q, v = x(q); end
+end
+end
+
+function T = cellRows(C, names)
+%cellRows  A table from accumulated rows, or an EMPTY table when nothing was
+%   accumulated - which is how a sheet this file has no data for gets skipped,
+%   exactly like an absent sheet.
+if isempty(C), T = table(); return; end
+T = cell2table(C,'VariableNames',names);
+end
+
+function nm = intervalName(ivk,k)
+%intervalName  What the window is called, or what it is when nobody named it.
+nm = '';
+if isfield(ivk,'name'), nm = char(string(ivk.name)); end
+if isempty(nm), nm = sprintf('interval %d',k); end
+end
+
+function s = intervalScope(ivk)
+%intervalScope  What the operator assigned this window to.  A wire myograph window
+%   left on every channel is repeated under each of them, and telling that apart
+%   from four windows that were each assigned to one chamber is the difference
+%   between one decision and four.
+c = fieldCellstr(ivk,'channels');
+if isempty(c), s = 'all channels'; else, s = strjoin(c,'; '); end
+if isempty(charOrEmpty(fieldOrEmpty(ivk,'channelName'))), s = ''; end
+end
+
+function nm = signalName(v,fld)
+%signalName  What was analysed.  A channel's real name is kept beside its tree
+%   because 'Force 1 (mN)' does not survive being made into a field name; a diameter
+%   measure is its own field name already.
+nm = fld;
+if isfield(v,'channelName') && ~isempty(v.channelName), nm = char(string(v.channelName)); end
+end
+
+function n = frameCount(ivk,d)
+%frameCount  How many samples the window holds: its frame range into the recording,
+%   or the length of the trace measured in it.
+n = NaN;
+if isfield(ivk,'frames') && numel(ivk.frames)==2
+    n = double(ivk.frames(2)) - double(ivk.frames(1)) + 1;
+elseif isfield(d,'time')
+    n = numel(d.time);
+end
+end
+
+function S = subStruct(st,f)
+%subStruct  One branch of the interval tree as a struct, empty when it was never
+%   written - so a caller can ask for its fields without testing twice.
+S = struct();
+if isstruct(st) && isfield(st,f) && isstruct(st.(f)) && isscalar(st.(f)), S = st.(f); end
+end
+
+function v = fieldNum(st,f)
+v = NaN;
+if isstruct(st) && isfield(st,f) && ~isempty(st.(f)) && (isnumeric(st.(f))||islogical(st.(f)))
+    x = double(st.(f)); v = x(1);
+end
+end
+
+function v = fieldStr(st,f)
+v = '';
+if isstruct(st) && isfield(st,f) && (ischar(st.(f))||isstring(st.(f))), v = char(st.(f)); end
+end
+
+function v = fieldCellstr(st,f)
+v = {};
+if isstruct(st) && isfield(st,f) && iscell(st.(f)), v = cellfun(@(x)char(string(x)),st.(f)(:)','UniformOutput',false); end
+end
+
+function v = ciBound(q,i)
+v = NaN;
+if isfield(q,'speedCI') && numel(q.speedCI)>=i, v = double(q.speedCI(i)); end
+end
+
+function v = pick(x,q)
+if numel(x)>=q, v = x(q); else, v = NaN; end
+end
+
+%% ===================== shared machinery ================================ %%
 function Ti = idTable(M)
 % Identifier columns for a pulsatility sheet: idx plus type/label when present.
 % Row order is the segment order shared by results.sMetrics / dvsMetrics and the
@@ -415,8 +1078,12 @@ function [O] = parseExportOpts(opts, fNames)
 %     opts.merge        logical, default false  (one workbook for the whole call)
 %     opts.labels       1xN struct array parallel to fNames (.animal/.type/.group)
 %     opts.outFile      destination of the merged workbook
+%     opts.fDecim       myograph: keep every Nth frequency point ([] = automatic)
+%     opts.tDecim       myograph: keep every Nth time sample    ([] = automatic)
+%     opts.maxRows      myograph: row ceiling per sheet (default 1e6)
 O = struct('sheets',{{}},'ext','.xlsx','groupBy','','weightByArea',true, ...
-    'columns',{{}},'merge',false,'labels',[],'outFile','');
+    'columns',{{}},'merge',false,'labels',[],'outFile','', ...
+    'fDecim',[],'tDecim',[],'maxRows',1e6);
 if isempty(opts) || ~isstruct(opts), O.sheets = defaultSheets(O.groupBy); return; end
 
 if isfield(opts,'format') && ~isempty(opts.format)
@@ -440,6 +1107,14 @@ end
 
 if isfield(opts,'weightByArea') && ~isempty(opts.weightByArea)
     O.weightByArea = logical(opts.weightByArea(1));
+end
+
+% the myograph decimation controls: [] keeps the automatic choice, which is what a
+% caller that has never heard of them gets
+if isfield(opts,'fDecim') && ~isempty(opts.fDecim), O.fDecim = double(opts.fDecim(1)); end
+if isfield(opts,'tDecim') && ~isempty(opts.tDecim), O.tDecim = double(opts.tDecim(1)); end
+if isfield(opts,'maxRows') && ~isempty(opts.maxRows)
+    O.maxRows = max(1,double(opts.maxRows(1)));
 end
 
 if isfield(opts,'columns') && ~isempty(opts.columns)
@@ -486,22 +1161,37 @@ end
 end
 
 function names = defaultSheets(groupBy)
-%defaultSheets  What .groupBy asks for when opts.sheets is not given: the whole
-%   legacy workbook for per-segment rows, and the matching aggregated PAIR for an
-%   averaging axis.  The two vessel-type sheets are therefore OPT-IN - a bare
-%   exportToExcel(fNames) writes the historical nine and nothing else.
+%defaultSheets  What .groupBy asks for when opts.sheets is not given: EVERYTHING a
+%   file can be about for per-recording rows, and the matching aggregated PAIR for
+%   an averaging axis.  The two vessel-type sheets are therefore OPT-IN.
+%
+%   THE DEFAULT IS THE UNION OF BOTH SHEET SETS, and it costs the segmented path
+%   nothing: a segmented recording has no intervals, so the nine myograph names it
+%   now also asks for are skipped for it exactly as an absent sheet always was, and
+%   a bare exportToExcel(fNames) still writes the historical nine and nothing else.
+%   What it buys is that the same bare call on a myograph recording writes the
+%   myograph workbook, instead of an empty one - the selection is the union and the
+%   DATA decides which half of it appears.
 switch groupBy
     case 'label', names = {'sMetricsROI','sDataROI'};
     case 'type',  names = {'sMetricsType','sDataType'};
-    otherwise,    names = legacySheets();
+    otherwise,    names = [legacySheets() myographSheets()];
 end
 end
 
 function names = legacySheets()
 %legacySheets  The nine sheets a bare exportToExcel(fNames) has always written,
-%   in write order.  THE definition of "everything" for the default path.
+%   in write order.  THE definition of "everything" for a segmented recording.
 names = {'sMetrics','sData','sMetricsROI','sDataROI','dvsMetrics','dvsData', ...
          'dvsDiameter','pulsatility','dvsPulsatility'};
+end
+
+function names = myographSheets()
+%myographSheets  The nine sheets a myograph recording writes, in write order.  Only a
+%   WIRE myograph carries an operator log, so 'comments' is the one of them that a
+%   pressure recording routinely skips.
+names = {'settings','comments','intervals','propagation','vasomotion','ampPct', ...
+         'spectra','ampPctSpectra','diameterTraces'};
 end
 
 function out = defaultMergedName(fNames, ext)

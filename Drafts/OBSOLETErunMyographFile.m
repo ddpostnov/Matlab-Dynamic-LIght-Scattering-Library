@@ -13,7 +13,8 @@
 %        s.detectPerInterval=true for the old per-interval detection (Path A).
 %     2. Vasomotion.  getMyographVasomotion per interval (s.runVasomotion, default true).
 %     3. Propagation. getMyographPropagation per interval (s.runPropagation, default true).
-%     4. Save.  intervals + s + meta to a *_myograph.mat (-v7.3), s.saveResult.
+%     4. Save.  intervals + s + meta to a *_myograph.mat (-v7.3, uncompressed),
+%        s.saveResult.
 %
 %   Per-file failure is isolated: any error is caught and returned as a failed
 %   status (so a batch can continue).  s.progressFcn(f,total) receives frame
@@ -93,7 +94,7 @@ try
     if s.saveResult
         myoStage(s,'save',outPath);
         s=stripFcnHandles(s);                            % drop GUI callbacks so no figure is serialised into the .mat
-        t0=tic; save(outPath,'intervals','s','meta','-v7.3'); tim.save=toc(t0);
+        t0=tic; save(outPath,'intervals','s','meta','-v7.3','-nocompression'); tim.save=toc(t0);
     end
 
     out.status='done'; out.message='ok'; out.path=outPath;

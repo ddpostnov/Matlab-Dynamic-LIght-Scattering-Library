@@ -1,34 +1,33 @@
 %getMyographPropagation  Direction and speed of diameter changes travelling along a vessel
 %
-%   prop = getMyographPropagation(s,interval) estimates whether the
-%   constriction/dilation of a myograph vessel travels ALONG the vessel
-%   (the Y / row axis) within one interval, and if so how fast and in which
-%   direction.  The vessel is straight and near-vertical, so the row index is a
-%   proxy for distance along the vessel and a travelling wave shows up as a lag
-%   of each location's diameter fluctuation relative to the others.
+%   prop = getMyographPropagation(s,sig,time,mask,valid) estimates whether the
+%   constriction/dilation of a myograph vessel travels ALONG the vessel (the Y /
+%   row axis), and if so how fast and in which direction.  The vessel is straight
+%   and near-vertical, so the row index is a proxy for distance along the vessel
+%   and a travelling wave shows up as a lag of each location's diameter
+%   fluctuation relative to the others.
 %
-%   METHOD.  The reported speed/direction come from the LAG AT MAXIMUM
-%   CROSS-CORRELATION of each location's (detrended, drift-removed) diameter
-%   against a robust reference built from the well-correlated locations,
-%   regressed on the row index (slope -> 1/speed, sign -> direction).  A wavelet-
-%   free phase-delay estimate and an event-onset estimate are computed as
-%   independent cross-checks.
+%   METHOD - one estimator, the LAG AT MAXIMUM CROSS-CORRELATION.  Each location's
+%   drift-removed diameter is cross-correlated against a robust reference built
+%   from the well-correlated locations; the lag at the correlation maximum is
+%   regressed on the row index (slope -> 1/speed, sign -> direction).  There is no
+%   phase-delay estimate, no event-onset estimate and no vasomotion input: the
+%   speed comes from the diameter and nothing else.
 %
 %   The result is NOT thresholded: a speed is ALWAYS returned, accompanied by
 %   EXPLAINABLE confidence metrics (median cross-correlation between locations,
-%   the R^2 and p of the lag-vs-row fit, the fraction of locations used, the
-%   agreement between methods, and whether the total lag is below the sampling
-%   resolution) plus a one-line summary, so the user decides whether to trust it
-%   ("a propagation speed of X was detected with confidence C").
+%   the R^2 and p of the lag-vs-row fit, the fraction of locations used, and
+%   whether the total lag is below the sampling resolution) plus a plain-language
+%   summary, so the user decides whether to trust it.  The guard against
+%   over-claiming is the surrogate: shuffling the row labels destroys the lag
+%   ordering, R^2 collapses and the confidence goes to zero.
 %
 %   INPUTS
 %     s        parameter struct (defaults filled if missing/empty):
 %                • vFR           vasomotion band [lo hi] Hz (dominant-freq search)
 %                • pixelSize     µm per px; [] or 0 -> report in px (px/s)
 %                • rowRange      [lo hi] rows that were measured (others excluded)
-%                • propSignal    'diameter' (default; lag on the drift-removed
-%                                diameter) | 'rData' (band-limited reconstruction)
-%                • detrendSec    per-row high-pass window for 'diameter', s
+%                • detrendSec    per-row high-pass window removing bulk drift, s
 %                • propMinMeasured min per-row measured fraction to keep a row (mask)
 %                • propMinCoh    min |correlation| to accept a location into the fit
 %                • propArtifactK MAD factor rejecting constant/erratic artifact rows
@@ -37,28 +36,31 @@
 %                • propNShuffle  surrogate iterations for the p-value
 %                • propResolutionSamples total lag below this many samples is flagged
 %                                as below the sampling resolution (magnitude unreliable)
-%     interval struct with fields time, diameter, mask (optional), vasomotion (optional).
+%     sig      [nT x nY] diameter of ONE measure, one column per location along Y.
+%     time     [nT x 1] frame times, s.
+%     mask     [nT x nY] 1 = measured, 0 = interpolated, or [] (all measured).
+%     valid    [nT x 1] false = a wall was off-FOV that frame, or [] (all valid).
+%              Off-FOV frames carry an edge-clamped diameter, so they are removed
+%              and interpolated over before anything else happens.
 %
 %   OUTPUT
 %     prop  struct with fields
 %             • method           'max-correlation-lag'
-%             • signalSource     'diameter' | 'rData'
 %             • speed / speedUnit  propagation speed (px/s or µm/s) - ALWAYS finite
 %             • direction        'upward' | 'downward'  (increasing row = downward)
 %             • speedCI          95% CI of the speed (upper may be Inf near the floor)
 %             • R2 / pValue      lag-vs-row fit quality and surrogate significance
 %             • confidence       0..1 overall confidence (explained by .metrics/.confidenceText)
 %             • confidenceLevel  'low' | 'medium' | 'high' (a label, NOT a gate)
-%             • confidenceText   one-line human-readable justification
+%             • confidenceText   one plain sentence the user can act on
 %             • metrics          struct: medianCorr, R2, pValue, rowFraction,
-%                                totalLagSamples, belowResolution, methodAgreement,
-%                                speedRatioLagPhase, vasomotionBandRatio, nRows
+%                                totalLagSamples, belowResolution, nRows
 %             • belowResolution  true if the total lag is < propResolutionSamples
-%             • phase / event    cross-check estimates (speed/direction)
+%             • domFreq          dominant frequency used to size the lag search, Hz
 %             • qualityFlags     cellstr diagnostics
 %             • lagByRow         [row lag_s] used for the fit (diagnostics)
 %             • diag             struct with map/fit data for Explore
-%           An empty/too-weak interval returns a low-confidence result with the
+%           An empty/too-weak signal returns a low-confidence result with the
 %           reason in confidenceText, never an error.
 %
 %   Direction convention: increasing row index = downward in the image.
@@ -69,61 +71,81 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 21-July-2026
+% Last revision: 01-August-2026
 
-function prop = getMyographPropagation(s,interval)
+function prop = getMyographPropagation(s,sig,time,mask,valid)
+
+if nargin<4, mask=[]; end
+if nargin<5, valid=[]; end
 
 % ---- default parameters (filled if missing or empty) ----
-def.vFR=[0.05 0.25];       def.pixelSize=[];         def.rowRange=[1 Inf];
-def.propSignal='diameter'; def.detrendSec=30;        def.propMethods={'lag','event'};
-def.propMinMeasured=0.5;   def.propMinCoh=0.3;        def.propArtifactK=4;
-def.propMaxLagFrac=0.5;    def.propMinRows=20;        def.propNShuffle=200;
-def.propResolutionSamples=1.0;
+def.vFR=[0.05 0.25];       def.pixelSize=[];          def.rowRange=[1 Inf];
+def.detrendSec=30;         def.propMinMeasured=0.5;   def.propMinCoh=0.3;
+def.propArtifactK=4;       def.propMaxLagFrac=0.5;    def.propMinRows=20;
+def.propNShuffle=200;      def.propResolutionSamples=1.0;
 fnd=fieldnames(def);
 for i=1:numel(fnd)
     if ~isfield(s,fnd{i}) || isempty(s.(fnd{i})), s.(fnd{i})=def.(fnd{i}); end
 end
-methods=s.propMethods; if ischar(methods), methods={methods}; end
 wS=warning('off','stats:statrobustfit:IterationLimit'); wC=onCleanup(@()warning(wS)); %#ok<NASGU> (benign, on many permutations)
 
-% ---- pick the input signal and its time base ----
-[sig,tt,src]=selectSignal(s,interval);
-prop=emptyProp(src);
-if isempty(sig) || size(sig,2)<3
-    prop.qualityFlags={'no-signal'}; prop.confidenceText='no usable diameter signal'; return;
+% ---- the signal: the drift-removed diameter, off-FOV frames interpolated over ----
+% This used to take the whole interval struct.  Fail loudly rather than reporting
+% "no usable signal" if an un-migrated caller still hands one over.
+if ~isempty(sig) && ~(isnumeric(sig)||islogical(sig))
+    error('getMyographPropagation:signalNotArray', ...
+        ['getMyographPropagation now takes plain arrays: ' ...
+         'prop = getMyographPropagation(s,sig,time,mask,valid), with sig [nT x nY] ' ...
+         'for ONE diameter measure.']);
 end
-tt=tt(:); nT=size(sig,1); nY=size(sig,2); fs=1/mean(diff(tt),'omitnan');
+prop=emptyProp();
+if isempty(sig) || size(sig,2)<3
+    prop.qualityFlags={'no-signal'}; prop.confidenceText='No usable diameter signal.'; return;
+end
+sig=double(sig); tt=double(time(:));
+% off-FOV frames (a wall dilated out of view) carry a garbage edge-clamped diameter -
+% exclude them: NaN then interpolate in time so the series stays uniform for the
+% cross-correlation (vasomotion is slow, so short gaps fill safely).
+if ~isempty(valid)
+    inv=~logical(valid(:));
+    if any(inv) && ~all(inv)
+        sig(inv,:)=NaN;
+        sig=fillmissing(sig,'linear',1,'EndValues','nearest');
+    end
+end
+nT=size(sig,1); nY=size(sig,2); fs=1/mean(diff(tt),'omitnan');
 
 % ---- per-location fluctuation + location-quality mask ----
-[Xf,keep,rowStd]=rowFluctuations(s,sig,src,fs,interval,nT,nY);
+[Xf,keep,rowStd]=rowFluctuations(s,sig,fs,mask,nY);
 prop.diag=struct('Xf',Xf,'tt',tt,'y',(1:nY)','rowStd',rowStd(:),'keep0',keep(:));
 dbg = isfield(s,'propDebug') && ~isempty(s.propDebug) && s.propDebug;
 usable0=nnz(keep);
-if dbg, fprintf('[prop] src=%s nT=%d nY=%d keep0=%d maskMed=%.2f\n',src,nT,nY,usable0,maskMed(interval,nY)); end
+if dbg, fprintf('[prop] nT=%d nY=%d keep0=%d maskMed=%.2f\n',nT,nY,usable0,maskMed(mask,nY)); end
 if usable0<s.propMinRows
     prop.nRows=usable0; prop.qualityFlags={'too-few-rows'};
-    prop.confidenceText='too few measured locations'; return;
+    prop.confidenceText='Too few measured locations along the vessel to look for propagation.'; return;
 end
 
-% ---- dominant vasomotion frequency + robust reference ----
-domFreq=dominantFreq(s,interval,Xf,keep,fs);
-f0=refineF0(mean(Xf(:,keep),2),fs,s.vFR,domFreq); prop.domFreq=f0; y=(1:nY)'; w=2*pi*f0;
-[ref,keep]=robustReference(Xf,keep,rowStd);
+% ---- dominant oscillation frequency (sizes the lag search) + robust reference ----
+ref0=mean(Xf(:,keep),2);
+domFreq=dominantFreqFromRef(ref0-mean(ref0),fs,s.vFR);
+f0=refineF0(ref0,fs,s.vFR,domFreq); prop.domFreq=f0; y=(1:nY)';
+[ref,keep]=robustReference(Xf,keep);
 if dbg, fprintf('[prop] after reference: keep=%d (f0=%.3f)\n',nnz(keep),f0); end
 if nnz(keep)<s.propMinRows
     prop.nRows=nnz(keep); prop.qualityFlags={'too-few-coherent-rows'};
-    prop.confidenceText='locations do not correlate (no coherent oscillation)'; return;
+    prop.confidenceText='The locations do not correlate with each other, so there is no coherent oscillation to track.'; return;
 end
 maxLag=max(2,round(s.propMaxLagFrac/max(f0,eps)*fs));
 
-% ---- PRIMARY: lag at maximum cross-correlation of each location vs the reference ----
+% ---- the estimator: lag at maximum cross-correlation of each location vs the reference ----
 [lag,coh]=rowLags(Xf,ref,keep,maxLag,fs);
 uidx=find(keep & isfinite(lag) & coh>s.propMinCoh & abs(lag)<(maxLag/fs)*0.98); uidx=uidx(:);
 prop.nRows=numel(uidx);
 if dbg, fprintf('[prop] final use=%d medianCorr=%.2f\n',numel(uidx),median(coh(uidx))); end
 if prop.nRows<s.propMinRows
     prop.qualityFlags={'too-few-coherent-rows'};
-    prop.confidenceText='too few well-correlated locations'; return;
+    prop.confidenceText='Too few well-correlated locations to fit a propagation speed.'; return;
 end
 yv=y(uidx); lv=lag(uidx); lv=lv(:);
 [bL,stL]=robustfit(yv,lv); slope=bL(2); se=stL.se(2);
@@ -135,94 +157,41 @@ pVal=permP(yv,lv,slope,s.propNShuffle);
 speedCI=speedCIfromSlope(slope,se,s.pixelSize);
 direction=ternary(slope<0,'downward','upward');
 
-% ---- CROSS-CHECK 1: phase-delay of the dominant oscillation ----
-[phi,amp]=rowPhaseDelay(Xf,keep,tt,f0);
-speedPh=NaN; dirPh='';
-pu=intersect(uidx,find(isfinite(phi(:))));
-if numel(pu)>=s.propMinRows
-    [ys,o]=sort(y(pu)); pv=phi(pu); phu=unwrap(pv(o(:)));
-    bP=robustfit(ys,phu); slopeP=bP(2)/w;
-    speedPh=toSpeed(slopeP,s.pixelSize); dirPh=ternary(slopeP<0,'downward','upward');
-end
-
 % ---- explainable confidence metrics (NO thresholding of the speed) ----
 medianCorr=median(coh(uidx));
 rowFraction=prop.nRows/max(usable0,1);
 belowResolution=totalLagSamples<s.propResolutionSamples;
-[methodAgree,speedRatio]=agreeLagPhase(direction,dirPh,speed,speedPh);
-bandR=vasoBandRatio(interval);
-[conf,level,txt]=confidenceReport(medianCorr,R2,pVal,rowFraction,methodAgree,speedRatio,belowResolution,bandR);
+[conf,level,txt]=confidenceReport(medianCorr,R2,pVal,rowFraction,belowResolution);
 
-prop.method='max-correlation-lag'; prop.signalSource=src;
+prop.method='max-correlation-lag';
 prop.speed=speed; prop.speedUnit=unit; prop.direction=direction; prop.speedCI=speedCI;
 prop.slope=slope; prop.R2=R2; prop.pValue=pVal; prop.lagByRow=[yv, lv];
 prop.confidence=conf; prop.confidenceLevel=level; prop.confidenceText=txt;
 prop.belowResolution=belowResolution;
 prop.metrics=struct('medianCorr',medianCorr,'R2',R2,'pValue',pVal,'rowFraction',rowFraction, ...
-    'totalLagSamples',totalLagSamples,'belowResolution',belowResolution,'methodAgreement',methodAgree, ...
-    'speedRatioLagPhase',speedRatio,'vasomotionBandRatio',bandR,'nRows',prop.nRows);
-prop.phase=struct('speed',speedPh,'direction',dirPh,'unit',unit);
+    'totalLagSamples',totalLagSamples,'belowResolution',belowResolution,'nRows',prop.nRows);
 prop.diag=struct('ref',ref,'tt',tt,'y',y,'uidx',uidx,'lag',lag(:),'coh',coh(:), ...
-    'phi',phi(:),'amp',amp(:),'Xf',Xf,'f0',f0,'fitLag',[bL(1) bL(2)],'maxLag',maxLag);
-
-% ---- CROSS-CHECK 2: event-onset regression ----
-if ismember('event',methods)
-    prop.event=eventEstimate(s,interval,Xf,ref,keep,fs,y);
-end
+    'Xf',Xf,'f0',f0,'fitLag',[bL(1) bL(2)],'maxLag',maxLag);
 
 % ---- informational quality flags (do not change the reported speed) ----
 if belowResolution,           prop.qualityFlags=[prop.qualityFlags,{'lag-below-resolution'}]; end
 if R2<0.15,                   prop.qualityFlags=[prop.qualityFlags,{'low-R2'}]; end
 if medianCorr<0.4,            prop.qualityFlags=[prop.qualityFlags,{'weak-location-correlation'}]; end
-if isfinite(bandR)&&bandR<3,  prop.qualityFlags=[prop.qualityFlags,{'weak-vasomotion'}]; end
 end
 
 % =====================================================================
-function [sig,tt,src]=selectSignal(s,interval)
-%SELECTSIGNAL  choose the diameter (default, for the lag method) or rData
-%   rData is the band-limited reconstruction, stored at
-%   vasomotion.timeVectors.VB.rData on the vasomotion.timeWT time base (present only
-%   when 'reconstruction' was requested in s.segVsmReturn).
-useR = strcmpi(s.propSignal,'rData') && isfield(interval,'vasomotion') && ~isempty(interval.vasomotion) ...
-    && isstruct(interval.vasomotion) && isfield(interval.vasomotion,'timeVectors') ...
-    && isfield(interval.vasomotion.timeVectors,'VB') && isfield(interval.vasomotion.timeVectors.VB,'rData') ...
-    && ~isempty(interval.vasomotion.timeVectors.VB.rData);
-if useR
-    sig=double(interval.vasomotion.timeVectors.VB.rData); tt=double(interval.vasomotion.timeWT(:)); src='rData';
-elseif isfield(interval,'diameter') && ~isempty(interval.diameter)
-    sig=double(interval.diameter); tt=double(interval.time(:)); src='diameter';
-    % off-FOV frames (a wall dilated out of view) carry a garbage edge-clamped
-    % diameter - exclude them: NaN then interpolate in time so the series stays
-    % uniform for the lag/cross-correlation (vasomotion is slow, so short gaps fill safely).
-    if isfield(interval,'valid') && ~isempty(interval.valid)
-        inv=~logical(interval.valid(:));
-        if any(inv) && ~all(inv)
-            sig(inv,:)=NaN;
-            sig=fillmissing(sig,'linear',1,'EndValues','nearest');
-        end
-    end
-else
-    sig=[]; tt=[]; src='';
-end
-end
-
-% =====================================================================
-function [Xf,keep,rowStd]=rowFluctuations(s,sig,src,fs,interval,nT,nY)
+function [Xf,keep,rowStd]=rowFluctuations(s,sig,fs,mask,nY)
 %ROWFLUCTUATIONS  per-location drift-removed fluctuation + initial quality mask
-if strcmp(src,'rData')
-    Xf=sig-mean(sig,1,'omitnan');                 % rData is already band-limited
-else
-    win=max(3,round(s.detrendSec*fs));            % high-pass removes bulk drift, keeps vasomotion
-    trend=movmean(sig,win,1,'omitnan','Endpoints','shrink');
-    Xf=(sig-trend)./max(median(sig,1,'omitnan'),eps);
-end
+win=max(3,round(s.detrendSec*fs));                % high-pass removes bulk drift, keeps vasomotion
+trend=movmean(sig,win,1,'omitnan','Endpoints','shrink');
+Xf=(sig-trend)./max(median(sig,1,'omitnan'),eps);
 Xf(~isfinite(Xf))=0;
 rowStd=std(Xf,0,1);
 keep=true(1,nY);
 r0=max(1,round(s.rowRange(1))); r1=min(nY,round(s.rowRange(2)));
 keep([1:r0-1, r1+1:nY])=false;
-if isfield(interval,'mask') && ~isempty(interval.mask) && size(interval.mask,2)==nY
-    keep=keep & (mean(double(interval.mask),1)>=s.propMinMeasured);
+if ~isempty(mask) && size(mask,2)==nY
+    keep=keep & (mean(double(mask),1)>=s.propMinMeasured);
 end
 med=median(rowStd(keep)); madv=mad(rowStd(keep),1)+eps;   % drop constant/erratic (artifact) rows
 keep=keep & rowStd> max(0.15*med, med-s.propArtifactK*1.4826*madv) ...
@@ -230,7 +199,7 @@ keep=keep & rowStd> max(0.15*med, med-s.propArtifactK*1.4826*madv) ...
 end
 
 % =====================================================================
-function [ref,keep]=robustReference(Xf,keep,rowStd) %#ok<INUSD>
+function [ref,keep]=robustReference(Xf,keep)
 %ROBUSTREFERENCE  reference waveform from the coherent, clean locations (two-pass)
 ref0=mean(Xf(:,keep),2);
 c=corrTo(Xf,ref0);
@@ -279,16 +248,6 @@ end
 end
 
 % =====================================================================
-function [phi,amp]=rowPhaseDelay(Xf,keep,tt,f0)
-%ROWPHASEDELAY  phase & amplitude of the dominant oscillation per location (harmonic fit)
-tt=tt(:); w=2*pi*f0; C=[cos(w*tt) sin(w*tt)]; M=(C'*C)\C';
-nY=size(Xf,2); phi=nan(1,nY); amp=zeros(1,nY);
-for c=find(keep)
-    co=M*Xf(:,c); phi(c)=atan2(-co(1),co(2)); amp(c)=hypot(co(1),co(2));
-end
-end
-
-% =====================================================================
 function f0=refineF0(x,fs,vFR,f0guess)
 %REFINEF0  dominant frequency in the band, parabolic-interpolated to sub-bin
 x=x-mean(x); n=numel(x); P=abs(fft(x)).^2; fax=(0:n-1)'*(fs/n);
@@ -303,6 +262,15 @@ else
     f0=fax(kk);
 end
 if ~isfinite(f0) || f0<vFR(1) || f0>vFR(2), f0=f0guess; end
+end
+
+% =====================================================================
+function f0=dominantFreqFromRef(x,fs,vFR)
+%DOMINANTFREQFROMREF  strongest in-band FFT bin of the mean fluctuation
+if nargin<3, vFR=[0.03 0.3]; end
+n=numel(x); P=abs(fft(x)).^2; fax=(0:n-1)'*(fs/n);
+in=fax>=vFR(1)&fax<=vFR(2); P(~in)=0; [~,im]=max(P); f0=fax(im);
+if isempty(f0)||f0<=0, f0=mean(vFR); end
 end
 
 % =====================================================================
@@ -322,94 +290,11 @@ ci=[sLo sHi];
 end
 
 % =====================================================================
-function [agree,ratio]=agreeLagPhase(dirL,dirP,spL,spP)
-if isempty(dirP)||~isfinite(spP), agree=NaN; ratio=NaN; return; end
-agree=double(strcmp(dirL,dirP));
-ratio=max(spL,spP)/max(min(spL,spP),eps);
-end
-
-% =====================================================================
-function r=vasoBandRatio(interval)
-%VASOBANDRATIO  VB-vs-CB activity ratio - the retired band-ratio marker rebuilt inline
-%   (redesign decision 6): median band-mean amplitude in the vasomotion band divided by
-%   the same in the control band.  A ratio < 3 flags weak vasomotion (see caller).
-r=NaN;
-if ~(isfield(interval,'vasomotion')&&isstruct(interval.vasomotion)), return; end
-v=interval.vasomotion;
-if ~(isfield(v,'scalars')&&isfield(v.scalars,'VB')&&isfield(v.scalars,'CB')), return; end
-r = median(double(v.scalars.VB.ampMean),'omitnan') / ...
-    median(double(v.scalars.CB.ampMean),'omitnan');
-end
-
-% =====================================================================
-function [conf,level,txt]=confidenceReport(medianCorr,R2,pVal,rowFraction,methodAgree,speedRatio,belowRes,bandR)
-%CONFIDENCEREPORT  transparent 0..1 confidence from its explainable components
-%   Direction is usually robust; the speed MAGNITUDE is the uncertain part, so a
-%   large lag-vs-phase speed ratio lowers the confidence and is called out.
-corrScore = max(0,min(1,medianCorr));
-fitScore  = max(0,min(1,R2/0.50));                         % R2 (lag ordering) is the propagation-specific signal
-if ~isfinite(pVal), sigScore=0.5; elseif pVal<0.01, sigScore=1; elseif pVal<0.05, sigScore=0.6; else, sigScore=0.15; end
-if isnan(methodAgree)                                      % no phase cross-check available
-    agreeScore=0.7;
-elseif methodAgree<=0                                      % directions disagree
-    agreeScore=0.3;
-elseif ~isfinite(speedRatio) || speedRatio<1.5            % agree, magnitudes close
-    agreeScore=1;
-elseif speedRatio<3
-    agreeScore=0.75;                                       % agree on direction, magnitude loose
-else
-    agreeScore=0.5;                                        % agree on direction, magnitude uncertain
-end
-rowScore  = max(0.3,min(1,rowFraction));
-conf = geomean([fitScore fitScore corrScore sigScore agreeScore rowScore]);  % lag-ordering (R2) weighted x2
-if belowRes, conf=min(conf*0.5,0.30); end     % below the sampling resolution -> speed untrustworthy (low)
-if conf>=0.6, level='high'; elseif conf>=0.35, level='medium'; else, level='low'; end
-% ---- plain-language justification, naming the weak factors ----
-bits={sprintf('corr=%.2f',medianCorr), sprintf('R2=%.2f',R2), sprintf('p=%.3f',pVal)};
-if ~isnan(methodAgree), bits{end+1}=ternary(methodAgree>0,'direction agrees','direction DISAGREES'); end
-notes={};
-if medianCorr<0.4, notes{end+1}='locations weakly correlated'; end
-if R2<0.15, notes{end+1}='lags poorly ordered along Y'; end
-if isfinite(pVal)&&pVal>=0.05, notes{end+1}='not significant'; end
-if isfinite(speedRatio)&&speedRatio>=2, notes{end+1}=sprintf('speed magnitude uncertain (lag/phase differ %.1fx)',speedRatio); end
-if belowRes, notes{end+1}='total lag below sampling resolution (magnitude unreliable)'; end
-if isfinite(bandR)&&bandR<3, notes{end+1}='weak vasomotion'; end
-txt=sprintf('%s confidence (%s)',upper1(level),strjoin(bits,', '));
-if ~isempty(notes), txt=[txt ' - ' strjoin(notes,'; ')]; end
-end
-
-% =====================================================================
-function ev=eventEstimate(s,interval,Xf,ref,keep,fs,y) %#ok<INUSL>
-%EVENTESTIMATE  independent speed from per-location constriction-onset times
-ev=struct('speed',NaN,'direction','','nEvents',0,'speedUnit','px/s');
-r=-(ref-mean(ref)); thr=std(r);
-f0=dominantFreqFromRef(-r,fs);
-minSep=round(0.5/max(f0,0.03)*fs); w=max(3,minSep);
-[~,loc]=localMaxima(r,thr,minSep);
-if numel(loc)<2, return; end
-idx=find(keep); speeds=[]; dirs=[];
-for e=1:numel(loc)
-    lo=max(1,loc(e)-w); hi=min(size(Xf,1),loc(e)+w); tOn=nan(1,numel(idx));
-    for k=1:numel(idx)
-        seg=-(Xf(lo:hi,idx(k))-mean(Xf(lo:hi,idx(k)))); [~,ip]=max(seg); tOn(k)=(lo+ip-1)/fs;
-    end
-    good=isfinite(tOn);
-    if nnz(good)>=s.propMinRows
-        pp=polyfit(y(idx(good)),tOn(good)',1);
-        if abs(pp(1))>eps, speeds(end+1)=1/abs(pp(1)); dirs(end+1)=sign(pp(1)); end %#ok<AGROW>
-    end
-end
-ev.nEvents=numel(speeds);
-if ev.nEvents>=1
-    sp=median(speeds); ev.speed=sp; ev.direction=ternary(sign(median(dirs))<0,'downward','upward');
-    if ~isempty(s.pixelSize)&&s.pixelSize>0, ev.speed=sp*s.pixelSize; ev.speedUnit='µm/s'; end
-    ev.speedDist=speeds;
-end
-end
-
-% =====================================================================
 function pVal=permP(yv,lag,slope,nsh)
 %PERMP  permutation null for the lag-vs-row slope (row-label shuffle)
+%   THE over-claiming guard: shuffling the row labels keeps every waveform and every
+%   lag but destroys their ORDER along the vessel, which is the only thing a
+%   travelling wave adds.  A real wave survives it; noise does not.
 if nsh<=0 || numel(yv)<10, pVal=NaN; return; end
 yv=yv(:); lag=lag(:); n=numel(yv); sl=nan(nsh,1);
 for is=1:nsh
@@ -419,53 +304,65 @@ pVal=(1+sum(abs(sl)>=abs(slope)))/(nsh+1);
 end
 
 % =====================================================================
-function domFreq=dominantFreq(s,interval,Xf,keep,fs)
-if isfield(interval,'vasomotion') && isstruct(interval.vasomotion) ...
-        && isfield(interval.vasomotion,'fVectors') && isfield(interval.vasomotion.fVectors,'ampMean') ...
-        && ~isempty(interval.vasomotion.fVectors.ampMean)
-    domFreq=dominantFromSpct(interval.vasomotion,s); return;
+function [conf,level,txt]=confidenceReport(medianCorr,R2,pVal,rowFraction,belowRes)
+%CONFIDENCEREPORT  transparent 0..1 confidence from its explainable components
+%   Every component is something the user can see in the diagnostics: how well the
+%   locations oscillate together, how cleanly their lags line up along the vessel,
+%   how unlikely that ordering is by chance, and how much of the vessel contributed.
+%   The lag ordering (R2) is the propagation-specific signal, so it counts twice.
+corrScore = max(0,min(1,medianCorr));
+fitScore  = max(0,min(1,R2/0.50));
+if ~isfinite(pVal), sigScore=0.5; elseif pVal<0.01, sigScore=1; elseif pVal<0.05, sigScore=0.6; else, sigScore=0.15; end
+rowScore  = max(0.3,min(1,rowFraction));
+conf = geomean([fitScore fitScore corrScore sigScore rowScore]);
+if belowRes, conf=min(conf*0.5,0.30); end     % below the sampling resolution -> speed untrustworthy (low)
+if conf>=0.6, level='high'; elseif conf>=0.35, level='medium'; else, level='low'; end
+
+% ---- one plain sentence, naming what carried or spoiled the estimate ----
+if R2>=0.50
+    fitTxt=sprintf('the lags line up cleanly along the vessel (R2=%.2f)',R2);
+elseif R2>=0.15
+    fitTxt=sprintf('the lags increase along the vessel with some scatter (R2=%.2f)',R2);
+else
+    fitTxt=sprintf('the lags are poorly ordered along the vessel (R2=%.2f)',R2);
 end
-ref=mean(Xf(:,keep),2); domFreq=dominantFreqFromRef(ref-mean(ref),fs,s.vFR);
+if medianCorr>=0.4
+    corrTxt=sprintf('the locations oscillate together (correlation %.2f)',medianCorr);
+else
+    corrTxt=sprintf('the locations correlate only weakly (correlation %.2f)',medianCorr);
 end
-function f0=dominantFromSpct(V,s)
-sm=mean(double(V.fVectors.ampMean),1,'omitnan'); f=double(V.f(:));
-in=f>=s.vFR(1)&f<=s.vFR(2); [~,im]=max(sm(in)); ff=f(in); f0=ff(im);
-if isempty(f0)||~isfinite(f0), f0=mean(s.vFR); end
+if ~isfinite(pVal)
+    sigTxt='and no significance test was run';
+elseif pVal<0.05
+    sigTxt=sprintf('and that ordering is unlikely by chance (p=%.3f)',pVal);
+else
+    sigTxt=sprintf('and that ordering is no better than chance (p=%.3f)',pVal);
 end
-function f0=dominantFreqFromRef(x,fs,vFR)
-if nargin<3, vFR=[0.03 0.3]; end
-n=numel(x); P=abs(fft(x)).^2; fax=(0:n-1)'*(fs/n);
-in=fax>=vFR(1)&fax<=vFR(2); P(~in)=0; [~,im]=max(P); f0=fax(im);
-if isempty(f0)||f0<=0, f0=mean(vFR); end
+txt=sprintf('%s confidence: %s, %s %s',upper1(level),fitTxt,corrTxt,sigTxt);
+if belowRes
+    txt=[txt '; the whole vessel lags by less than one frame, so the direction may hold but the speed does not'];
+end
+if rowFraction<0.5
+    txt=[txt sprintf('; only %.0f%% of the measured locations could be used',100*rowFraction)];
+end
+txt=[txt '.'];
 end
 
 % =====================================================================
-function prop=emptyProp(src)
-prop=struct('method','max-correlation-lag','signalSource',src,'domFreq',NaN, ...
+function prop=emptyProp()
+prop=struct('method','max-correlation-lag','domFreq',NaN, ...
     'speed',NaN,'speedUnit','px/s','direction','','speedCI',[NaN NaN],'slope',NaN, ...
     'R2',NaN,'pValue',NaN,'nRows',0,'confidence',0,'confidenceLevel','low', ...
     'confidenceText','','belowResolution',true,'metrics',struct(), ...
-    'phase',struct('speed',NaN,'direction',''),'event',struct('speed',NaN,'nEvents',0), ...
     'qualityFlags',{{}},'lagByRow',[],'diag',struct());
 end
 
 % =====================================================================
-function m=maskMed(interval,nY)
+function m=maskMed(mask,nY)
 m=NaN;
-if isfield(interval,'mask')&&~isempty(interval.mask)&&size(interval.mask,2)==nY
-    m=median(mean(double(interval.mask),1));
+if ~isempty(mask) && size(mask,2)==nY
+    m=median(mean(double(mask),1));
 end
-end
-function [mx,loc]=localMaxima(x,thr,minSep)
-%LOCALMAXIMA  simple peak picker (avoids Signal Processing Toolbox findpeaks)
-x=x(:); isPk=[false; x(2:end-1)>x(1:end-2) & x(2:end-1)>x(3:end); false] & x>thr;
-loc=find(isPk); mx=x(loc); if isempty(loc), return; end
-[~,ord]=sort(mx,'descend'); loc=loc(ord); keepp=true(size(loc));
-for i=1:numel(loc)
-    if ~keepp(i), continue; end
-    keepp(abs(loc-loc(i))<minSep & (1:numel(loc))'>i)=false;
-end
-loc=sort(loc(keepp)); mx=x(loc);
 end
 function s=upper1(s), if ~isempty(s), s(1)=upper(s(1)); end, end
 function o=ternary(c,a,b), if c, o=a; else, o=b; end, end

@@ -53,7 +53,7 @@
 %        reportFile(rep,fidx,fNames{fidx});
 %        ...
 %        reportWriting(rep);
-%        save(dName,'source','-v7.3');
+%        save(dName,'source','-v7.3','-nocompression');
 %        reportSaved(rep);
 %    end
 %    reportClose(rep);

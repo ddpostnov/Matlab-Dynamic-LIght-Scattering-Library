@@ -14,6 +14,10 @@
 %   'KeepOpen'    - Boolean (true/false). If true, the file remains open after
 %                   reading. Required for batch/stream processing. Default is false.
 %   'FramesToSkip'- Number of frames to skip at the beginning of the recording.
+%                   Must be a non-negative whole number: the seek is a byte offset
+%                   computed from it, so a negative or fractional value would land
+%                   inside the header or between a timestamp and its frame and return
+%                   a misaligned block. Both are rejected.
 %                   Default is 0. Ignored (triggers warning) if 'Stream' is provided.
 %   'FramesToRead'- Number of frames to read.
 %                   - In "New File" mode: Default is all remaining frames.
@@ -42,7 +46,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function [data,timeStamps,s]=readRLS(varargin)
@@ -78,6 +82,17 @@ elseif nargin>=1 && (ischar(varargin{1}) || isstring(varargin{1}))
     s.framesToRead = p.Results.FramesToRead;
     s.keepOpen = p.Results.KeepOpen;
 
+    %A negative or fractional skip is caught HERE rather than in each caller.  The seek
+    %below is a byte offset computed from it, so a negative one lands inside the 30 kB
+    %header and a fractional one lands between a timestamp and its frame; either way the
+    %read loop finds bytes there and returns a block that is not the block that was asked
+    %for - no error, no clamp, just different data.  Any caller that derives a skip from a
+    %padded or centred window can produce one at the first frame of a recording.
+    if s.framesToSkip<0 || mod(s.framesToSkip,1)~=0
+        error('readRLS:BadFramesToSkip', ...
+            'FramesToSkip must be a non-negative whole number of frames; got %g.', ...
+            s.framesToSkip);
+    end
 
     s.fileName=fileName;
     s.fId = fopen(s.fileName, 'r');

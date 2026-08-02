@@ -84,9 +84,9 @@ for i=1:1:size(fNames,1)
     s.fps=fps; s.fileName=fName;
     settings=struct(); settings.getNormalizedG2=s;
     base=regexprep(fName,'\.mraw$','','ignorecase');
-    save([base '_g_d.mat'],'source','-v7.3');   %heavy data
-    save([base '_g_r.mat'],'results','-v7.3');  %maps
-    save([base '_g_s.mat'],'settings','-v7.3'); %settings
+    save([base '_g_d.mat'],'source','-v7.3','-nocompression');   %heavy data
+    save([base '_g_r.mat'],'results','-v7.3','-nocompression');  %maps
+    save([base '_g_s.mat'],'settings','-v7.3','-nocompression'); %settings
 end
 disp('STEP 1 complete');
 
@@ -148,8 +148,8 @@ for i=1:1:size(fNames,1)
     settings.fitDLSI=s;
 
     %save results (g_r) and settings (g_s); the g2 stays in g_d and is not rewritten
-    save(rName,'results','-v7.3');
-    save(sName,'settings','-v7.3');
+    save(rName,'results','-v7.3','-nocompression');
+    save(sName,'settings','-v7.3','-nocompression');
 end
 disp('STEP 2 complete');
 

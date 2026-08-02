@@ -15,7 +15,8 @@
 %     spectra     - long: file, interval, Y, f, ampMean, ampStd (decimated in f/Y)
 %     ampPctSpectra - file, interval, f, one column per pctCenters bin - the VB
 %                   percentile-resolved spectra fVectors.VB.ampMeanPct averaged over Y (decimated in f)
-%     diameter    - median-over-Y (and optionally per-Y) diameter time course (decimated in t)
+%     diameter    - median-over-Y (and optionally per-Y) diameter time course (decimated in t),
+%                   for the default analysed measure (wall centre) of the three measured
 %
 %   The 1,048,576 x 16,384 sheet limits are respected by decimating the spectra
 %   (in f) and the diameter (in t), and the decimation factor is written into the
@@ -25,7 +26,8 @@
 %   opts (name/value or struct): fDecim (auto), tDecim (auto), perY (false),
 %   maxRows (1e6).
 %
-%   DEPENDS ON  loadMyographResults; base MATLAB writetable/writecell.
+%   DEPENDS ON  loadMyographResults, myographMeasureIndex; base MATLAB
+%   writetable/writecell.
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -238,19 +240,30 @@ x=double(x(:)'); y=nan(1,n); m=min(n,numel(x)); y(1:m)=x(1:m);
 end
 
 % =====================================================================
+function D=analysedDiameter(ivk)
+%ANALYSEDDIAMETER  the wall-centre diameter of one interval as [frames x nY]
+%   getMyographDiameter measures outer / wall centre / lumen and stacks them in the
+%   3rd dimension; the exported trace is the default analysed one.  A result written
+%   before the three-measure change is already [frames x nY] and comes back unchanged.
+if isfield(ivk,'measures'), meas=ivk.measures; else, meas={}; end
+k=min(myographMeasureIndex('',meas),size(ivk.diameter,3));
+D=double(ivk.diameter(:,:,k));
+end
+
+% =====================================================================
 function writePropagation(recs,xlsx)
 C={}; C(1,:)={'file','interval','method','speed','unit','direction','speedCI_lo','speedCI_hi', ...
-    'confidence','confidenceLevel','medianCorr','R2','pValue','methodAgreement','totalLagSamples', ...
-    'belowResolution','domFreq','nRows','phase_speed','flags','confidenceText'};
+    'confidence','confidenceLevel','medianCorr','R2','pValue','rowFraction','totalLagSamples', ...
+    'belowResolution','domFreq','nRows','flags','confidenceText'};
 for r=1:numel(recs)
     iv=recs(r).intervals;
     for k=1:numel(iv)
         p=iv(k).prop; if isempty(p)||~isstruct(p), continue; end
-        m=getf(p,'metrics'); ph=getf(p,'phase');
+        m=getf(p,'metrics');
         C(end+1,:)={recs(r).label,iv(k).name,gs(p,'method'),gn(p,'speed'),gs(p,'speedUnit'),gs(p,'direction'), ...
             sci(p,1),sci(p,2),gn(p,'confidence'),gs(p,'confidenceLevel'),mn(m,'medianCorr'),gn(p,'R2'),gn(p,'pValue'), ...
-            mn(m,'methodAgreement'),mn(m,'totalLagSamples'),gn(p,'belowResolution'),gn(p,'domFreq'),gn(p,'nRows'), ...
-            sn(ph,'speed'),strjoin(gc(p,'qualityFlags'),';'),gs(p,'confidenceText')}; %#ok<AGROW>
+            mn(m,'rowFraction'),mn(m,'totalLagSamples'),gn(p,'belowResolution'),gn(p,'domFreq'),gn(p,'nRows'), ...
+            strjoin(gc(p,'qualityFlags'),';'),gs(p,'confidenceText')}; %#ok<AGROW>
     end
 end
 writecell(C,xlsx,'Sheet','propagation');
@@ -318,7 +331,7 @@ C={}; C(1,:)={'file','interval','t_s','medianDiameter_px','tDecim'};
 for r=1:numel(recs)
     iv=recs(r).intervals;
     for k=1:numel(iv)
-        t=double(iv(k).time(:)); D=double(iv(k).diameter);
+        t=double(iv(k).time(:)); D=analysedDiameter(iv(k));
         med=median(D,2,'omitnan'); nT=numel(t);
         tdec=opts.tDecim; if isempty(tdec), tdec=max(1,ceil(nT/5000)); end
         ti=1:tdec:nT;
@@ -338,7 +351,6 @@ function y=gs(p,f), if isfield(p,f)&&(ischar(p.(f))||isstring(p.(f))), y=char(p.
 function y=gc(p,f), if isfield(p,f)&&iscell(p.(f)), y=p.(f); else, y={}; end, end
 function y=sci(p,i), y=NaN; if isfield(p,'speedCI')&&numel(p.speedCI)>=i, y=p.speedCI(i); end, end
 function y=mn(m,f), if isstruct(m)&&isfield(m,f)&&~isempty(m.(f)), y=double(m.(f)); y=y(1); else, y=NaN; end, end
-function y=sn(st,f), if isstruct(st)&&isfield(st,f)&&~isempty(st.(f))&&isnumeric(st.(f)), y=double(st.(f)); y=y(1); else, y=NaN; end, end
 function s=getStr(m,f), if isfield(m,f)&&(ischar(m.(f))||isstring(m.(f))), s=char(m.(f)); else, s=''; end, end
 function n=getNum(m,f), if isfield(m,f)&&~isempty(m.(f))&&isnumeric(m.(f)), n=m.(f); n=n(1); else, n=NaN; end, end
 function v=getf2(m,f), if isfield(m,f), v=m.(f); else, v=[]; end, end

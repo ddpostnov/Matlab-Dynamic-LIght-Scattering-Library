@@ -37,6 +37,14 @@
 %     untick - every step of that row that transitively requires it is unticked
 %              too, since it could no longer run.
 %
+%   AND ONE EXCLUSION, driven by the registry's conflictsWith.  Two steps that are
+%   alternative ways to do one thing cannot both be on: ticking one UNTICKS its
+%   conflicts on that row first - taking their own dependants with them, through
+%   the same untick cascade - and only then pulls its prerequisites in.  Both
+%   halves are reported in 'changed', which is why the caller asks what state each
+%   reported step ended in rather than assuming the list is all one direction.
+%   Unticking triggers nothing: dropping one alternative does not choose another.
+%
 %   RECORDING-LEVEL STEPS ARE TICKED ONCE AND INHERITED.  A step whose branchScope
 %   is not 'one' does not belong to a single row, because the wrapper covers the
 %   whole recording in ONE call: 'copy' (setRegions, segmentation) runs on the
@@ -102,7 +110,9 @@
 % Outputs:
 %    sel     - the updated map (value semantics: always take the returned one).
 %    added / removed - cellstr of the OTHER step ids the cascade moved, in
-%              registry order, excluding the step the caller named.
+%              registry order, excluding the step the caller named.  A tick can
+%              move a box in EITHER direction (a conflict is unticked), so ask
+%              'isOn' about a reported id rather than assuming which way it went.
 %    animal  - cellstr of per-animal step ids the cascade reached; the caller
 %              applies them to the animal panel and logs them.
 %    ids     - step ids in registry (dependency) order.
@@ -113,7 +123,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function varargout = wbTypeSelection(action, varargin)
@@ -235,12 +245,15 @@ end
 if ~offers(reg, branch, stepId), return; end  % a greyed cell cannot be driven
 branch = storeBranch(sel, reg, type, branch, stepId);   % one tick per recording
 
+dropped = {};
 if tf
+    [sel, dropped] = dropConflicts(sel, reg, type, branch, stepId);
     want = ancestors(reg, sel, type, branch, stepId);   % self + what it still needs
 else
     want = orphaned(reg, sel, type, branch, stepId);    % self + what would lose its input
 end
 [sel, changed, animal] = writeWant(sel, reg, type, branch, want, stepId, tf);
+changed = [dropped, changed];
 
 if ~tf && isSharedStep(reg, stepId)
     % it covered every branch product in one call, so every OTHER row loses it too
@@ -254,6 +267,25 @@ if ~tf && isSharedStep(reg, stepId)
 end
 changed = orderByRegistry(changed, ids);
 animal  = orderByRegistry(animal,  ids);
+end
+
+% =====================================================================
+function [sel, dropped] = dropConflicts(sel, reg, type, branch, stepId)
+%dropConflicts  Untick, on THIS row, every step the one being ticked declares it
+%   cannot run beside - and whatever those steps were feeding, through the ordinary
+%   untick cascade.  Run BEFORE the prerequisite cascade so the incoming step's own
+%   chain is never the thing that gets dropped; the registry guarantees the two
+%   rules cannot want the same step (wbStepRegistry>validateRegistry).
+dropped = {};
+k = find(strcmp(char(stepId), {reg.id}),1);
+if isempty(k) || ~isfield(reg,'conflictsWith') || isempty(reg(k).conflictsWith), return; end
+cw = reshape(reg(k).conflictsWith,1,[]);
+for i = 1:numel(cw)
+    if ~isOn(sel, type, branch, cw{i}), continue; end
+    want = orphaned(reg, sel, type, branch, cw{i});
+    [sel, ch] = writeWant(sel, reg, type, branch, want, stepId, false);
+    dropped = [dropped, ch]; %#ok<AGROW> (a handful, once per click - ch names cw{i})
+end
 end
 
 % =====================================================================

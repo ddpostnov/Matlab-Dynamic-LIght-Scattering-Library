@@ -1,8 +1,8 @@
 %wbExecutor - Serial, ordered run loop for the Processing Workbench.
 %
 %   Executes the checked work of a run by calling the REAL pipeline wrappers - it
-%   ORCHESTRATES, it never reimplements any science.  It is the guiMyograph runList
-%   pattern generalised to the file x step matrix: serial, on the main thread,
+%   ORCHESTRATES, it never reimplements any science.  It is a run-list loop
+%   generalised to the file x step matrix: serial, on the main thread,
 %   streaming the wrappers' own narration through the hook seam (s.stageFcn /
 %   s.cancelFcn), with continue-on-error and cooperative cancel.
 %
@@ -24,6 +24,15 @@
 %        collection, downstream invalidation and the per-column PDF accounting are
 %        exactly what they were when a call was a single cell (spec D6).
 %
+%   THE WHOLE SLICE IS MARKED 'queued' BEFORE THE FIRST CALL (spec D2).  Pressing
+%   Run used to change nothing on screen until the first wrapper had finished a
+%   file, so a step queued for RE-PROCESSING went on reading 'done' from disk - the
+%   monitor was describing the last run rather than this one.  The plan is known in
+%   full the moment wbBatchPlan has built it, so it is stated then: one setState per
+%   batch over that batch's recordings, before the loop.  Nothing has to undo it -
+%   the host drops every non-error overlay when the run ends, so a batch that was
+%   never reached (a Stop, an error upstream) reverts to its disk state on its own.
+%
 %   THE FILES ARE RESOLVED HERE, NOT BEFORE THE RUN (author, 2026-07-31).  The run
 %   order is step-major, so contrast runs before the setRegions entry that consumes
 %   its product - but resolving every batch's files in one pass up front asked for
@@ -32,6 +41,20 @@
 %   'build' now touches no disk, and 'resolve' runs immediately before each call.
 %   A batch whose input is genuinely still missing is marked and logged THERE, one
 %   line, and the loop carries on with the next call.
+%
+%   A RECOMPUTED SOURCE INVALIDATES ITS DERIVATIVES (round-2 item 9, spec D9).
+%   MATLAB's save() already replaces a file whole - there is no '-append' anywhere
+%   in the library and every producer clears its variables per file - so a step
+%   that re-runs overwrites its OWN triplet.  What used to survive is everything
+%   BELOW it: re-running contrast wrote a fresh '_t_K' while the '_t_BFI' triplet
+%   computed from the old one, the external cycle's, and their report pages stayed
+%   on disk, went on reading 'done', were pruned out of the next run and were
+%   picked up by the reports.  So immediately before a step that writes a NEW
+%   triplet is invoked, the products wbProducts derives as downstream of it are
+%   removed and NAMED in the log.  Deliberately PER INVOCATION, not per run: a step
+%   the run never reaches must never have deleted anything.  A delete that fails is
+%   logged and the run carries on - this is housekeeping, it may not take a run
+%   down.
 %
 %   ONE FILE ERRORS, ONE CELL GOES RED (spec D8/D9).  Whether a fold may be cut up
 %   is the step's own declaration, registry fileOrder:
@@ -70,11 +93,21 @@
 %       .animalModels(ai) -> ordered model array for an animal (reference first)
 %       .resolve(step,mdl)-> resolved settings s (wbSettingsModel)
 %       .contrastStage(m) -> 't' | 's'  (which contrast flag this project uses)
-%       .setState(id,step,state,msg)   set a cell running/done/error (''=revert)
+%       .setState(id,step,state,msg)   set a cell queued/running/done/error
+%                         (''=revert).  'id' is ONE identity or a CELLSTR of
+%                         them: a call marks every recording it touches in one
+%                         go, so the pre-run pass below costs one repaint per
+%                         call rather than one per recording (spec D3).
 %       .log(msg)                      append one line to the log / CW mirror
 %       .isCancelled()    -> tf        cooperative cancel flag
 %       .modalGuard(fcn)               run fcn with the parent window parked
 %       .afterDone(id,step,model)      surface artifacts + invalidate downstream
+%       .admits(id,path)  -> OPTIONAL.  Is this file on disk part of THIS
+%                         session?  The host answers it from the configuration
+%                         (guiWorkbench > wbProducts 'flags'), so the files a
+%                         wrapper is handed are the ones the derived monitor table
+%                         lists and nothing else.  Consumed by wbBatchPlan, not
+%                         here.  Omit the field and nothing is fenced.
 %       .refFile(ai,step) -> OPTIONAL.  Which FILE of an animal's pinned
 %                         reference RECORDING this step takes as its template /
 %                         paint target - the registry's refBranch resolved by
@@ -115,12 +148,12 @@
 %      With nothing red the run goes to the end, as it always did.
 %
 % See also: wbBatchPlan, guiWorkbench, wbStepRegistry, wbSettingsModel,
-%           wbModalGuard, wbArtifacts, wbInvalidate, wbRefBranch, guiMyograph
+%           wbModalGuard, wbArtifacts, wbInvalidate, wbRefBranch
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function wbExecutor(entries, ctx)
@@ -130,6 +163,7 @@ if isempty(entries), ctx.log('Nothing checked - nothing to run.'); return; end
 [batches, skipped] = wbBatchPlan('build', entries, ctx);
 reportSkipped(ctx, skipped);
 ctx.log(sprintf('=== RUN: %d job(s) in %d call(s) ===', numel(entries), numel(batches)));
+markQueued(ctx, batches);
 
 failed  = {};                    % what has gone red so far, in words (spec D7)
 stopped = false;
@@ -206,6 +240,7 @@ function [outcome, failedNames] = runBatchWhole(ctx, b, s)
 outcome = 'ok'; failedNames = {};
 sid = b.stepId;
 markCells(ctx, sid, b.models, 'running', '');
+pruneSuperseded(ctx, b.step, b.models);
 [ok, ME] = invokeGuarded(ctx, b.step, callSettings(s, sid, b), b.fNames, b.rawNames);
 if ~ok
     if isCancelErr(ME)
@@ -240,6 +275,7 @@ sid = b.stepId;
 for k = 1:numel(b.units)
     u = b.units{k};
     markCells(ctx, sid, u.models, 'running', '');
+    pruneSuperseded(ctx, b.step, u.models);
     [ok, ME] = invokeGuarded(ctx, b.step, callSettings(s, sid, u), u.fNames, u.rawNames);
     if ~ok
         if isCancelErr(ME)
@@ -261,6 +297,56 @@ for k = 1:numel(b.units)
     markCells(ctx, sid, u.models, 'done', '');
     finishUnits(ctx, sid, b.units(k));
 end
+end
+
+% =====================================================================
+function pruneSuperseded(ctx, step, models)
+%pruneSuperseded  A producer re-run cleans up after itself (item 9, spec D9).
+%   Only a step that writes a NEW triplet has anything below it; an in-place step
+%   appends to a product that is still the same product, so nothing it could touch
+%   goes stale.  The STAGE being rewritten is the step's own (wbProducts 'writes',
+%   which asks the settings for the contrast producer's t|s), and wbProducts owns
+%   the whole rule about which files that makes superseded - this loop only carries
+%   out the verdict and says what it did.
+if isempty(models) || ~isstruct(step), return; end
+if ~isfield(step,'outKind') || ~strcmp(step.outKind,'new'), return; end
+for k = 1:numel(models)
+    m = models(k);
+    try
+        stage = wbProducts('writes', step, ctx.contrastStage(m));
+        [gone, unsure] = wbProducts('below', ctx.reg, m, step.id, stage);
+    catch ME
+        ctx.log(sprintf('  could not check for superseded results: %s', ME.message));
+        continue
+    end
+    removeSuperseded(ctx, gone);
+    for q = 1:numel(unsure)
+        % D9a: it matches a downstream product but its name does not say which
+        % result it was derived from, so it is left alone and named rather than
+        % deleted on a guess.
+        ctx.log(sprintf('  kept %s - its name does not say which result it came from', ...
+            shortName(unsure{q})));
+    end
+end
+end
+
+% =====================================================================
+function removeSuperseded(ctx, files)
+%removeSuperseded  Delete, and NAME what was deleted.  A silent deletion is the one
+%   thing a destructive housekeeping pass must not be; a failed one is a log line
+%   and never the end of a run.
+if isempty(files), return; end
+gone = cell(1,0);
+for i = 1:numel(files)
+    try
+        delete(files{i});
+        gone{end+1} = shortName(files{i}); %#ok<AGROW>
+    catch ME
+        ctx.log(sprintf('  could not remove %s: %s', shortName(files{i}), ME.message));
+    end
+end
+if isempty(gone), return; end
+ctx.log(sprintf('  removed %d superseded result file(s): %s', numel(gone), strjoin(gone,', ')));
 end
 
 % =====================================================================
@@ -323,12 +409,26 @@ end
 end
 
 % =====================================================================
+function markQueued(ctx, batches)
+%markQueued  Say what this run is ABOUT to do, before it does any of it (spec D2).
+%   One call per batch, each one carrying that batch's whole recording list, so a
+%   200-file project repaints once per call rather than once per recording.  It is
+%   deliberately the FIRST thing after the plan exists and before any file is
+%   resolved: 'queued' is a statement of intent, not a claim that the input is
+%   there, and a batch whose input turns out to be missing is re-marked 'error'
+%   when the loop reaches it.
+for i = 1:numel(batches)
+    markCells(ctx, batches(i).stepId, batches(i).models, 'queued', '');
+end
+end
+
+% =====================================================================
 function markCells(ctx, sid, models, state, msg)
 %markCells  Set the run-state of one step across every recording the call touched,
-%   so the matrix reflects the whole call together (spec D4).
-for k = 1:numel(models)
-    ctx.setState(models(k).identity, sid, state, msg);
-end
+%   so the matrix reflects the whole call together (spec D4).  The identities go
+%   over in ONE setState - the host folds them into a single repaint (spec D3).
+if isempty(models), return; end
+ctx.setState({models.identity}, sid, state, msg);
 end
 
 % =====================================================================

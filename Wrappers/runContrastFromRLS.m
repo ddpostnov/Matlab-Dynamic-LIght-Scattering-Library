@@ -133,16 +133,15 @@ for fidx=1:1:numel(fNames)
         axR=nexttile(tl);
         imagesc(axR,results.mask)
         axis(axR,'image')
-        sgtitle(fh,strrep(fNameshort,'_',' '));
-        reportSave(rep,fh,'contrast');
+        reportSave(rep,fh,'contrast');      % reportSave titles the page
 
         % Save the settings and results
         reportWriting(rep);
         settings.runContrastFromRLS=reportSettings(s);
         results.time=source.time;
-        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3');
-        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3');
-        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3');
+        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3','-nocompression');
+        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3','-nocompression');
+        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

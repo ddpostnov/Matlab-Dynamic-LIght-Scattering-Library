@@ -19,7 +19,7 @@ The library takes raw speckle recordings (`.rls`, `.mraw`, `.cxd`, `.dv`) and tu
 
 You drive that pipeline in one of two ways: from the **Processing Workbench** (`GUIs/guiWorkbench`) — curate your recordings, configure the pipeline once per recording **type**, press Run, and it orders, parametrises and calls the steps for you; the recommended starting point — or from a **launcher script** (`Launchers/`), the scripted alternative for reproducible, batch, or headless work. Both call exactly the same `run…` / `set…` steps.
 
-A **myograph** toolset — the headless `Core/Myograph/` functions plus the `GUIs/guiMyograph` app — measures vessel diameter from myograph videos and runs the same vasomotion analysis per user-defined interval.
+A **myograph** toolset runs the same vasomotion analysis per user-defined interval on both kinds of myograph recording, **in the Processing Workbench** like any other recording, each writing one `_MYO` triplet. A **pressure** myograph `.avi` goes optionally Pre-set intervals *or* Time crop, then Video → Diameter → Intervals → Propagation → Vasomotion, measuring the vessel's diameter from the video. A **wire** myograph LabChart `.adicht` goes LabChart → Intervals → Vasomotion: reading the file is the measurement, and each interval is analysed on the channels chosen for it. The headless `Core/Myograph/` functions are behind both, and the interactive steps open one window per recording (`editMyographIntervals` — the same window with the video column replaced by the channel list and the recording's comments), exactly as `setRegions` does. There is **one myograph implementation and one file format**: the standalone `guiMyograph` app and the `*_myograph.mat` format it wrote were retired to `Drafts/` once the workbench route was complete.
 
 ---
 
@@ -34,6 +34,7 @@ A **myograph** toolset — the headless `Core/Myograph/` functions plus the `GUI
   - Parallel Computing Toolbox — for the GPU paths (`procType='gpu'`) and `parfor`
   - Wavelet Toolbox — vasomotion analysis
 - **Bio-Formats for MATLAB** (bundled in `3rd party/bfmatlab`) to read `.cxd` / `.dv` files.
+- **ADInstruments SDK for MATLAB** (bundled in `3rd party/adinstruments_sdk_matlab`) to read LabChart `.adicht` files — **Windows and 64-bit MATLAB only**, since it is a MEX wrapper over ADInstruments' own DLL. Only the wire-myograph pipeline needs it.
 - A CUDA-capable GPU is recommended for `procType='gpu'`; a CPU fallback is available.
 
 ---
@@ -46,7 +47,7 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 
 | Folder | Contents |
 |---|---|
-| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles` |
+| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `readLabChart` (LabChart `.adicht`: channels on their own sampling rates, comments and record boundaries — the only file that touches the `+adi` package), `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles` |
 | `Core/Laser Speckle Contrast Imaging` | Contrast engine — `getK`, `getContrastFromRLS`, `getContrastFromMRAW`, `getSpeckleSize`, `getEdgeSizeSLSCI`; segmentation cores — `enhanceForDisplay`, `getPixelCategories` (5-level category mask), `getSegmentationLabels` (indexed vessel/parenchyma maps), `showSegmentsPreview` |
 | `Core/Dynamic Light Scattering Imaging` | g2 autocorrelation & DLSI/DCS model fitting — `getNormalizedG2`, `fitDLSI`, `getTauC` |
 | `Core/Registration` | Landmark / mask registration — `registerToReference`, `enhanceForRegistration`, `registerRetinaLSCI`, `manualByPointRegistration` |
@@ -54,14 +55,14 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 | `Core/Pulsatility` | `getPulsatilityMetrics` (modular harmonic pulsatility core mirroring `getVasomotionMetrics`: a two-mode SETUP/ANALYSIS that fits an `s.nHarm`-harmonic sine to one averaged cardiac cycle and returns model-free markers + harmonic coefficients; `s.segPulsReturn` / `s.ppxPulsReturn` select the levels — markers / model / reconstruction; used by `runPulsatility`) |
 | `Core/Vasculature` | Vascular hierarchy derivation — `getVascularTree` (pure staged flow-potential parent→daughter tree with FOV-bridging, Horton-Strahler order & generation; consumed by `setVascularTree`), plus the helpers `orderForest`, `getMetric` and `defaultFlowParams` |
 | `Core/Shared` | Shared signal primitives — `getFFT` |
-| `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`) |
-| `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → regions → segmentation → BFI → cycles / pulsatility / vasomotion; segmentation is `setRegions` (interactive multi-ROI editor → `results.regionsMask`) → `runSegmentation` (fully automatic categorize + label + per-segment traces; `s.fNamesCopyTo` copies the segmentation onto co-registered siblings, replacing the old `assignCategories`) → optional `runDynamicSegmentation` (per-frame vessel diameter / flow) — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, and the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) |
+| `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`). `myographProduct` is the one place the `_MYO` triplet is opened, saved and named — exactly one function creates it (the entry step), every other step is load-modify-save; `editMyographIntervals` is the shared interval editor (one blocking window per recording, in a pressure or a wire mode) and `getMyographTrace` builds what it draws — the measured diameter, a coarse brightness profile read from the video when nothing has been measured yet, or the recorded channels with their comments for a wire myograph |
+| `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → regions → segmentation → BFI → cycles / pulsatility / vasomotion; segmentation is `setRegions` (interactive multi-ROI editor → `results.regionsMask`) → `runSegmentation` (fully automatic categorize + label + per-segment traces; `s.fNamesCopyTo` copies the segmentation onto co-registered siblings, replacing the old `assignCategories`) → optional `runDynamicSegmentation` (per-frame vessel diameter / flow) — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) and the two myograph chains — pressure (`runMyographVideo` → optional `setMyographPresetIntervals` *or* `setMyographCrop` → `runMyographDiameter` → `setMyographIntervals` → `runMyographPropagation` / `runMyographVasomotion`) and wire (`runLabChart` → `setMyographIntervals` → `runMyographVasomotion`), all writing one `_MYO` triplet per recording; `setMyographIntervals` and `runMyographVasomotion` are literally the same steps for both and branch once on `source.modality`, and the `setMyograph…` steps open the shared interval editor once per recording |
 | `Launchers` | Ready-to-edit example pipelines — the scripted way to drive the same steps |
-| `GUIs` | Interactive apps — **three programs that share one session file**: `guiWorkbench` (**the Processing Workbench: start here**; it runs the LSCI pipeline and writes the session), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiExplore` (the **standalone** results explorer: pick files, scan a folder or load a session, then plot and compare by experimental group / recording index / animal / recording type and export publication figures). Plus `guiMyograph` (myograph workbench for `.avi` diameter / vasomotion / propagation; double-click `launchMyographWorkbench.vbs` to open without starting MATLAB by hand) |
+| `GUIs` | Interactive apps — **three programs that share one session file**: `guiWorkbench` (**the Processing Workbench: start here**; it runs the LSCI pipeline and writes the session), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiExplore` (the **standalone** results explorer: pick files, scan a folder or load a session, then plot and compare by experimental group / recording index / animal / recording type and export publication figures — and **the only place a myograph figure comes from**, since no myograph step writes a report page) |
 | `GUIs/workbench` | The workbench's own components — the headless brain: `wbStepRegistry` (the step specs — **the linchpin**; adding a step or a modality is a data edit here), `wbDiscoverFiles`, `wbFileModel`, `wbTypeModel` (the animal / type / group label axes), `wbTypeSelection` (which steps each (type, product) row runs), `wbTypePresets` (the standard protocols), `wbPrereqs`, `wbStateEngine`, `wbSettingsModel`, `wbInvalidate`, `wbRefBranch` (which branch of an animal's reference a step takes), `wbRunRange` (the From/To rule), `wbExecutor` (the run loop — and the only place a step's actual branch products are resolved), `wbArtifacts`, `wbModalGuard` — plus `wbSession`, the versioned session file that is the **only** coupling between the three programs above |
 | `Utilities` | Terminal consumers of finished results — `exportToExcel` (`exportToExcel(fNames)` writes the full workbook; the optional `exportToExcel(fNames,opts)` selects `opts.sheets` / `opts.format`, averages over labels or vessel type with `opts.groupBy` / `opts.weightByArea`, subsets `opts.columns`, and merges every file into one labelled workbook with `opts.merge` / `opts.labels` / `opts.outFile`. `GUIs/guiExport` is the interactive front-end for exactly these options) |
 | `Simulation` | Synthetic dynamic-speckle generation (`getDynamicSpeckles`, `Launcher_speckleSimulation`) — self-contained |
-| `3rd party` | External libraries (Bio-Formats, superlets, …) — unmodified |
+| `3rd party` | External libraries (Bio-Formats, the ADInstruments LabChart SDK, superlets, …) — unmodified; origin, licence and version of each are in `3rd party/README.txt` |
 
 ---
 
@@ -138,7 +139,7 @@ sub-tree as `intervals(iv).vasomotion` (single signal; no `ppx` / `ppxs`).
 4. Prefer a script? Copy a launcher from `Launchers/` to your own working location (**leave the originals unchanged**), set `libraryFolder` in your copy, and run the `%% STEP` cells in order (`STEP 0` once per MATLAB session). See [Launchers](#launchers).
 5. Either way, read the header (comments at the top) and inline comments of each function you use — do not run steps blindly.
 
-The processing steps you run are dictated by your protocol, not by the entry point: the workbench and the launchers call the same `run…` / `set…` wrappers and write the same `_d` / `_r` / `_s` files, so you can move between them freely. The `.avi` myograph workflow is not part of the workbench — use `guiMyograph` for it.
+The processing steps you run are dictated by your protocol, not by the entry point: the workbench and the launchers call the same `run…` / `set…` wrappers and write the same `_d` / `_r` / `_s` files, so you can move between them freely. A pressure-myograph `.avi` runs in the workbench too, from raw video to `results.intervals(k).vasomotion`, including the interactive steps — the intervals, the time crop and the pre-set intervals each open one window per recording and then move on to the next.
 
 ### File-naming convention
 
@@ -148,6 +149,33 @@ Each processing step appends flags to the original file name, e.g.:
 - `_c_BFI_r.mat` — (c) cardiac cycle, (BFI) blood flow index, (r) results.
 
 Most users only touch `_BFI_r.mat` (results) and `_BFI_d.mat` (3-D data) files. File selection is often done with wildcards / regular expressions — see `getFileNamesList`.
+
+### File format
+
+Every product is written with `save(…, '-v7.3', '-nocompression')`. `-v7.3` is required for
+the arrays this library produces (a `_d` cube routinely exceeds the 2 GB limit of the older
+format); `-nocompression` turns off HDF5 deflate, which is **single-threaded** and dominates
+the write. Measured on a 400 MB `_d` cube:
+
+| | save | load | on disk |
+|---|---|---|---|
+| `-v7.3` | 10.3 s | 2.4 s | 352 MB |
+| `-v7.3 -nocompression` | **1.2 s** | **1.3 s** | 427 MB |
+
+**8× faster to write, ~2× faster to read, for 21% more disk** — and the read matters too,
+since every later step loads these files again. Disk is the cheap resource here and
+wall-clock during a 200-file batch is not, so the trade is taken *everywhere*, including on
+the small `_r`/`_s` files: one rule covers every `save` in the library rather than a per-file
+judgement call. If you are archiving a finished project to slow or metered storage,
+re-compress there (load, then `save(…, '-v7.3')`) rather than changing the pipeline.
+
+### Time base
+
+`source.time` and `results.time` are **column** vectors, `[T × 1]`, in seconds — frames run
+*down the rows*, matching `results.sData` / `dvsData` `[nT × nSeg]` and the `[nT × 1]` axes of
+the pulsatility and vasomotion trees. Every producer writes that orientation
+(`runContrastFromRLS`, `runInternalCycle`, `runExternalCycle`, `runBolus`, `runIntensity`), and
+a consumer that needs a definite shape should still say `time(:)` rather than assume one.
 
 ---
 
@@ -361,9 +389,32 @@ protocol is the fastest way to understand what the workbench is doing on your be
 | `Launcher_CTTH` | Bolus-injection (CTTH) analysis from wide-field fluorescence. |
 | `Launcher_DLSI_basic` | DLSI pipeline: raw `.mraw` recordings → per-pixel g2 / decorrelation-time fit. |
 | `Launcher_guided` | Guided full-resolution per-segment trace extraction (demo on the bundled test data). |
+| `Launcher_myograph` | Pressure myograph (`.avi`) end to end, with the wire-myograph (`.adicht`) variant commented under each step. |
 
-The **myograph** workflow has neither a launcher script nor a workbench column — open
-`GUIs/guiMyograph` in MATLAB, or double-click `GUIs/launchMyographWorkbench.vbs`.
+A pressure-myograph `.avi` and a wire-myograph LabChart `.adicht` are also processed in
+the Processing Workbench (`GUIs/guiWorkbench`) like any other recording — pick the
+**Pressure myograph** or **Wire myograph** protocol in the Constructor to tick the steps
+each one needs. The launcher and the workbench call the same wrappers and write the same
+`_MYO` triplet.
+
+### What a myograph run leaves behind
+
+**Text and result files, not report images.** Every step narrates three lines — Starting,
+Writing results, Finished — to the command window and the workbench log, and writes to the
+recording's `_MYO` triplet. It writes **no `_rep_*.jpg` pages**, deliberately: a myograph
+check is worth looking at properly rather than as a thumbnail. A user who has processed
+LSCI first should not go looking for pages that were never written.
+
+- **The figures come from `guiExplore`.** Including the two detection checks a report page
+  would have carried — the **diameter map** (the diameter along the vessel over time, which
+  says whether detection held) and the **detected walls** over a frame (which says whether
+  it found the right edges) — plus diameter traces in pixels or % of baseline, the
+  individual line traces, diameter statistics, propagation scalars and the per-line lag
+  behind them, and every vasomotion view.
+- **The numbers come from `guiExport` / `exportToExcel`.** A bare `exportToExcel(fNames)`
+  writes a myograph recording up to nine sheets, chosen from the data: `settings`,
+  `comments` (wire myograph only — the LabChart operator log), `intervals`, `propagation`,
+  `vasomotion`, `ampPct`, `spectra`, `ampPctSpectra` and `diameterTraces`.
 
 ---
 

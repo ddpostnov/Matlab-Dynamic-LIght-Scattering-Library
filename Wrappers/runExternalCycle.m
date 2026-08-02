@@ -13,7 +13,8 @@
 %       • derives the corresponding BFI time-series
 %       • saves preview JPEGs and three MAT-files per recording:
 %
-%            *_e_K_d.mat   SOURCE   – averaged contrast cube (s,results.time)
+%            *_e_K_d.mat   SOURCE   – averaged contrast cube + source.time [T x 1],
+%                                     the library-wide orientation (= results.time)
 %            *_e_K_r.mat   RESULTS  – masks, epoch metrics, timestamps
 %            *_e_K_s.mat   SETTINGS – copy of parameter struct *s*
 %            *_rep_epochs.jpg        – epoch-rejection overview
@@ -23,8 +24,12 @@
 %     s        parameter structure (fields: stimStartType, stimOffset,
 %              epochsN, epochDurationSec, epochBaselineSec, epochFinaleSec,
 %              reject*Coefs, maskType, enablelRejectionModification, etc.)
-%     fNames   cell array of full paths to *_K_d.mat files (same naming
-%              convention as produced by runContrastFromRLS).
+%     fNames   cell array of full paths to CONTRAST products - *_t_K_d.mat or
+%              *_s_K_d.mat, as written by runContrastFromRLS.  A cardiac product
+%              (*_c_K_d.mat) is not an input: it is one averaged period and carries
+%              no results.timeStamp, so there is no recording clock to place the
+%              stimulus on.  Rejected with a named error rather than a missing-field
+%              one; the workbench never offers the combination (requires 'contrast').
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf.
 %
@@ -43,7 +48,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 01-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -110,8 +115,23 @@ for fidx=1:1:numel(fNames)
         load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
         load(strrep(s.fName,'_d.mat','_r.mat'),'results');
         data=source.data; source=rmfield(source,"data");
-        time=source.time;
+        %source.time is [T x 1] library-wide; normalised here anyway so no expression
+        %below can be silently orientation-dependent (it used to need a ROW, which no
+        %producer writes - see the implicit expansion a few lines down).
+        time=source.time(:);
 
+        %This step needs the ABSOLUTE start of the recording to place the stimulus, and
+        %only a step that read the raw recording clock can supply it.  runInternalCycle
+        %writes no timeStamp - its product is one AVERAGED cardiac period, a cube with no
+        %position on the recording timeline - so a *_c_K_d.mat cannot be epoched, by
+        %construction rather than by omission (wbStepRegistry: requires 'contrast').
+        if ~isfield(results,'timeStamp')
+            error('runExternalCycle:noTimeStamp', ...
+                ['%s carries no results.timeStamp, so the stimulus cannot be located ' ...
+                 'on the recording clock.  Epoch a contrast product (*_t_K_d.mat or ' ...
+                 '*_s_K_d.mat); an averaged cardiac cycle (*_c_K_d.mat) has no timeline.'], ...
+                s.fName);
+        end
         s.rlsStartTime=datetime(results.timeStamp,'ConvertFrom','epochtime','Epoch',datetime(1970,1,1),'TicksPerSecond',1e3,'Format', 'HH:mm:ss.SSS');
         if strcmp(s.stimStartType,'manual')
             s.stimStart=datetime(s.stimStartAll{fidx},'InputFormat','HH:mm:ss.SSS');
@@ -128,13 +148,15 @@ for fidx=1:1:numel(fNames)
         end
         epochStartSec(2:end)=epochStartSec(1) + (1:1:(s.epochsN-1))*s.epochDurationSec;
         epochEndSec=epochStartSec+s.epochDurationSec;
-        [~,epochStartFrame]=min(abs(time'-epochStartSec),[],1);
-        [~,epochEndFrame]=min(abs(time'-epochEndSec),[],1);
+        %[T x 1] against [1 x epochsN] expands to [T x epochsN]; the nearest frame to
+        %each epoch edge is then the min DOWN the columns.
+        [~,epochStartFrame]=min(abs(time-epochStartSec),[],1);
+        [~,epochEndFrame]=min(abs(time-epochEndSec),[],1);
 
         %% Epoch rejection and calculation of average epoch
         %calculate average epoch time-step and time loss
         timeStep=median(time(2:end)-time(1:end-1));
-        timeLoss=[timeStep,time(2:end)-time(1:end-1)]-timeStep;
+        timeLoss=[timeStep;time(2:end)-time(1:end-1)]-timeStep;
 
         %calculate epochs baseline, finale and timeloss values
         switch s.maskType
@@ -200,11 +222,15 @@ for fidx=1:1:numel(fNames)
         %EPOCH REJECTION RULES
         %Change the array size depending on number of rejection rules
         epochsToReject=zeros(7,s.epochsN);
-        %based on baseline value deviation (
+        %Each rule is one ROW, and the rows are the order they are drawn in on the
+        %epochs page.  The comments used to name rows 2 and 3 the other way round -
+        %the code always matched its own coefficient (rejectFinCoef with the finale
+        %mean, rejectEpochCoef with the epoch mean), so only the reading was wrong.
+        %based on baseline value deviation
         epochsToReject(1,abs(epochsBlBFImean-median(epochsBlBFImean))>s.rejectBlCoef*std(epochsBlBFImean))=1;
-        %based on epoch value deviation
-        epochsToReject(2,abs(epochsFinBFImean-median(epochsFinBFImean))>s.rejectFinCoef*std(epochsFinBFImean))=1;
         %based on finale value deviation
+        epochsToReject(2,abs(epochsFinBFImean-median(epochsFinBFImean))>s.rejectFinCoef*std(epochsFinBFImean))=1;
+        %based on epoch value deviation
         epochsToReject(3,abs(epochsBFImean-median(epochsBFImean))>s.rejectEpochCoef*std(epochsBFImean))=1;
         %based on peak value deviation
         epochsToReject(4,abs(peakBFImean-median(peakBFImean))>s.rejectPeakCoef*std(peakBFImean))=1;
@@ -217,13 +243,20 @@ for fidx=1:1:numel(fNames)
         end
         blSimilarity=(squeeze(sum(blSimilarity,2))-1)./(s.epochsN-1);
         epochsToReject(5,(median(blSimilarity)-blSimilarity)>s.rejectBlSimCoef*std(blSimilarity))=1;
-        %based on images similarity to baseline within epochs (motion artifacts sensitive)
-        epochSimilarity=zeros(1,s.epochsN);
+        %based on epoch images similarity between epochs (motion artifacts sensitive)
+        %The twin of the rule above on the epoch image instead of the baseline one, and
+        %it had never once fired: the matrix was allocated [1 x epochsN] and the inner
+        %loop OVERWROTE it, so only j=epochsN survived, and the reduction then summed
+        %that row to a single number.  A scalar makes median(x)-x and std(x) both 0, so
+        %the test was 0>0 for every coefficient and s.rejectSimCoef did nothing.
+        epochSimilarity=zeros(s.epochsN,s.epochsN);
         for i=1:1:s.epochsN
             for j=1:1:s.epochsN
-                epochSimilarity(i)=ssim(epochBFI(:,:,i),epochBFI(:,:,j));
+                epochSimilarity(i,j)=ssim(epochBFI(:,:,i),epochBFI(:,:,j));
             end
         end
+        %sum the row, drop the epoch's similarity to itself (which is 1), and the rest
+        %is its mean similarity to the other epochs
         epochSimilarity=(squeeze(sum(epochSimilarity,2))-1)./(s.epochsN-1);
         epochsToReject(6,(median(epochSimilarity)-epochSimilarity)>s.rejectSimCoef*std(epochSimilarity))=1;
         %based on the amount of time lost during the epoch
@@ -263,15 +296,29 @@ for fidx=1:1:numel(fNames)
         source.data=zeros(size(data,1),size(data,2),max(epochEndFrame-epochStartFrame));
         epochCounts=zeros(1,1,max(epochEndFrame-epochStartFrame));
         for i=1:1:s.epochsN
-            if epochsToReject(i)==0
+            %epochsToReject holds ONE ROW PER RULE, so epoch i's verdict is its whole
+            %COLUMN and an epoch is kept only when no rule rejected it - the same
+            %reading the report page above draws.  The single subscript this used to
+            %carry linear-indexed down column 1 instead, which averaged epochs the page
+            %had marked red and, whenever column 1 was fully rejected and there were no
+            %more than 7 epochs (rejectFirstEpoch on a short protocol), accumulated
+            %nothing at all and left the 0/0 all-NaN cube below.
+            if ~any(epochsToReject(:,i))
                 for ii=1:1:(epochEndFrame(i)-epochStartFrame(i))
                     source.data(:,:,ii)=source.data(:,:,ii)+data(:,:,epochStartFrame(i)+ii-1);
                     epochCounts(ii)=epochCounts(ii)+1;
                 end
             end
         end
+        %0/0 is NaN and says nothing; an averaged epoch with no epochs in it is a
+        %protocol or rejection-setting problem the operator has to see.
+        if ~any(epochCounts)
+            error('runExternalCycle:noEpochsAccepted', ...
+                ['Every epoch of %s was rejected, so there is nothing to average.  ' ...
+                 'Relax the reject* coefficients, or keep an epoch in the picker.'], s.fName);
+        end
         source.data=source.data./epochCounts;
-        results.time=(0:1:(max(epochEndFrame-epochStartFrame)-1)).*timeStep;
+        results.time=((0:1:(max(epochEndFrame-epochStartFrame)-1)).*timeStep)';   %[T x 1]
         source.time=results.time;
 
         % Average contrast time series
@@ -293,9 +340,9 @@ for fidx=1:1:numel(fNames)
         reportWriting(rep);
         settings.externalCycle=reportSettings(s);
         results.time=source.time;
-        save(strrep(s.fName,'_K_d.mat','_e_K_d.mat'),'source','-v7.3');
-        save(strrep(s.fName,'_K_d.mat','_e_K_r.mat'),'results','-v7.3');
-        save(strrep(s.fName,'_K_d.mat','_e_K_s.mat'),'settings','-v7.3');
+        save(strrep(s.fName,'_K_d.mat','_e_K_d.mat'),'source','-v7.3','-nocompression');
+        save(strrep(s.fName,'_K_d.mat','_e_K_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(s.fName,'_K_d.mat','_e_K_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

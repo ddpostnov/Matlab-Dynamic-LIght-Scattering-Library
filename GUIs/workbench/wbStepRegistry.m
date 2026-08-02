@@ -1,4 +1,4 @@
-%wbStepRegistry - Declarative spec of the v1 (LSCI) Processing-Workbench steps.
+%wbStepRegistry - Declarative spec of the Processing-Workbench steps.
 %
 %   Returns the ordered array of pipeline-step specifications that drives every
 %   part of the workbench: the matrix columns, the on-disk gating, the settings
@@ -7,14 +7,21 @@
 %   CODE (the Wrappers/ functions and the Launchers/ %Example-of-s blocks) as of
 %   branch main - see claude-docs/processing-workbench/01-pipeline-map.md.
 %
-%   Steps are listed in dependency order:
+%   Steps are listed in dependency order, speckle first and then the myograph:
 %     contrast · internalCycle · externalCycle · setRegions · segmentation ·
 %     dynamicSegmentation · guided · registration · BFI · vasomotion ·
-%     pulsatility · vesselTypes · vascularTree
+%     pulsatility · vesselTypes · vascularTree ·
+%     myoVideo · labChart · myoPresetIntervals · myoCrop · myoDiameter ·
+%     myoIntervals · myoPropagation · myoVasomotion
 %
 % Syntax:
 %    reg = wbStepRegistry()
 %    reg = wbStepRegistry(modality)      % filter to steps exposing that modality
+%    reg = wbStepRegistry(modalities)    % cellstr: the UNION over several, in
+%                                        %   registry order (a mixed working set)
+%    reg = wbStepRegistry('filter', reg, modality)   % the same filter + prune,
+%                                        %   applied to a step array you hold
+%    wbStepRegistry('validate', reg)     % throw on a malformed step array
 %
 % Outputs:
 %    reg - 1xN struct array; each element has fields:
@@ -30,6 +37,9 @@
 %       requires     upstream step ids, ALL needed  ({} | {'setRegions'} ...)
 %       requiresAny  upstream step ids, ANY one is enough - the branch-agnostic
 %                    middle of the pipeline (see below); wbPrereqs owns the rule
+%       conflictsWith  step ids that CANNOT be selected together with this one
+%                    ({} for every v1 step); declared symmetrically on BOTH sides,
+%                    enforced in wbTypeSelection>setOne (see below)
 %       produces     logical product tokens          ({'contrast_t'})
 %       interactive  false | @(s)tf                  (blocks for user input?)
 %       needsRaw     true for runGuided*             (also passes the raw file)
@@ -46,6 +56,8 @@
 %       enums        struct field->allowed values    (dropdown items)
 %       labels       struct field->row label         (OPT-IN; absent = the field
 %                    name, which is what a protocol is written in anyway)
+%       note         one sentence a person has to know BEFORE ticking this step,
+%                    appended to its tooltip in the Constructor ('' for most steps)
 %       modalities   which modalities expose it       ({'LSCI'})
 %       branch       'contrast' | 'cardiac' | '' (which file branch this step's
 %                    column belongs to; wbFileModel also derives 'epoch'/'bolus')
@@ -59,8 +71,27 @@
 %                    REFERENCE RECORDING this step prefers (see below)
 %
 % Notes (for the author):
-%   * The v1 registry is LSCI only.  The .cxd (bolus/intensity/CTTH) and .avi
-%     (myograph) steps are deferred to the next steps; the schema supports them.
+%   * THREE MODALITY FAMILIES ARE HERE: speckle (LSCI), the PRESSURE MYOGRAPH
+%     (PMYO, a video) and the WIRE MYOGRAPH (WMYO, a LabChart '.adicht' recording).
+%     The .cxd family (bolus / intensity / CTTH) is still deferred; the schema
+%     supports it.
+%   * NO MYOGRAPH STEP WRITES A REPORT IMAGE (author, 2026-08-01, re-affirmed
+%     2026-08-02 when the wire myograph landed): the myograph narrates the three
+%     ordinary lines per recording and nothing else, so every myograph step declares
+%     no artifacts and the per-column PDF has nothing to assemble for them.  This
+%     holds for the wire myograph too - what was recorded is looked at in the
+%     interval editor, which opens on the channels with the comments marked.
+%   * THE MYOGRAPH BLOCK IS SHAPED DIFFERENTLY, and deliberately.  ONE ENTRY STEP
+%     PER MODALITY (myoVideo for the pressure myograph, labChart for the wire one)
+%     creates the recording's '_MYO' triplet and every later step appends to that
+%     same triplet in place - so the product carries a PRODUCT token and no stage
+%     flag, one recording has exactly one myograph result set, and the 'below'
+%     deletion set of a re-run is empty.  Both modalities write the SAME token on
+%     purpose: the interval editor and the vasomotion step are literally the same
+%     registry entries for each, which needs one inGlob.  They all declare branch
+%     'myograph' rather than '': a branch-agnostic derived step is treated as
+%     RECORDING-level by wbTypeSelection (ticked once on the anchor row and
+%     inherited), which these are not.
 %   * REAL gating fields (differ from the function name, 01 A1):
 %     runBFI->calculateBFI, runExternalCycle->externalCycle,
 %     runCTTH->ctthCalculation.  Encoded below.
@@ -182,6 +213,25 @@
 %     the resolved file per animal and the executor consumes it.  NOTHING here is a
 %     UI choice - the user pins a recording, not a branch.
 %
+%   * THE MODALITY FILTER PRUNES WHAT IT REMOVES (2026-08-01).  Filtering to one
+%     modality - or to the union of the modalities a working set actually holds -
+%     drops steps, and a surviving step may still NAME one of them: a step serving
+%     two modalities lists both of its possible producers in requiresAny, and only
+%     one of them exists once the filter has run.  So a second pass strikes every
+%     id the filter removed out of the survivors' requires / requiresAny /
+%     conflictsWith.  A cascade, a tooltip or a greyed-cell reason must never name
+%     a step the user cannot see, and a requiresAny whose default producer belongs
+%     to the OTHER modality would otherwise tick a step this one does not run.
+%     A cellstr argument is the union (a mixed folder), a char one modality; the
+%     order is always the registry's own.
+%   * CONFLICTSWITH.  Two steps that are alternative ways to do one thing cannot
+%     both be selected - the myograph's pre-set intervals versus its interval
+%     editor, for instance.  Each names the other, and ticking one unticks its
+%     conflicts on that row (wbTypeSelection>setOne), reporting them so the
+%     Constructor logs the move; unticking triggers nothing.  Declaring a conflict
+%     that is also a prerequisite is a REGISTRY BUG and is thrown at construction
+%     rather than resolved silently - the two rules would pull the same box in
+%     opposite directions and whichever won would be an accident of ordering.
 %   * REQUIRES vs REQUIRESANY.  '*_K_d.mat' steps (setRegions, segmentation, BFI,
 %     registration) read ANY branch product of a recording, so their real
 %     prerequisite is "some entry step has run", not "contrast has run".  A purely
@@ -230,10 +280,11 @@
 %     LABELS is the mechanism that made this possible - the settings panel used the
 %     raw field name as the row label, and 'parforVasomotionSegments' is not a label.
 %     It is opt-in per field, so nothing else in the panel changed.
-%     Three more axes exist in the library and are NOT here, because their steps are
-%     not in the v1 registry: parforCTTHPixels (.cxd/CTTH), parforMyographLines
-%     (.avi/myograph) and fitDLSI's 'parforFit' name/value (DLSI).  They are reachable
-%     from their launchers and inherit the same true-when-absent default.
+%     parforMyographLines joined them with the myograph block (the per-line
+%     vasomotion loop).  Two more axes exist in the library and are NOT here,
+%     because their steps are not in the registry: parforCTTHPixels (.cxd/CTTH) and
+%     fitDLSI's 'parforFit' name/value (DLSI).  They are reachable from their
+%     launchers and inherit the same true-when-absent default.
 %
 % See also: wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
 %           wbPrereqs, wbRefBranch, wbTypeSelection, wbTypePresets
@@ -241,10 +292,20 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
-function reg = wbStepRegistry(modality)
+function reg = wbStepRegistry(modality, arg2, arg3)
+
+% the two non-registry entry points: hand either one a step array and it gets the
+% same rules, which is how a hand-built fragment (a test, a trimmed registry that
+% a caller assembled itself) is checked and filtered by the definitions here
+if nargin>=2 && ischar(modality) && strcmp(modality,'validate')
+    validateRegistry(arg2);  reg = arg2;  return
+end
+if nargin>=3 && ischar(modality) && strcmp(modality,'filter')
+    validateRegistry(arg2);  reg = filterTo(arg2, arg3);  return
+end
 
 reg = base();  reg(1) = [];   % empty 1x0 struct array with the right fields
 
@@ -286,15 +347,22 @@ s.outTransform=struct('from','.rls','to','_c_K_d.mat');
 s.gatingField='runInternalCycle'; s.requires={}; s.produces={'cardiac'};
 s.artifacts={'_rep_cycle-detect.jpg','_rep_cycle-average.jpg'};
 s.legacyArtifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='cardiac';
-s.settingGroups={ 'Contrast calculation',{'trustLimitsK','trustLimitsI','contrastKernelS'};
+s.settingGroups={ 'Contrast calculation',{'contrastKernelS'};
+                  'Pulse detection area',{'maskLimitsK','maskLimitsI'};
+                  'Output masking',{'trustLimitsK','trustLimitsI','minTrust'};
                   'Frequency band',{'maxFrqIni','minFrqIni','rangeFrq'};
                   'Exclusion criteria',{'excludeFirstNCycles','coeffsSTD','coeffsRel','coeffsAbs'};
                   'Cycle calculation',{'method','decimationSpace','framesToAverage', ...
                      'contrastKernelT','contrastKernelPreproc','interpFactor','smoothCoef1','minPromCoef'} };
 s.basicFields={'method','maxFrqIni','minFrqIni','excludeFirstNCycles'};
+% trustLimitsK/I stay shared with the contrast step and now mean the SAME thing there
+% and here - the propagated mask - which is what the link always claimed.  The pulse
+% detection area is this step's alone and is deliberately NOT shared; minTrust is not
+% shared on the contrast step either.
 s.sharedKeys={'trustLimitsK','trustLimitsI','libraryFolder'};
 s.enums=struct('method',{{'sLSCIMM','tLSCIMM','ltLSCIMM','sLSCIMMM'}});
-s.presets=struct('default',struct('trustLimitsK',[0.01 0.3],'trustLimitsI',[5 250], ...
+s.presets=struct('default',struct('maskLimitsK',[0.01 0.3],'maskLimitsI',[5 250], ...
+    'trustLimitsK',[0.001 0.99],'trustLimitsI',[1 254],'minTrust',[0.99 0.99], ...
     'contrastKernelS',5,'maxFrqIni',20,'minFrqIni',1,'rangeFrq',1,'excludeFirstNCycles',0, ...
     'coeffsSTD',[3 2 2 2 2 3 3 2 2],'coeffsRel',[0.5 0.1],'coeffsAbs',2,'method','sLSCIMM', ...
     'decimationSpace',4,'framesToAverage',1,'contrastKernelT',25,'contrastKernelPreproc',5, ...
@@ -302,7 +370,12 @@ s.presets=struct('default',struct('trustLimitsK',[0.01 0.3],'trustLimitsI',[5 25
 s.tips=struct('method','sLSCIMM recommended; ltLSCIMM for high-quality data', ...
     'maxFrqIni','initial max frequency of interest, Hz', ...
     'minFrqIni','initial min frequency of interest, Hz', ...
-    'coeffsSTD','pulse-rejection coefficients relative to feature std');
+    'coeffsSTD','pulse-rejection coefficients relative to feature std', ...
+    'maskLimitsK','contrast range of the pixels averaged to detect the pulse', ...
+    'maskLimitsI','intensity range of the pixels averaged to detect the pulse', ...
+    'trustLimitsK','[min max] expected contrast (fastest,slowest flow)', ...
+    'trustLimitsI','[min max] expected intensity', ...
+    'minTrust','per-pixel trust in relation to dark/saturated frame fraction');
 reg(end+1)=s;
 
 % ---- 3. externalCycle (NVC) -------------------------------------------------
@@ -572,10 +645,307 @@ s.tips=struct('autoOnly','true = derive & save without opening the tree editor',
     'propagatePartners','after a _c file is derived, copy the hierarchy to these partners');
 reg(end+1)=s;
 
-% ---- optional modality filter ----------------------------------------------
-if nargin>=1 && ~isempty(modality)
-    keep = arrayfun(@(st) any(strcmp(modality,st.modalities)), reg);
-    reg = reg(keep);
+% ---- 14. myoVideo (pressure myograph, entry step) ----------------------------
+s = base();
+s.id='myoVideo'; s.label='Video'; s.wrapper=@runMyographVideo;
+% THE ENTRY STEP OF THE PRESSURE MYOGRAPH, and the only function that creates the
+% recording's '_MYO' triplet; every myograph step after it appends to that one
+% triplet in place, which is why the product carries no stage flag.
+s.inGlob='*.avi'; s.outSuffix={'_MYO_d','_MYO_r','_MYO_s'}; s.outKind='new';
+s.outTransform=struct('from','.avi','to','_MYO_d.mat');
+s.gatingField='runMyographVideo'; s.requires={}; s.produces={'myograph'};
+s.modalities={'PMYO'}; s.branch='myograph';
+% 'myograph' rather than '': a branch-agnostic derived step is treated as
+% RECORDING-level by wbTypeSelection (ticked once on the anchor row and inherited),
+% and these are per-row steps of one pipeline.
+s.settingGroups={ 'Calibration',{'pixelSize','rowRange'} };
+s.basicFields={'pixelSize','rowRange'};
+s.sharedKeys={'rowRange','libraryFolder'};   % the row band is one decision, set once
+s.presets=struct('default',struct('pixelSize',[],'rowRange',[1 Inf]));
+s.tips=struct('pixelSize','µm per px; leave empty (or 0) to report results in px', ...
+    'rowRange','[first last] image row the vessel occupies');
+reg(end+1)=s;
+
+% ---- 15. labChart (wire myograph, entry step) --------------------------------
+s = base();
+s.id='labChart'; s.label='LabChart'; s.wrapper=@runLabChart;
+% THE ENTRY STEP OF THE WIRE MYOGRAPH, and the twin of myoVideo: it creates the
+% same '_MYO' triplet, so the interval editor and the vasomotion step downstream
+% are literally the same registry entries for both myographs.  Reading a LabChart
+% file IS the step - there is nothing to detect and nothing to measure - so unlike
+% the video entry step it fills the product completely and the '.adicht' is never
+% opened again.
+s.inGlob='*.adicht'; s.outSuffix={'_MYO_d','_MYO_r','_MYO_s'}; s.outKind='new';
+s.outTransform=struct('from','.adicht','to','_MYO_d.mat');
+s.gatingField='runLabChart'; s.requires={}; s.produces={'myograph'};
+s.modalities={'WMYO'}; s.branch='myograph';
+s.settingGroups={ 'What is read',{'records','channels'};
+                  'Sampling rate',{'decimate','decimateFS','decimateFilter'} };
+s.basicFields={'records','channels','decimate','decimateFS','decimateFilter'};
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('decimateFilter',{{'mean','median'}});
+s.presets=struct('default',struct('records',[],'channels',{{}}, ...
+    'decimate',false,'decimateFS',100,'decimateFilter','mean'));
+s.tips=struct('records','which LabChart records to read; leave empty for all of them', ...
+    'channels','names of the channels to keep; leave empty for all of them', ...
+    'decimate',['on: reduce the sampling rate of every channel while the recording ' ...
+    'is read.  Everything after this step then works on the reduced recording'], ...
+    'decimateFS',['the rate to reduce to.  A whole number of samples goes into each ' ...
+    'kept point, so the rate you get is close to this one rather than exactly it, ' ...
+    'and a channel recorded at or below it is kept as it was'], ...
+    'decimateFilter',['each kept point is the mean or the median of the samples it ' ...
+    'replaces.  Median ignores spikes, mean does not']);
+s.labels=struct('records','Records to read','channels','Channels to keep', ...
+    'decimate','Decimate','decimateFS','Requested frequency, Hz', ...
+    'decimateFilter','Averaging');
+s.note=['Reading LabChart files needs the ADInstruments SDK in the library''s ' ...
+        '"3rd party" folder, and works on Windows only.'];
+reg(end+1)=s;
+
+% ---- 16. myoPresetIntervals (before anything is measured) --------------------
+s = base();
+s.id='myoPresetIntervals'; s.label='Pre-set intervals'; s.wrapper=@setMyographPresetIntervals;
+% CHOSEN ON THE VIDEO, BEFORE ANY DIAMETER EXISTS: the diameter step then measures
+% only inside these windows and the product is only that long, which is what makes
+% measuring 20 minutes of a two-hour recording cost 20 minutes of memory.
+s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='setMyographPresetIntervals'; s.requires={'myoVideo'};
+s.produces={'intervals'};
+s.interactive=true; s.needsRaw=true;                  % the recording IS the window
+s.conflictsWith={'myoCrop','myoIntervals'};           % one set of windows per recording
+s.modalities={'PMYO'}; s.branch='myograph';
+s.settingGroups={ 'Profile',{'profileSamples'} };
+s.basicFields={'profileSamples'};
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct('profileSamples',1200));
+s.tips=struct('profileSamples', ...
+    ['how many points the brightness curve has that the windows are picked on - ' ...
+     'more is a finer curve and a longer wait before the window opens']);
+s.labels=struct('profileSamples','Points in the preview curve');
+reg(end+1)=s;
+
+% ---- 17. myoCrop -------------------------------------------------------------
+s = base();
+s.id='myoCrop'; s.label='Time crop'; s.wrapper=@setMyographCrop;
+% ONE window instead of several - the alternative to pre-set intervals.  It records
+% the decision; the diameter step is what reads only those frames.  CHANGING IT
+% AFTER A DIAMETER EXISTS MEANS MEASURING AGAIN, which the tooltip says out loud.
+s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='setMyographCrop'; s.requires={'myoVideo'};
+s.produces={'timeCrop'};
+s.interactive=true; s.needsRaw=true;
+s.conflictsWith={'myoPresetIntervals'};
+s.note=['Change the crop after the diameter has been measured and the Diameter step ' ...
+        'has to run again - the measured arrays cover the old window.'];
+s.modalities={'PMYO'}; s.branch='myograph';
+s.settingGroups={ 'Profile',{'profileSamples'} };
+s.basicFields={'profileSamples'};
+s.sharedKeys={'libraryFolder'};
+s.presets=struct('default',struct('profileSamples',1200));
+s.tips=struct('profileSamples', ...
+    ['how many points the brightness curve has that the window is picked on - ' ...
+     'more is a finer curve and a longer wait before the window opens']);
+s.labels=struct('profileSamples','Points in the preview curve');
+reg(end+1)=s;
+
+% ---- 18. myoDiameter ---------------------------------------------------------
+s = base();
+s.id='myoDiameter'; s.label='Diameter'; s.wrapper=@runMyographDiameter;
+s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runMyographDiameter'; s.requires={'myoVideo'}; s.produces={'diameter'};
+s.needsRaw=true;                                      % it reads the video itself
+s.modalities={'PMYO'}; s.branch='myograph';
+s.settingGroups={ 'Vessel location',{'rowRange','wallContrast','minWallGap','wallProm','wall2Frac'};
+                  'Image cleaning',{'smoothSigma','dustRadius','dustContrast','brightPrctile'};
+                  'Wall measurement',{'edgeMode','subpixel','tau','searchWin'};
+                  'Smoothing & outliers',{'tSmoothHz','smoothSpan','tSpan','ySpan','outlierK'} };
+s.basicFields={'rowRange','wallContrast','smoothSigma','dustRadius','tSmoothHz','minWallGap'};
+s.sharedKeys={'rowRange','libraryFolder'};
+s.enums=struct('edgeMode',{{'mid','outer','inner','min'}});
+s.presets=struct('default',struct('rowRange',[1 Inf],'wallContrast',0.05,'minWallGap',3, ...
+    'wallProm',0.25,'wall2Frac',0.15,'smoothSigma',1.2,'dustRadius',8,'dustContrast',0.06, ...
+    'brightPrctile',90,'edgeMode','mid','subpixel',true,'tau',0.85,'searchWin',[], ...
+    'tSmoothHz',1,'smoothSpan',15,'tSpan',25,'ySpan',31,'outlierK',3));
+s.tips=struct('rowRange','[first last] image row the vessel occupies', ...
+    'wallContrast','how dark a wall must be, relative to the lumen, to count as one', ...
+    'minWallGap','the smallest diameter that can be real, px', ...
+    'wallProm','below this, one wall has dilated out of view and the frame is flagged', ...
+    'smoothSigma','blur applied before detection, px (raise it for noisy recordings)', ...
+    'dustRadius','dark specks up to this size are removed before detection (0 = off)', ...
+    'tSmoothHz','the fastest the diameter is allowed to change, Hz', ...
+    'edgeMode','which of the three diameters is plotted and analysed by default', ...
+    'tSpan','window used to spot a diameter that jumps in time, frames', ...
+    'ySpan','window used to spot a diameter that jumps along the vessel, rows');
+reg(end+1)=s;
+
+% ---- 19. myoIntervals --------------------------------------------------------
+s = base();
+s.id='myoIntervals'; s.label='Intervals'; s.wrapper=@setMyographIntervals;
+% THE WINDOWS THE ANALYSES RUN IN, defined on the diameter that has been measured -
+% which is what makes 'baseline', 'drug' and 'washout' three answers from one
+% recording instead of one average over all three.
+s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='setMyographIntervals'; s.requires={};
+% ONE STEP, TWO MYOGRAPHS, and requiresAny is what lets it be one: the producer
+% differs per modality, and because the Constructor works on a modality-FILTERED
+% registry only one of the two survives in any given type - so this collapses to
+% whichever entry step that type actually runs.
+s.requiresAny={'myoDiameter','labChart'}; s.produces={'intervals'};
+s.interactive=true;
+s.needsRaw=true;                                      % the pressure myograph's preview
+                                                      % plays the recording; the wire
+                                                      % myograph gets the path and has
+                                                      % no use for it - the channels are
+                                                      % already in the product
+s.conflictsWith={'myoPresetIntervals'};               % windows are chosen once, not twice
+s.modalities={'PMYO','WMYO'}; s.branch='myograph';
+s.settingGroups={ 'Signal',{'edgeMode'}; ...
+                  'Drawing',{'drawPoints'} };
+s.basicFields={'edgeMode'};
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('edgeMode',{{'mid','outer','inner'}});
+s.presets=struct('default',struct('edgeMode','mid','drawPoints',2000));
+s.tips=struct('edgeMode',['which of the three measured diameters the trace shows.  ' ...
+    'A wire myograph has no diameter: its channel is chosen in the window''s table'], ...
+    'drawPoints',['how much of the recording is drawn at once.  A wire myograph ' ...
+    'file holds millions of samples per channel and drawing them all makes the ' ...
+    'window slow to respond; lower this on a slow machine.  It changes only what ' ...
+    'is on screen - the windows are cut out of the full recording either way']);
+s.labels=struct('edgeMode','Diameter shown','drawPoints','Points drawn per channel');
+s.note=['Moving an interval re-cuts its diameter and clears its propagation and ' ...
+        'vasomotion - run those again afterwards.'];
+reg(end+1)=s;
+
+% ---- 20. myoPropagation ------------------------------------------------------
+s = base();
+s.id='myoPropagation'; s.label='Propagation'; s.wrapper=@runMyographPropagation;
+s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runMyographPropagation'; s.requires={'myoDiameter'}; s.produces={'propagation'};
+s.modalities={'PMYO'}; s.branch='myograph';
+s.settingGroups={ 'Signal',{'diameterMeasures','vFR','detrendSec'};
+                  'Location quality',{'propMinMeasured','propMinCoh','propArtifactK','propMinRows'};
+                  'Delay search',{'propMaxLagFrac','propResolutionSamples'};
+                  'Significance',{'propNShuffle'} };
+s.basicFields={'diameterMeasures','vFR'};
+% diameterMeasures and the band are ONE protocol decision, not one per step: the
+% vasomotion step analyses the same diameter over the same oscillation.
+s.sharedKeys={'diameterMeasures','vFR','libraryFolder'};
+s.presets=struct('default',struct('diameterMeasures',{{'mid'}},'vFR',[0.05 0.25], ...
+    'detrendSec',30,'propMinMeasured',0.5,'propMinCoh',0.3,'propArtifactK',4, ...
+    'propMinRows',20,'propMaxLagFrac',0.5,'propResolutionSamples',1.0,'propNShuffle',200));
+s.tips=struct('diameterMeasures','which diameters to analyse: outer wall, wall centre (mid) or lumen', ...
+    'vFR','vasomotion frequency band [lo hi], Hz - it sets how far back a delay is looked for', ...
+    'detrendSec','slow drift over this many seconds is removed before comparing locations', ...
+    'propMinMeasured','a location is used only if this fraction of it was really measured', ...
+    'propMinCoh','how well a location must follow the vessel''s oscillation to be used', ...
+    'propMinRows','fewest locations an estimate may rest on', ...
+    'propNShuffle','how many times the locations are shuffled to test the result against chance');
+reg(end+1)=s;
+
+% ---- 21. myoVasomotion -------------------------------------------------------
+s = base();
+s.id='myoVasomotion'; s.label='Vasomotion'; s.wrapper=@runMyographVasomotion;
+s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runMyographVasomotion'; s.requires={};
+% ONE STEP, TWO MYOGRAPHS - see the note on myoIntervals above.  The wrapper reads
+% the recording's own source.modality and iterates diameter measures or selected
+% CHANNELS accordingly; the analysis behind both is the same core.
+s.requiresAny={'myoDiameter','labChart'}; s.produces={'vasomotion'};
+s.modalities={'PMYO','WMYO'}; s.branch='myograph';
+s.settingGroups={ 'Signal',{'diameterMeasures','perLine'};
+                  'Bands',{'vFR','cFR','wFR','wVPO'};
+                  'Normalisation',{'normalisation','normsize','tgtFS'};
+                  'Peaks & percentiles',{'pcts','otsuMaxN','otsuElbow','nPeakProm'};
+                  'Analysis levels',{'segVsmReturn'};
+                  'Parallel',{'parforMyographLines'} };
+s.basicFields={'diameterMeasures','perLine','vFR','cFR','tgtFS'};
+s.sharedKeys={'diameterMeasures','vFR','libraryFolder'};
+s.enums=struct('normalisation',{{'mean','median','mmean','mmedian'}});
+% the analysis defaults ARE the speckle vasomotion step's, verbatim: the two steps
+% call the same core, so a myograph result and an LSCI result are comparable only
+% while these stay identical.
+s.presets=struct('default',struct('diameterMeasures',{{'mid'}},'perLine',false, ...
+    'vFR',[0.05 0.25],'cFR',[0.4 0.6],'wFR',[0.01 1],'wVPO',10, ...
+    'normalisation','median','normsize',101,'tgtFS',1,'pcts',0:10:100,'otsuMaxN',5, ...
+    'otsuElbow',0.05,'nPeakProm',0.10, ...
+    'segVsmReturn',{{'bands','moments','series','clustering','spectrum'}}, ...
+    'parforMyographLines',true));
+s.labels=struct('parforMyographLines','Use parfor: image lines');
+s.tips=struct('diameterMeasures',['which diameters to analyse: outer wall, wall centre (mid) ' ...
+    'or lumen.  A wire myograph analyses the channels chosen for each interval instead'], ...
+    'perLine',['on: analyse every measured image row separately.  off: the vessel''s ' ...
+    'averaged diameter.  A wire myograph ignores it - a channel is one trace'], ...
+    'vFR','vasomotion frequency band [lo hi], Hz', ...
+    'cFR','control (cardiac) frequency band [lo hi], Hz', ...
+    'nPeakProm','VB peak-count prominence as a fraction of the band range', ...
+    'segVsmReturn','which analysis levels to store (set of tokens)', ...
+    'parforMyographLines',parforTip('the per-line analysis'));
+reg(end+1)=s;
+
+validateRegistry(reg);          % a registry edit is checked before anyone sees it
+
+% ---- optional modality filter, and the pruning that must follow it ----------
+if nargin>=1 && ~isempty(modality), reg = filterTo(reg, modality); end
+end
+
+% =====================================================================
+function reg = filterTo(reg, modality)
+%filterTo  Keep the steps ANY of these modalities exposes, then prune.  A char is
+%   one modality, a cellstr the union over several - in registry order either way.
+if isempty(modality) || isempty(reg), return; end
+want = modality; if ~iscell(want), want = {char(want)}; end
+keep = arrayfun(@(st) any(ismember(want, st.modalities)), reg);
+reg  = pruneReferences(reg(keep));
+end
+
+% =====================================================================
+function reg = pruneReferences(reg)
+%pruneReferences  Strike every id the modality filter removed out of the steps
+%   that survived it, so no surviving step names one that is not there (see the
+%   note above).  Nothing is renamed or re-ordered - only names of absent steps go.
+if isempty(reg), return; end
+have = {reg.id};
+for k = 1:numel(reg)
+    for f = {'requires','requiresAny','conflictsWith'}
+        l = reg(k).(f{1});
+        if isempty(l), continue; end
+        reg(k).(f{1}) = reshape(l(ismember(l, have)),1,[]);
+    end
+end
+end
+
+% =====================================================================
+function validateRegistry(reg)
+%validateRegistry  The two things a step array may not do, checked where a
+%   registry edit is made rather than where a user clicks.
+%
+%   A CONFLICT MUST BE SYMMETRIC: ticking A unticks B only if A names B, so a
+%   one-sided declaration would make the rule depend on which box was clicked.
+%   A CONFLICT MAY NOT ALSO BE A PREREQUISITE: the tick cascade would pull the
+%   step in and the conflict rule would push it straight back out.
+if isempty(reg) || ~isstruct(reg) || ~isfield(reg,'conflictsWith'), return; end
+ids = {reg.id};
+for k = 1:numel(reg)
+    cw = reg(k).conflictsWith;
+    if isempty(cw), continue; end
+    cw = reshape(cw,1,[]);
+    for i = 1:numel(cw)
+        j = find(strcmp(cw{i}, ids),1);
+        if isempty(j)
+            error('wbStepRegistry:unknownConflict', ...
+                'Step "%s" conflicts with "%s", which is not a step.', ids{k}, cw{i});
+        end
+        if ~any(strcmp(ids{k}, reg(j).conflictsWith))
+            error('wbStepRegistry:asymmetricConflict', ...
+                'Step "%s" conflicts with "%s" but "%s" does not say so; declare it on both sides.', ...
+                ids{k}, cw{i}, cw{i});
+        end
+    end
+    clash = intersect(cw, wbPrereqs('all', reg(k)), 'stable');
+    if ~isempty(clash)
+        error('wbStepRegistry:conflictIsPrerequisite', ...
+            'Step "%s" both requires and conflicts with %s.', ids{k}, strjoin(clash,', '));
+    end
 end
 end
 
@@ -586,11 +956,12 @@ function s = base()
 s = struct( ...
     'id','', 'label','', 'wrapper',[], 'arity','perFile', ...
     'inGlob','', 'outSuffix',{{}}, 'outKind','inplace', 'outTransform',[], ...
-    'gatingField','', 'requires',{{}}, 'requiresAny',{{}}, 'produces',{{}}, ...
+    'gatingField','', 'requires',{{}}, 'requiresAny',{{}}, 'conflictsWith',{{}}, ...
+    'produces',{{}}, ...
     'interactive',false, 'needsRaw',false, 'artifacts',{{}}, 'legacyArtifacts',{{}}, ...
     'settingGroups',{{}}, 'basicFields',{{}}, 'sharedKeys',{{}}, ...
     'presets',struct('default',struct()), 'tips',struct(), 'enums',struct(), ...
-    'labels',struct(), ...
+    'labels',struct(), 'note','', ...
     'modalities',{{'LSCI'}}, 'branch','', 'branchScope','one', 'fanOut','flat', ...
     'fileOrder','independent', 'refBranch','');
 end

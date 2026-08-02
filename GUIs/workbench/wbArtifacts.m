@@ -20,9 +20,20 @@
 %   spelled out: a '_rep_segments.jpg' tail finds 'Foo_t_K_rep_segments.jpg' and a
 %   'Roi2_' crop's variant alike.
 %
+%   THE WORKING SET IS A FENCE (round-2 item 8).  That base-name listing is the
+%   whole folder, so a page left by an EARLIER session - the '_c_K' pipeline of a
+%   project that now configures only contrast - matched a tail like any other and
+%   joined the result list and the per-column PDF.  The optional third argument is
+%   the session's admissible stage flags (wbProducts 'flags'), and a page whose
+%   stage is not one of them is dropped.  ABSENT ARGUMENT = NO FENCE, so the
+%   headless callers and the tests keep the behaviour they were written against,
+%   and a page whose stage cannot be read at all is kept either way (wbProducts
+%   fails open - hiding a real report is worse than listing a stale one).
+%
 % Syntax:
-%    files = wbArtifacts(model, step)      % existing artifacts for one step
-%    files = wbArtifacts(model, reg)       % union over a whole registry array
+%    files = wbArtifacts(model, step)         % existing artifacts for one step
+%    files = wbArtifacts(model, reg)          % union over a whole registry array
+%    files = wbArtifacts(model, step, flags)  % ... limited to the session's branches
 %
 % Inputs:
 %    model - a wbFileModel struct (supplies folder + roiPrefix + stem = the
@@ -30,20 +41,25 @@
 %    step  - one wbStepRegistry element (uses step.artifacts and
 %            step.legacyArtifacts), OR the whole registry array (every element's
 %            tails are unioned).
+%    flags - (optional) the admissible stage flags of this recording's session,
+%            from wbProducts('flags',...).  {} (or omitted) = no fence.
 %
 % Outputs:
 %    files - 1xK cellstr of full paths to the artifact images that exist on disk
 %            (empty 1x0 when the step declares none or none are present yet).
 %
-% See also: wbStepRegistry, wbFileModel, wbExecutor, makeReportPdf, guiWorkbench
+% See also: wbStepRegistry, wbFileModel, wbProducts, wbExecutor, makeReportPdf,
+%           guiWorkbench
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
-function files = wbArtifacts(model, step)
+function files = wbArtifacts(model, step, flags)
+
+if nargin < 3, flags = {}; end
 
 files = cell(1,0);
 if isempty(model) || ~isstruct(model), return; end
@@ -70,10 +86,10 @@ for t = 1:numel(tails)
     tail = tails{t};
     for i = 1:numel(names)
         nm = names{i};
-        if endsWith(nm, tail) && ~isKey(seen, nm)
-            seen(nm) = true;
-            files{end+1} = fullfile(model.folder, nm); %#ok<AGROW>
-        end
+        if ~endsWith(nm, tail) || isKey(seen, nm), continue; end
+        seen(nm) = true;                              % judged once, whatever the verdict
+        if ~isempty(flags) && ~wbProducts('admits', flags, nm), continue; end
+        files{end+1} = fullfile(model.folder, nm); %#ok<AGROW>
     end
 end
 end

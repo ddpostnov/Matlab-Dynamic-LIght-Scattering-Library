@@ -1,10 +1,12 @@
-% guiExplore - Interactive GUI to explore & export publication figures from LSCI results.
+% guiExplore - Interactive GUI to explore & export publication figures from results.
 %
 % WHAT THIS TOOL DOES
 %   A single-window app for browsing the *_r.mat RESULTS produced by this library
-%   (runSegmentation -> runPulsatility / runVasomotion / runCTTH / setVesselTypes)
-%   and turning them into clean, publication-ready plots. It works on ONE file or
-%   on MANY files at once, and it always matches the plot type to the kind of data:
+%   (runSegmentation -> runPulsatility / runVasomotion / runCTTH / setVesselTypes,
+%   and the myograph chain runMyographDiameter -> runMyographPropagation ->
+%   runMyographVasomotion) and turning them into clean, publication-ready plots. It
+%   works on ONE file or on MANY files at once, and it always matches the plot type
+%   to the kind of data:
 %
 %     * time series (sData / dvsData / dvsDiameter)      -> mean +/- error band vs time
 %     * scalar metrics (sMetrics / dvsMetrics columns)   -> grouped box plots + points
@@ -14,13 +16,51 @@
 %                                                          envelope-amplitude percentile bin
 %     * vasomotion amplitude percentiles (scalars.VB/CB.ampPct) -> band amplitude vs
 %                                                          percentile level (VB & CB)
+%     * vasomotion markers (scalars.VB/CB.<marker>)      -> grouped box plots + points
+%     * diameter traces (myograph)                       -> mean +/- error band vs time,
+%                                                          in pixels or % of baseline
+%     * the individual line diameters (myograph)         -> every line's own trace
+%     * diameter statistics / propagation (myograph)     -> grouped box plots + points
+%     * the per-line propagation lag (myograph)          -> lag vs position along vessel
+%     * the diameter along the vessel (myograph)         -> position vs time map
+%     * the detected walls (myograph)                    -> one video frame + overlay
 %     * image maps (imgBFI / pulsatility.ppx maps / mapType) -> axis-image display
 %
+%   THE VASOMOTION MARKER FAMILY SERVES BOTH KINDS OF RECORDING.  scalars.<band>.*
+%   holds the ~29 band markers (ampMean, fCentMean, durFlareMean, ...) in the same
+%   place in a speckle tree and in a myograph one, so one box-plot family compares
+%   them across files for either - by group, animal, type or interval like any other
+%   scalar.  Percentile leaves are not offered here: they are a vector per unit, and
+%   the amplitude-percentile family draws them properly.
+%
+%   MYOGRAPH RECORDINGS ARE PLOTTED BY THE SAME MACHINERY.  A myograph recording
+%   holds its results inside the WINDOWS it was analysed in, and
+%   results.intervals(k).vasomotion.<signal> is the SAME tree shape as
+%   results.vasomotion.<signal> - so the spectra, the percentile spectra, the
+%   spectrogram and the band amplitude percentiles are the plots that already
+%   existed, pointed at an interval's sub-tree.  What is new is the axis: the
+%   INTERVAL joins group / recording index / animal / type as a fifth, independent
+%   way to organise a comparison, and it is usually the one a myograph protocol
+%   wants on the x-axis (baseline vs drug vs washout).  The signal a myograph
+%   comparison is about is the analysed diameter MEASURE, or the recorded CHANNEL -
+%   which is what the selection list offers for those files, in place of the vessel
+%   categories they do not have.
+%
+%   IT IS ALSO THE ONLY PLACE A MYOGRAPH FIGURE COMES FROM.  No myograph step
+%   writes a report page, by design, so the checks a page would have carried live
+%   here: the diameter map, which shows whether detection held along the whole
+%   vessel; the detected walls over a frame of the recording, which shows whether it
+%   found the right edges; and the individual line traces, which show whether the
+%   lines moved together - the assumption a propagation speed is fitted under.  All
+%   three are about ONE recording, so they sit with the single-recording views rather
+%   than with the comparisons.  The per-line propagation LAG is the fourth: it is the
+%   evidence behind the speed, and it compares across files like any other curve.
+%
 % WHEN TO USE IT
-%   After you have processed recordings to *_BFI_r.mat (or *_I_r.mat) results and
-%   want to (a) look at single-recording detail, or (b) compare experimental groups
-%   and/or a sequence of recordings across many files, then export the figure at a
-%   chosen resolution for a paper or a talk.
+%   After you have processed recordings to *_BFI_r.mat (or *_I_r.mat / *_MYO_r.mat)
+%   results and want to (a) look at single-recording detail, or (b) compare
+%   experimental groups and/or a sequence of recordings across many files, then
+%   export the figure at a chosen resolution for a paper or a talk.
 %
 %   It is STANDALONE. It does not need - and never loads - the Processing
 %   Workbench: the hand-off between them is the SESSION file (wbSession), read
@@ -58,11 +98,14 @@
 %      name in "New group" and press "Create group from selected files". Hand-made
 %      groups override BOTH the Group pattern and the session, and survive a re-scan.
 %   2. Choose WHAT to plot with the dropdowns (data type -> variable), pick one or
-%      more SELECTIONS (arteries / veins / parenchyma / all / a named label), tweak
-%      titles / labels / legend, then "Plot". Labels that span several segments are
+%      more SELECTIONS (arteries / veins / parenchyma / all / a named label; for a
+%      myograph recording, the analysed diameters or channels), tweak titles /
+%      labels / legend, then "Plot". Labels that span several segments are
 %      area-weighted into one trace/value automatically. "Organise by" stratifies on
-%      any of the FOUR independent axes - group, recording index, animal, type -
-%      which do not nest: an animal may span groups and a group may span animals.
+%      any of the FIVE independent axes - group, recording index, animal, type,
+%      interval - which do not nest: an animal may span groups and a group may span
+%      animals. "Interval" narrows every myograph plot to one analysed window, and
+%      is switched off when nothing loaded has any.
 %   3. Set DPI + format and click "Export image".
 %
 % PROGRAMMATIC USE
@@ -106,12 +149,12 @@
 %    guiExplore(sessionPath)            % open it ON a workbench session
 %    h = guiExplore('Visible','off')    % headless (programmatic drive / tests)
 %
-% See also: wbSession, guiExport, guiWorkbench, exportToExcel
+% See also: wbSession, guiExport, guiWorkbench, exportToExcel, myographProduct
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 02-August-2026
 
 function h = guiExplore(varargin)
 
@@ -131,6 +174,11 @@ app.labels      = {};        % union of vessel/ROI labels across the file list
 app.groupOverride = containers.Map('KeyType','char','ValueType','char'); % hand-made groups (path->name)
 app.manual      = struct('title',false,'xlab',false,'ylab',false); % user-edited?
 app.sessionPath = '';        % the session this file list came from ('' = none)
+% What the loaded myograph recordings offer, unioned over the file list: the names
+% of their analysed WINDOWS and of the SIGNALS analysed inside them (the diameter
+% measures of a pressure myograph, the channels of a wire one).  Empty when nothing
+% loaded is a myograph recording, which is what switches those menus off.
+app.myo         = struct('intervals',{{}},'signals',{{}},'only',false);
 
 CAT = struct('PARENCHYMA',1,'UNSEG',2,'WALL',3,'INNER',4,'LUMEN',5);
 
@@ -196,18 +244,23 @@ c.createBtn = uibutton(s1,'Text','Create group from selected files', ...
 c.createBtn.Layout.Row = 12; c.createBtn.Layout.Column = [1 2];
 
 % --- section 2: what to plot ---
-s2 = section(stack,'2 - What to plot',5);
+s2 = section(stack,'2 - What to plot',6);
 c.dataType = labelledDrop(s2,1,'Data type', allDataTypes(), @onDataType);
 c.variable = labelledDrop(s2,2,'Variable',{'(none)'},@(~,~)onVariable());
-c.organize = labelledDrop(s2,3,'Organise by', ...
+c.interval = labelledDrop(s2,3,'Interval',{'(all)'},@(~,~)requestRender());
+c.interval.Tooltip = ['Which analysed window a myograph recording is plotted for.  ' ...
+    'Switched off when nothing loaded has any.'];
+c.interval.Enable = 'off';
+c.organize = labelledDrop(s2,4,'Organise by', ...
     {'Auto','Group','Recording index','Animal','Type','Group x Index','Pool all'}, ...
     @(~,~)requestRender());
-c.organize.Tooltip = ['The four stratification axes are INDEPENDENT: an animal may span ' ...
+c.organize.Tooltip = ['The stratification axes are INDEPENDENT: an animal may span ' ...
     'experimental groups and a group may span animals.  Animal and Type are filled by ' ...
-    'a loaded session; Auto uses whichever of them actually varies.'];
-c.points   = labelledDrop(s2,4,'Points are', ...
+    'a loaded session, Interval by a myograph recording; Auto uses whichever of them ' ...
+    'actually varies.'];
+c.points   = labelledDrop(s2,5,'Points are', ...
     {'Auto (files if >1)','Files','Segments'},@(~,~)requestRender());
-c.stat     = labelledDrop(s2,5,'Centre / error', ...
+c.stat     = labelledDrop(s2,6,'Centre / error', ...
     {'Mean +/- SD','Mean +/- SEM','Median +/- IQR'},@(~,~)requestRender());
 
 % --- section 3: selections ---
@@ -229,7 +282,8 @@ c.legendChk = uicheckbox(s4,'Text','Show legend','Value',true, ...
 c.legendChk.Layout.Row = 4; c.legendChk.Layout.Column = [1 2];
 c.legendF = labelledField(s4,5,'Legend fmt','%s%g%r');
 c.legendF.ValueChangedFcn = @(~,~)requestRender();
-c.legHelp = uilabel(s4,'Text','tokens: %s sel  %g group  %r index  %a animal  %t type  %f file  %v var', ...
+c.legHelp = uilabel(s4,'Text',['tokens: %s sel  %g group  %r index  %a animal  ' ...
+    '%t type  %i interval  %f file  %v var'], ...
     'FontColor',[0.5 0.5 0.5],'FontSize',10,'WordWrap','on');
 c.legHelp.Layout.Row = 6; c.legHelp.Layout.Column = [1 2];
 c.cmap = labelledDrop(s4,7,'Image cmap',{'parula','turbo','hot','gray','jet'},@(~,~)requestRender());
@@ -473,7 +527,10 @@ if nargout>0, h = fig; end
     function refreshLabelsAndItems()
         % Collect the union of vessel/ROI labels across the (selected) files so the
         % selection list can offer "Label: X" entries. Reads only metrics tables.
-        L = {};
+        % The same pass collects what the myograph recordings offer - their analysed
+        % windows and the signals inside them - because both answers come out of the
+        % files that are already being opened here.
+        L = {}; IV = {}; SG = {}; nSeg = 0; hasDia = false; hasProp = false;
         idx = 1:numel(app.files);
         for i = idx
             R = tryLoad(app.files(i).path);
@@ -485,12 +542,43 @@ if nargout>0, h = fig; end
                     L = [L, cellstr(lv(strlength(lv)>0))']; %#ok<AGROW>
                 end
             end
+            if ~isMyoResults(R), nSeg = nSeg + 1; continue; end
+            nm = myoIntervalNames(R);  IV = [IV, nm(~ismember(nm,IV))]; %#ok<AGROW>
+            sg = {myoSignalList(R).name};
+            SG = [SG, sg(~ismember(sg,SG))]; %#ok<AGROW>
+            hasDia  = hasDia  || myoHasBranch(R,'diameter');
+            hasProp = hasProp || myoHasBranch(R,'propagation');
         end
         app.labels = unique(L);
+        % '.only' is what lets a myograph-only list stop offering vessel categories
+        % nothing in it has, while a mixed list still offers both.  The two branch
+        % flags do the same job one level down: a WIRE myograph has no diameter and
+        % no propagation, so those plot families are not offered for it.
+        app.myo = struct('intervals',{IV},'signals',{SG}, ...
+            'only', ~isempty(IV) && nSeg==0, 'diameter',hasDia, 'propagation',hasProp);
+        refreshIntervalItems();
         refreshDataTypeItems();
         refreshVariableItems();
         refreshSelectionItems();
         autofillCosmetics();
+    end
+
+    function refreshIntervalItems()
+        %refreshIntervalItems  The interval filter, offered only when something
+        %   loaded actually has windows - the axis is real or it is not there.
+        items = [{'(all)'} app.myo.intervals];
+        keep = c.interval.Value;
+        c.interval.Items = items;
+        if ismember(keep,items), c.interval.Value = keep; else, c.interval.Value = items{1}; end
+        c.interval.Enable = onOff(~isempty(app.myo.intervals));
+        % the Organise-by list grows an Interval entry for the same reason
+        base = {'Auto','Group','Recording index','Animal','Type','Group x Index','Pool all'};
+        if ~isempty(app.myo.intervals)
+            base = [base(1:5) {'Interval'} base(6:end)];
+        end
+        keepO = c.organize.Value;
+        c.organize.Items = base;
+        if ismember(keepO,base), c.organize.Value = keepO; else, c.organize.Value = base{1}; end
     end
 
     function refreshDataTypeItems()
@@ -500,11 +588,25 @@ if nargout>0, h = fig; end
         %   computed is dropped from the menu instead of being probed for and then
         %   found empty.  Without a session nothing is known and the full list stays,
         %   which is the behaviour the folder / file routes have always had.
+        %
+        %   THE MYOGRAPH FAMILIES ARE GATED TWICE, because a session is not the only
+        %   way in: they also need a loaded file that actually carries analysed
+        %   windows, so a folder of speckle results never offers them.
         items = allDataTypes();
         spec  = dataTypeSteps();
         for k = 1:size(spec,1)
             if ~sessionOffers(spec{k,2})
                 items = items(~strcmp(items, spec{k,1}));
+            end
+        end
+        if isempty(app.myo.intervals)
+            items = items(~ismember(items, myoDataTypes()));
+        else
+            if ~app.myo.diameter
+                items = items(~ismember(items, myoDiameterTypes()));
+            end
+            if ~app.myo.propagation
+                items = items(~ismember(items, myoPropagationTypes()));
             end
         end
         if isempty(items), items = allDataTypes(); end
@@ -513,21 +615,30 @@ if nargout>0, h = fig; end
         if ismember(keep,items), c.dataType.Value = keep; else, c.dataType.Value = items{1}; end
     end
 
-    function tf = sessionOffers(stepId)
-        %sessionOffers  Did ANY loaded file complete this step?  Tri-state: a file
-        %   with no completion record contributes no knowledge, and when nothing is
-        %   known at all the answer is yes (probe as before).
+    function tf = sessionOffers(stepIds)
+        %sessionOffers  Did ANY loaded file complete ANY of these steps?  Tri-state:
+        %   a file with no completion record contributes no knowledge, and when
+        %   nothing is known at all the answer is yes (probe as before).  A LIST of
+        %   step ids rather than one, because the same plot is produced by different
+        %   steps in different modalities - the vasomotion of a speckle recording and
+        %   of a myograph one draw the identical tree.
+        stepIds = cellstr(stepIds);
         known = false;
         for i = 1:numel(app.files)
             if isempty(app.files(i).steps), continue; end
             known = true;
-            if any(strcmp(stepId, app.files(i).steps)), tf = true; return; end
+            if any(ismember(stepIds, app.files(i).steps)), tf = true; return; end
         end
         tf = ~known;
     end
 
 %% ==================== DYNAMIC DROPDOWN ITEMS ============================ %%
     function refreshVariableItems()
+        %refreshVariableItems  WHICH QUANTITY of the chosen family to draw.  For a
+        %   myograph family the signal is picked in the selection list (it is what a
+        %   comparison is about), so what is left for this menu is the quantity -
+        %   which statistic, which propagation number - and the families that have
+        %   only one offer exactly one entry rather than a misleading choice.
         dt = c.dataType.Value;
         idx = selectedFileIdx();
         R = firstAvailable(idx);
@@ -549,6 +660,18 @@ if nargout>0, h = fig; end
                 items = vsmSignalItems(R,'fVectors.VB.ampMeanPct');
             case 'Vasomotion amplitude percentiles'
                 items = vsmSignalItems(R,'scalars.VB.ampPct');
+            case 'Vasomotion marker'
+                items = vsmMarkerItems(R, firstMyo(idx));
+            case 'Diameter stats'
+                items = myoStatItems(firstMyo(idx));
+            case 'Propagation'
+                items = myoPropItems(firstMyo(idx));
+            case 'Diameter trace'
+                items = {'diameter','% of baseline'};
+            case {'Per-line diameter','Diameter map','Detected walls'}
+                items = {'diameter'};
+            case 'Propagation lag'
+                items = {'lag'};
             case 'Image map'
                 items = imageItems(R);
                 if isempty(items), items = {'imgBFI'}; end
@@ -559,16 +682,25 @@ if nargout>0, h = fig; end
     end
 
     function refreshSelectionItems()
+        %refreshSelectionItems  WHAT IS COMPARED.  For a segmented recording that is
+        %   a vessel category or a named label; a myograph recording has neither, so
+        %   for those files it is the analysed diameter MEASURE or the recorded
+        %   CHANNEL - the same idea one level down.  A mixed list offers both, and a
+        %   file simply contributes nothing to a selection that is not about it.
         dom = currentDomain();
         idx = selectedFileIdx();
         lazyAny = any(arrayfun(@(i)isLazyFile(app.files(i).path), idx));
         if strcmp(c.dataType.Value,'Image map')
             items = {'(whole image)'};
+        elseif isMyoDataType(c.dataType.Value) || app.myo.only
+            items = app.myo.signals;
+            if isempty(items), items = {'(nothing analysed)'}; end
         elseif strcmp(dom,'dvs')
             items = {'All DVS','Arteries (DVS)','Veins (DVS)','Uncertain (DVS)'};
         else
             items = {'All vessels (lumen)','Arteries (lumen)','Veins (lumen)', ...
                 'Uncertain (lumen)','Parenchyma'};
+            if ~isempty(app.myo.signals), items = [items app.myo.signals]; end
         end
         if ~lazyAny && ~strcmp(c.dataType.Value,'Image map')
             for i=1:numel(app.labels), items{end+1} = ['Label: ' app.labels{i}]; end %#ok<AGROW>
@@ -578,6 +710,16 @@ if nargout>0, h = fig; end
         keep = keep(ismember(keep,items));
         if isempty(keep), keep = items(1); end
         c.selList.Value = keep;
+    end
+
+    function R = firstMyo(idx)
+        %firstMyo  The first loaded file that is a myograph recording, for filling a
+        %   menu from what one of them actually carries.
+        R = [];
+        for i = idx
+            Ri = tryLoad(app.files(i).path);
+            if isMyoResults(Ri), R = Ri; return; end
+        end
     end
 
 %% ==================== RENDER DISPATCH =================================== %%
@@ -593,15 +735,7 @@ if nargout>0, h = fig; end
         delete(findobj(app.fig,'Type','ColorBar'));   % drop a colorbar left by a previous image
         hold(app.ax,'on');
         try
-            switch c.dataType.Value
-                case 'Time series',           renderCurve('ts', app.ax);
-                case 'Scalar metric',         renderMetric(app.ax);
-                case 'Vasomotion spectrum',   renderCurve('spct', app.ax);
-                case 'Vasomotion time-freq',  renderSpectrogram(app.ax);
-                case 'Vasomotion percentile spectra',    renderPctSpectra(app.ax);
-                case 'Vasomotion amplitude percentiles', renderAmpPct(app.ax);
-                case 'Image map',             renderImage(app.ax);
-            end
+            renderInto(app.ax);
         catch ME
             hold(app.ax,'off');
             title(app.ax,'Could not plot this combination');
@@ -611,41 +745,110 @@ if nargout>0, h = fig; end
         hold(app.ax,'off');
     end
 
+    function renderInto(ax)
+        %renderInto  THE one dispatch from a plot family to its renderer, shared by
+        %   the live axes and the export axes so the exported figure can never be a
+        %   different plot from the one on screen.
+        switch c.dataType.Value
+            case 'Time series',           renderCurve('ts', ax);
+            case 'Scalar metric',         renderMetric(ax);
+            case 'Vasomotion spectrum',   renderCurve('spct', ax);
+            case 'Vasomotion time-freq',  renderSpectrogram(ax);
+            case 'Vasomotion percentile spectra',    renderPctSpectra(ax);
+            case 'Vasomotion amplitude percentiles', renderAmpPct(ax);
+            case 'Vasomotion marker',     renderMetric(ax);
+            case 'Diameter trace',        renderCurve('diam', ax);
+            case 'Per-line diameter',     renderPerLineDiameter(ax);
+            case 'Diameter stats',        renderMetric(ax);
+            case 'Propagation',           renderMetric(ax);
+            case 'Propagation lag',       renderCurve('lag', ax);
+            case 'Diameter map',          renderDiameterMap(ax);
+            case 'Detected walls',        renderWalls(ax);
+            case 'Image map',             renderImage(ax);
+        end
+    end
+
 %% ==================== OBSERVATION BUILDERS ============================== %%
     function [obs,meta] = gatherCurveObservations(kind)
-        % Build a flat list of "curve" observations (time series or spectrum), each
-        % tagged with selection/group/rec/file, honouring the Points-are setting.
+        % Build a flat list of "curve" observations (time series, spectrum or
+        % diameter trace), each tagged with selection/group/rec/interval/file,
+        % honouring the Points-are setting.  A MYOGRAPH file contributes one
+        % observation per analysed WINDOW, which is what puts the interval on an
+        % axis; a segmented file contributes one per file or per segment, as before,
+        % with an empty interval tag that no axis ever separates on.
         idx  = selectedFileIdx();
         sels = c.selList.Value; if ischar(sels), sels = {sels}; end
         pooledPerFile = pointsAreFiles(numel(idx));
         obs = struct('x',{},'y',{},'sel',{},'group',{},'rec',{}, ...
-            'animal',{},'type',{},'file',{});
+            'animal',{},'type',{},'interval',{},'file',{});
         meta = struct('xlabel','','ylabel','','xlog',false);
         for s = 1:numel(sels)
             for i = idx
                 R = tryLoad(app.files(i).path);
                 if isempty(R), continue; end
+                if isMyoResults(R)
+                    [obs,meta] = gatherMyoCurves(obs,meta,R,i,kind,sels{s});
+                    continue
+                end
+                if any(strcmp(kind,{'diam','lag'})), continue; end   % a segmented file has neither
                 [x,Y,w,ylab,xlab,xlog] = curveMatrix(R, app.files(i).path, kind, sels{s});
                 if isempty(Y), continue; end
                 meta.xlabel=xlab; meta.ylabel=ylab; meta.xlog=xlog;
                 isLabelSel = startsWith(sels{s},'Label:');
                 if pooledPerFile || isLabelSel
                     y = wmean(Y,w,2);                    % one representative curve/file
-                    obs(end+1) = mkObs(x,y,sels{s},i); %#ok<AGROW>
+                    obs(end+1) = mkObs(x,y,sels{s},i,''); %#ok<AGROW>
                 else
                     for k = 1:size(Y,2)                 % each segment is an observation
-                        obs(end+1) = mkObs(x,Y(:,k),sels{s},i); %#ok<AGROW>
+                        obs(end+1) = mkObs(x,Y(:,k),sels{s},i,''); %#ok<AGROW>
                     end
                 end
             end
         end
     end
 
-    function o = mkObs(x,y,sel,i)
+    function [obs,meta] = gatherMyoCurves(obs,meta,R,i,kind,sel)
+        %gatherMyoCurves  One curve per analysed WINDOW of one myograph recording.
+        %   The units inside a window (the lines of a per-line vasomotion) are
+        %   averaged into the window's curve: they are locations along one vessel,
+        %   not independent recordings, so a window is one observation.
+        for k = myoIntervalIdx(R, c.interval.Value)
+            switch kind
+                case 'diam'
+                    [x,y] = myoDiameterTrace(R,k,sel);
+                    if isempty(y), continue; end
+                    meta.xlabel='time (s)'; meta.ylabel='diameter (px)'; meta.xlog=false;
+                    if strcmp(c.variable.Value,'% of baseline')
+                        % Each window against ITS OWN mean, which is how a myograph
+                        % result is usually read: vessels of different calibre become
+                        % comparable, and a dilation is a number a reader recognises.
+                        base = mean(y,'omitnan');
+                        if ~isfinite(base) || base==0, continue; end
+                        y = 100*y/base; meta.ylabel='diameter (% of baseline)';
+                    end
+                case 'lag'
+                    [x,y] = myoPropLag(R,k,sel);
+                    if isempty(y), continue; end
+                    meta.xlabel='position along the vessel (line)';
+                    meta.ylabel='lag (s)'; meta.xlog=false;
+                case 'spct'
+                    V = myoVsmTree(R,k,sel);
+                    if isempty(V) || ~isfield(V,'fVectors') || ~isfield(V.fVectors,'ampMean'), continue; end
+                    x = double(V.f(:));
+                    y = mean(double(V.fVectors.ampMean),1,'omitnan')';
+                    meta.xlabel='frequency (Hz)'; meta.ylabel='amplitude (a.u.)'; meta.xlog=true;
+                otherwise
+                    continue
+            end
+            obs(end+1) = mkObs(x,y,sel,i,myoNameOf(R,k)); %#ok<AGROW>
+        end
+    end
+
+    function o = mkObs(x,y,sel,i,interval)
         o = struct('x',x(:),'y',y(:),'sel',prettySel(sel), ...
             'group',app.files(i).group,'rec',app.files(i).rec, ...
             'animal',app.files(i).animal,'type',app.files(i).type, ...
-            'file',app.files(i).name);
+            'interval',interval,'file',app.files(i).name);
     end
 
     function [vals,tags] = gatherScalarObservations()
@@ -654,11 +857,28 @@ if nargout>0, h = fig; end
         [colDom,colName] = parseMetricVar(c.variable.Value);
         pooledPerFile = pointsAreFiles(numel(idx));
         vals = []; tags = struct('sel',{},'group',{},'rec',{}, ...
-            'animal',{},'type',{},'file',{});
+            'animal',{},'type',{},'interval',{},'file',{});
+        myoKind = myoScalarKind(c.dataType.Value);
         for s = 1:numel(sels)
             for i = idx
                 R = tryLoad(app.files(i).path);
-                if isempty(R) || ~hasField(R,colDom), continue; end
+                if isempty(R), continue; end
+                if ~isempty(myoKind)
+                    % a myograph scalar: one value per analysed window
+                    if ~isMyoResults(R), continue; end
+                    for k = myoIntervalIdx(R, c.interval.Value)
+                        v = myoScalar(R,k,sels{s},myoKind,c.variable.Value);
+                        if ~isfinite(v), continue; end
+                        vals(end+1,1) = v; %#ok<AGROW>
+                        tags(end+1)   = mkTag(sels{s},i,myoNameOf(R,k)); %#ok<AGROW>
+                    end
+                    continue
+                end
+                if strcmp(c.dataType.Value,'Vasomotion marker')
+                    [vals,tags] = addMarkerValues(vals,tags,R,i,sels{s},pooledPerFile);
+                    continue
+                end
+                if ~hasField(R,colDom), continue; end
                 T = R.(colDom);
                 if ~istable(T) || ~ismember(colName,T.Properties.VariableNames), continue; end
                 rows = selectRows(T, sels{s}, domainOf(colDom));
@@ -669,21 +889,62 @@ if nargout>0, h = fig; end
                 isLabelSel = startsWith(sels{s},'Label:');
                 if pooledPerFile || isLabelSel
                     vals(end+1,1) = wmean(v,w,1); %#ok<AGROW>
-                    tags(end+1)   = mkTag(sels{s},i); %#ok<AGROW>
+                    tags(end+1)   = mkTag(sels{s},i,''); %#ok<AGROW>
                 else
                     for k=1:numel(v)
                         vals(end+1,1) = v(k); %#ok<AGROW>
-                        tags(end+1)   = mkTag(sels{s},i); %#ok<AGROW>
+                        tags(end+1)   = mkTag(sels{s},i,''); %#ok<AGROW>
                     end
                 end
             end
         end
     end
 
-    function t = mkTag(sel,i)
+    function [vals,tags] = addMarkerValues(vals,tags,R,i,sel,pooledPerFile)
+        %addMarkerValues  The band scalars of ONE recording, for one selection.  This
+        %   is the one scalar family that serves BOTH kinds of recording, because
+        %   scalars.<band>.<marker> is the identical leaf in both trees.  A segmented
+        %   recording contributes the segments the selection picks, area-weighted when
+        %   they are pooled, exactly as the Scalar metric family does; a myograph one
+        %   contributes one value per analysed WINDOW, its units averaged, because they
+        %   are locations along a single vessel rather than independent measurements -
+        %   the same rule every other myograph family already follows.
+        [sig,band,marker] = parseVsmMarkerVar(c.variable.Value);
+        if isempty(marker), return; end
+        if isMyoResults(R)
+            for k = myoIntervalIdx(R, c.interval.Value)
+                u = vsmMarkerValues(myoVsmTree(R,k,sel), band, marker);
+                u = u(isfinite(u));
+                if isempty(u), continue; end
+                vals(end+1,1) = mean(u); %#ok<AGROW>
+                tags(end+1)   = mkTag(sel,i,myoNameOf(R,k)); %#ok<AGROW>
+            end
+            return
+        end
+        tName = domainTable(sig);
+        if ~hasField(R,tName), return; end
+        v = vsmMarkerValues(getNested(R,['vasomotion.' sig]), band, marker);
+        T = R.(tName);
+        if isempty(v) || ~istable(T) || numel(v)~=height(T), return; end
+        rows = selectRows(T, sel, domainOf(tName));
+        w = weightCol(T); w = w(rows); v = v(rows);
+        good = isfinite(v); v = v(good); w = w(good);
+        if isempty(v), return; end
+        if pooledPerFile || startsWith(sel,'Label:')
+            vals(end+1,1) = wmean(v,w,1);
+            tags(end+1)   = mkTag(sel,i,'');
+        else
+            for k = 1:numel(v)
+                vals(end+1,1) = v(k); %#ok<AGROW>
+                tags(end+1)   = mkTag(sel,i,''); %#ok<AGROW>
+            end
+        end
+    end
+
+    function t = mkTag(sel,i,interval)
         t = struct('sel',prettySel(sel),'group',app.files(i).group, ...
             'rec',app.files(i).rec,'animal',app.files(i).animal, ...
-            'type',app.files(i).type,'file',app.files(i).name);
+            'type',app.files(i).type,'interval',interval,'file',app.files(i).name);
     end
 
 %% ==================== RENDERERS ========================================= %%
@@ -756,28 +1017,59 @@ if nargout>0, h = fig; end
         setStatus(sprintf('%d x-category(ies), %d points.', numel(xcats), numel(vals)));
     end
 
-    function renderSpectrogram(ax)
+    function X = vsmContext()
+        %vsmContext  THE vasomotion tree the single-recording views draw, and which
+        %   of its units go into the average.  ONE resolver for both kinds of
+        %   recording, which is what lets those views be written once: a segmented
+        %   recording answers with results.vasomotion.<signal> and the segments the
+        %   selection picks, area-weighted as they have always been; a myograph
+        %   recording answers with the chosen WINDOW's sub-tree - the SAME tree shape
+        %   - and every unit in it, unweighted, because its units are locations along
+        %   one vessel rather than segments of different sizes.
+        X = struct('R',[],'V',[],'rows',[],'w',[],'label','');
         idx = selectedFileIdx(); sels = c.selList.Value; if ischar(sels), sels={sels}; end
-        i = idx(1); sel = sels{1};
-        R = tryLoad(app.files(i).path);
-        sig = vsmSignalOf(c.variable.Value);
-        V = getNested(R, ['vasomotion.' sig]);
-        if isempty(V) || ~isfield(V,'spectrum') || ~isfield(V.spectrum,'amp')
-            title(ax,'No stored 2-D spectrum (run runVasomotion with ''spectrum'' in s.segVsmReturn)'); return;
+        if isempty(idx) || isempty(sels), return; end
+        X.R = tryLoad(app.files(idx(1)).path);
+        if isempty(X.R), return; end
+        if isMyoResults(X.R)
+            k = myoIntervalIdx(X.R, c.interval.Value);
+            if isempty(k), return; end
+            X.V = myoVsmTree(X.R,k(1),sels{1});
+            if isempty(X.V), return; end
+            n = vsmUnits(X.V);
+            X.rows = (1:n)'; X.w = ones(n,1); X.label = myoNameOf(X.R,k(1));
+        else
+            sig = vsmSignalOf(c.variable.Value);
+            X.V = getNested(X.R, ['vasomotion.' sig]);
+            if isempty(X.V), return; end
+            T = X.R.(domainTable(sig));
+            X.rows = selectRows(T, sels{1}, domainOf(domainTable(sig)));
+            X.w = weightCol(T); X.w = X.w(X.rows);
         end
-        rows = selectRows(R.(domainTable(sig)), sel, domainOf(domainTable(sig)));
-        w = weightCol(R.(domainTable(sig))); w=w(rows);
-        S = double(V.spectrum.amp(rows,:,:));              % [nSeg x nF x nD] wavelet amplitude (already |CWT|)
-        M = squeeze(wmean(permute(S,[2 3 1]), w, 3));      % [nF x nD] weighted mean
-        % shared axes live at the results.vasomotion root; gsData carries its own
-        if isfield(V,'f'), f=double(V.f(:)); else, f=double(getNested(R,'vasomotion.f')); f=f(:); end
-        if isfield(V,'timeDWT'), t=double(V.timeDWT(:)); else, t=double(getNested(R,'vasomotion.timeDWT')); t=t(:); end
+        if numel(idx)>1 || numel(sels)>1
+            setStatus('This view shows one recording and one selection; showing the first.');
+        end
+    end
+
+    function v = vsmAxis(X,name)
+        %vsmAxis  A shared axis of the tree (f / timeDWT / pctCenters): the sub-tree's
+        %   own copy when it has one, else the one at the results.vasomotion root.
+        if isfield(X.V,name), v = double(X.V.(name)); else, v = double(getNested(X.R,['vasomotion.' name])); end
+        v = v(:);
+    end
+
+    function renderSpectrogram(ax)
+        X = vsmContext();
+        if isempty(X.V) || ~isfield(X.V,'spectrum') || ~isfield(X.V.spectrum,'amp') ...
+                || isempty(X.V.spectrum.amp)
+            title(ax,'No stored time-frequency spectrum for this selection'); return;
+        end
+        S = double(X.V.spectrum.amp(X.rows,:,:));          % [nUnit x nF x nD] wavelet amplitude
+        M = squeeze(wmean(permute(S,[2 3 1]), X.w, 3));    % [nF x nD] weighted mean
+        f = vsmAxis(X,'f'); t = vsmAxis(X,'timeDWT');
         imagesc(ax, t, f, M); set(ax,'YDir','normal');
         try, set(ax,'YScale','log'); catch, end
         colormap(ax, c.cmap.Value); cb=colorbar(ax); cb.Label.String='amplitude (a.u.)';
-        if numel(idx)>1 || numel(sels)>1
-            setStatus('Time-freq shows one file/selection; showing the first.');
-        end
         finishAxes(ax,'time (s)','frequency (Hz)',gobjects(0),{}); legend(ax,'off');
         grid(ax,'off'); axis(ax,'tight');
     end
@@ -788,30 +1080,19 @@ if nargout>0, h = fig; end
         % legend giving each line's bin centre. Mirrors Myograph plotPctSpectra; single
         % file / first selection, like the time-freq view. Bins are keyed to root
         % pctCenters (bin CENTRES) - distinct from the ampPct LEVELS below.
-        idx = selectedFileIdx(); sels = c.selList.Value; if ischar(sels), sels={sels}; end
-        i = idx(1); sel = sels{1};
-        R = tryLoad(app.files(i).path);
-        sig = vsmSignalOf(c.variable.Value);
-        V = getNested(R, ['vasomotion.' sig]);
-        if isempty(V) || ~isfield(V,'fVectors') || ~isfield(V.fVectors,'VB') || ...
-                ~isfield(V.fVectors.VB,'ampMeanPct') || isempty(V.fVectors.VB.ampMeanPct)
-            title(ax,'No percentile spectra (fVectors.VB.ampMeanPct) - run runVasomotion with ''moments'' in s.segVsmReturn'); return;
+        X = vsmContext();
+        if isempty(X.V) || ~isfield(X.V,'fVectors') || ~isfield(X.V.fVectors,'VB') || ...
+                ~isfield(X.V.fVectors.VB,'ampMeanPct') || isempty(X.V.fVectors.VB.ampMeanPct)
+            title(ax,'No percentile-resolved spectra for this selection'); return;
         end
-        rows = selectRows(R.(domainTable(sig)), sel, domainOf(domainTable(sig)));
-        w = weightCol(R.(domainTable(sig))); w=w(rows);
-        S = double(V.fVectors.VB.ampMeanPct(rows,:,:));    % [nSel x nF x nB] mean spectrum per VB amplitude bin
-        M = squeeze(wmean(permute(S,[2 3 1]), w, 3));      % [nF x nB] area-weighted mean over the selected segments
+        S = double(X.V.fVectors.VB.ampMeanPct(X.rows,:,:)); % [nUnit x nF x nB] spectrum per amplitude bin
+        M = squeeze(wmean(permute(S,[2 3 1]), X.w, 3));     % [nF x nB] weighted mean over the units
         if isvector(M), M=M(:); end
-        % shared axes live at the results.vasomotion root; gsData carries its own
-        if isfield(V,'f'), f=double(V.f(:)); else, f=double(getNested(R,'vasomotion.f')); f=f(:); end
-        if isfield(V,'pctCenters'), pc=double(V.pctCenters(:)); else, pc=double(getNested(R,'vasomotion.pctCenters')); pc=pc(:); end
+        f = vsmAxis(X,'f'); pc = vsmAxis(X,'pctCenters');
         nB = min(numel(pc), size(M,2)); hLeg = gobjects(1,nB); names = cell(1,nB);
         for p = 1:nB                                       % one curve per envelope-amplitude bin (colours cycle the default order)
             hLeg(p) = plot(ax, f, M(:,p), 'DisplayName', sprintf('%gth pct', pc(p)));
             names{p} = sprintf('%gth pct', pc(p));
-        end
-        if numel(idx)>1 || numel(sels)>1
-            setStatus('Percentile spectra show one file/selection; showing the first.');
         end
         finishAxes(ax,'frequency (Hz)','amplitude (a.u.)',hLeg,names);
         set(ax,'XScale','log'); axis(ax,'tight');
@@ -823,36 +1104,26 @@ if nargout>0, h = fig; end
         % Myograph plotAmpPct; single file / first selection. The x-axis is the
         % percentile LEVELS s.pcts (0..100 %) - NOT the fVector bin CENTRES (pctCenters)
         % that key the percentile SPECTRA above.
-        idx = selectedFileIdx(); sels = c.selList.Value; if ischar(sels), sels={sels}; end
-        i = idx(1); sel = sels{1};
-        R = tryLoad(app.files(i).path);
-        sig = vsmSignalOf(c.variable.Value);
-        V = getNested(R, ['vasomotion.' sig]);
-        if isempty(V) || ~isfield(V,'scalars') || ~isfield(V.scalars,'VB') || ...
-                ~isfield(V.scalars.VB,'ampPct') || isempty(V.scalars.VB.ampPct)
-            title(ax,'No amplitude percentiles (scalars.VB.ampPct) - run runVasomotion with ''bands'' in s.segVsmReturn'); return;
+        X = vsmContext();
+        if isempty(X.V) || ~isfield(X.V,'scalars') || ~isfield(X.V.scalars,'VB') || ...
+                ~isfield(X.V.scalars.VB,'ampPct') || isempty(X.V.scalars.VB.ampPct)
+            title(ax,'No band amplitude percentiles for this selection'); return;
         end
-        rows = selectRows(R.(domainTable(sig)), sel, domainOf(domainTable(sig)));
-        w = weightCol(R.(domainTable(sig))); w=w(rows);
-        aVB = wmean(double(V.scalars.VB.ampPct(rows,:)), w, 1); aVB=aVB(:);   % [nP x 1] area-weighted mean over the selected segments
+        aVB = wmean(double(X.V.scalars.VB.ampPct(X.rows,:)), X.w, 1); aVB=aVB(:);
         nP = numel(aVB);
         % Percentile LEVELS: a *_r.mat results file carries no settings struct, so reuse
         % a stored s.pcts if a file provides one, else the s.pcts default (linspace(0,100,
         % nP) = 0:10:100 at nP=11); a level/count mismatch falls back to a plain index
         % (mirrors Myograph plotAmpPct).
-        pcts = double(getNested(R,'vasomotion.pcts'));
+        pcts = vsmAxis(X,'pcts');
         if isempty(pcts), pcts = linspace(0,100,nP)'; end
-        pcts = pcts(:);
         if numel(pcts)~=nP, pcts = (1:nP)'; end
         hLeg = plot(ax, pcts, aVB, '-o', 'DisplayName','VB'); names = {'VB'};
-        if isfield(V.scalars,'CB') && isfield(V.scalars.CB,'ampPct') && ~isempty(V.scalars.CB.ampPct)
-            aCB = wmean(double(V.scalars.CB.ampPct(rows,:)), w, 1); aCB=aCB(:);
+        if isfield(X.V.scalars,'CB') && isfield(X.V.scalars.CB,'ampPct') && ~isempty(X.V.scalars.CB.ampPct)
+            aCB = wmean(double(X.V.scalars.CB.ampPct(X.rows,:)), X.w, 1); aCB=aCB(:);
             if numel(aCB)==nP
                 hLeg(2) = plot(ax, pcts, aCB, '-s', 'DisplayName','CB'); names{2}='CB';
             end
-        end
-        if numel(idx)>1 || numel(sels)>1
-            setStatus('Amplitude percentiles show one file/selection; showing the first.');
         end
         finishAxes(ax,'amplitude percentile (%)','amplitude (a.u.)',hLeg,names);
         set(ax,'XScale','linear');
@@ -877,6 +1148,115 @@ if nargout>0, h = fig; end
         finishAxes(ax, '', '', gobjects(0), {}); legend(ax,'off');
         set(ax,'XTick',[],'YTick',[]); grid(ax,'off');
         if numel(idx)>1, setStatus('Image shows one file; showing the first selected.'); end
+    end
+
+    function renderDiameterMap(ax)
+        %renderDiameterMap  THE DIAMETER ALONG THE VESSEL, position against time.
+        %   This is the view that says whether detection held over the whole vessel
+        %   for the whole window: a line that wandered shows as a stripe, and a wall
+        %   that was lost shows as a band of missing values.  No myograph step writes
+        %   a report page, so this is where that check lives.
+        %
+        %   It reads the per-line arrays, which live ONCE in the recording's SOURCE
+        %   (the interval carries only the line-averaged trace), and it decimates in
+        %   time on the way in - a two-hour recording is not drawn at full rate onto
+        %   an axes a thousand pixels wide.
+        [R,path] = firstMyoFile();
+        if isempty(R), title(ax,'No myograph recording selected'); return; end
+        k = myoIntervalIdx(R, c.interval.Value);
+        if isempty(k), title(ax,'No analysed window to show'); return; end
+        sels = c.selList.Value; if ischar(sels), sels={sels}; end
+        [M,t,y,unit] = myoDiameterMap(R, path, k(1), sels{1});
+        if isempty(M)
+            title(ax,'The per-line diameter is not beside this result - keep the _MYO_d.mat with it');
+            return
+        end
+        imagesc(ax, t, y, M'); set(ax,'YDir','normal'); axis(ax,'tight');
+        m = isfinite(M);
+        if any(m(:))
+            lims = prctile(M(m),[2 98]);
+            if lims(2)>lims(1), clim(ax,lims); end
+        end
+        colormap(ax, c.cmap.Value); cb=colorbar(ax); cb.Label.String = ['diameter (' unit ')'];
+        finishAxes(ax,'time (s)','position along the vessel (line)',gobjects(0),{});
+        legend(ax,'off'); grid(ax,'off');
+        setStatus(sprintf('%s - %s, %d lines.', shortName(path), myoNameOf(R,k(1)), numel(y)));
+    end
+
+    function renderPerLineDiameter(ax)
+        %renderPerLineDiameter  EVERY LINE'S OWN DIAMETER against time, rather than
+        %   their average or their map.  The map says whether detection HELD; this says
+        %   what the individual traces DID - whether the lines move together, which is
+        %   the assumption a propagation speed is fitted under, and whether one stray
+        %   line is carrying an average the rest do not support.  Lines are coloured by
+        %   position so they can be read against the map, and the window's line average
+        %   is drawn over them in black.
+        [R,path] = firstMyoFile();
+        if isempty(R), title(ax,'No myograph recording selected'); return; end
+        k = myoIntervalIdx(R, c.interval.Value);
+        if isempty(k), title(ax,'No analysed window to show'); return; end
+        sels = c.selList.Value; if ischar(sels), sels={sels}; end
+        [M,t,y,unit] = myoDiameterMap(R, path, k(1), sels{1});
+        if isempty(M)
+            title(ax,'The per-line diameter is not beside this result - keep the _MYO_d.mat with it');
+            return
+        end
+        cm = colormap(ax, c.cmap.Value);
+        ci = round(linspace(1, size(cm,1), max(size(M,2),1)));
+        for j = 1:size(M,2)
+            plot(ax, t, M(:,j), '-', 'Color',[cm(ci(j),:) 0.45],'LineWidth',0.5, ...
+                'HandleVisibility','off');
+        end
+        hMean = plot(ax, t, mean(M,2,'omitnan'), '-','Color',[0 0 0],'LineWidth',1.8);
+        if numel(y)>1
+            clim(ax,[y(1) y(end)]); cb = colorbar(ax); cb.Label.String = 'line';
+        end
+        finishAxes(ax,'time (s)',['diameter (' unit ')'], hMean, {'line average'});
+        axis(ax,'tight');
+        setStatus(sprintf('%s - %s, %d lines.', shortName(path), myoNameOf(R,k(1)), size(M,2)));
+    end
+
+    function renderWalls(ax)
+        %renderWalls  ONE FRAME OF THE RECORDING WITH THE DETECTED WALLS ON IT - the
+        %   "did it find the right edges" check, and the other half of what a report
+        %   page would have carried.  The walls are drawn RED when that frame was
+        %   flagged invalid, which is a wall that had left the field of view: its
+        %   diameter is a lower bound rather than a measurement, and that has to be
+        %   visible rather than inferred.  The frame shown is the middle of the chosen
+        %   window, which is the one most likely to be representative of it.
+        [R,path] = firstMyoFile();
+        if isempty(R), title(ax,'No myograph recording selected'); return; end
+        k = myoIntervalIdx(R, c.interval.Value);
+        if isempty(k), title(ax,'No analysed window to show'); return; end
+        sels = c.selList.Value; if ischar(sels), sels={sels}; end
+        W = myoWallFrame(R, path, k(1), sels{1});
+        if isempty(W.frame)
+            title(ax,'The recording is not beside this result - keep the video with it');
+            return
+        end
+        image(ax, W.frame); axis(ax,'image');
+        col = [0.1 0.9 0.1]; if ~W.valid, col = [0.95 0.15 0.15]; end
+        plot(ax, W.left,  W.rows, '-', 'Color', col, 'LineWidth', 1.2);
+        plot(ax, W.right, W.rows, '-', 'Color', col, 'LineWidth', 1.2);
+        finishAxes(ax,'','',gobjects(0),{}); legend(ax,'off');
+        set(ax,'XTick',[],'YTick',[]); grid(ax,'off');
+        note = ''; if ~W.valid, note = '   wall out of view'; end
+        setStatus(sprintf('%s - %s, %.1f s%s', shortName(path), myoNameOf(R,k(1)), W.time, note));
+    end
+
+    function [R,path] = firstMyoFile()
+        %firstMyoFile  The myograph recording a single-recording view draws: the first
+        %   selected one, with the path it came from, because these two views read the
+        %   SOURCE beside it as well as the results.
+        R = []; path = '';
+        idx = selectedFileIdx();
+        for i = idx
+            Ri = tryLoad(app.files(i).path);
+            if isMyoResults(Ri), R = Ri; path = app.files(i).path; break; end
+        end
+        if ~isempty(R) && numel(idx)>1
+            setStatus('This view shows one recording; showing the first myograph one.');
+        end
     end
 
     function overlayPoints(ax, xc, cg, vals, xcats, cgcats, cols, dodge)
@@ -920,23 +1300,26 @@ if nargout>0, h = fig; end
         % "Organise by" choice. The first is the natural x-axis (box plots) and the
         % combination defines a series (curves). Selection is always kept separate
         % when several are shown so different vessel types are never pooled together.
-        % GROUP, INDEX, ANIMAL and TYPE are four INDEPENDENT axes (spec §2) - they
-        % never nest, so Auto simply takes whichever of them actually varies.  Animal
-        % and type are empty unless a session filled them, which is why a folder scan
-        % behaves exactly as it always did.
+        % GROUP, INDEX, ANIMAL, TYPE and INTERVAL are five INDEPENDENT axes (spec §2)
+        % - they never nest, so Auto simply takes whichever of them actually varies.
+        % Animal and type are empty unless a session filled them, and interval unless
+        % the recording is a myograph one, which is why a folder scan of speckle
+        % results behaves exactly as it always did.
         switch c.organize.Value
             case 'Group',           prim={'group'};
             case 'Recording index', prim={'rec'};
             case 'Animal',          prim={'animal'};
             case 'Type',            prim={'type'};
+            case 'Interval',        prim={'interval'};
             case 'Group x Index',   prim={'rec','group'};
             case 'Pool all',        prim={};
             otherwise                                  % Auto: use whatever varies
                 prim={};
-                if nDim(tg,'rec')>1,    prim{end+1}='rec';    end
-                if nDim(tg,'group')>1,  prim{end+1}='group';  end
-                if nDim(tg,'animal')>1, prim{end+1}='animal'; end
-                if nDim(tg,'type')>1,   prim{end+1}='type';   end
+                if nDim(tg,'rec')>1,      prim{end+1}='rec';      end
+                if nDim(tg,'group')>1,    prim{end+1}='group';    end
+                if nDim(tg,'animal')>1,   prim{end+1}='animal';   end
+                if nDim(tg,'type')>1,     prim{end+1}='type';     end
+                if nDim(tg,'interval')>1, prim{end+1}='interval'; end
         end
         dims=prim;
         if nDim(tg,'sel')>1, dims{end+1}='sel'; end
@@ -986,7 +1369,7 @@ if nargout>0, h = fig; end
         if isfield(tagLike,'dyn') && ~isempty(tagLike.dyn)
             % dynamic single-dimension legend (box colour groups)
             nm = pat;
-            for tk = {'%s','%g','%r','%a','%t','%f','%v'}, nm = strrep(nm,tk{1},''); end
+            for tk = {'%s','%g','%r','%a','%t','%i','%f','%v'}, nm = strrep(nm,tk{1},''); end
             nm = strtrim([strtrim(nm) ' ' tagLike.dyn]);
             if isempty(strtrim(nm)), nm=tagLike.dyn; end
             return;
@@ -997,6 +1380,7 @@ if nargout>0, h = fig; end
         nm = strrep(nm,'%r', pad0(tagLike.rec));
         nm = strrep(nm,'%a', pad0(tagLike.animal));
         nm = strrep(nm,'%t', pad0(tagLike.type));
+        nm = strrep(nm,'%i', pad0(tagLike.interval));
         nm = strrep(nm,'%f', pad0(tagLike.file));
         nm = strrep(nm,'%v', c.variable.Value);
         nm = strtrim(regexprep(nm,'\s+',' '));
@@ -1109,7 +1493,12 @@ if nargout>0, h = fig; end
                 case 'DataType',      c.dataType.Value=val; onDataType();
                 case 'Variable',      c.variable.Value=val; onVariable();
                 case 'Selection',     c.selList.Items=union(c.selList.Items,val,'stable'); c.selList.Value=val;
-                case 'Organise',      c.organize.Value=val;
+                case 'Interval'
+                    if ~ismember(val,c.interval.Items), c.interval.Items=[c.interval.Items {char(val)}]; end
+                    c.interval.Value=val;
+                case 'Organise'
+                    if ~ismember(val,c.organize.Items), c.organize.Items=[c.organize.Items {char(val)}]; end
+                    c.organize.Value=val;
                 case 'Points',        c.points.Value=val;
                 case 'Stat',          c.stat.Value=val;
                 case 'Title',         c.titleF.Value=val; app.manual.title=~isempty(val);
@@ -1130,15 +1519,7 @@ if nargout>0, h = fig; end
         tmp = figure('Visible','off','Color','w','Units','pixels', ...
             'Position',[100 100 1100 800]);
         axe = axes(tmp,'Color','w'); hold(axe,'on'); %#ok<LAXES>
-        switch c.dataType.Value
-            case 'Time series',          renderCurve('ts', axe);
-            case 'Scalar metric',        renderMetric(axe);
-            case 'Vasomotion spectrum',  renderCurve('spct', axe);
-            case 'Vasomotion time-freq', renderSpectrogram(axe);
-            case 'Vasomotion percentile spectra',    renderPctSpectra(axe);
-            case 'Vasomotion amplitude percentiles', renderAmpPct(axe);
-            case 'Image map',            renderImage(axe);
-        end
+        renderInto(axe);
         hold(axe,'off');
         switch fmt
             case 'PNG',          exportgraphics(axe, filename, 'Resolution', dpi, 'BackgroundColor','white');
@@ -1227,6 +1608,9 @@ if nargout>0, h = fig; end
             case 'Vasomotion time-freq', dom = domainOf(domainTable(vsmSignalOf(c.variable.Value)));
             case 'Vasomotion percentile spectra',    dom = domainOf(domainTable(vsmSignalOf(c.variable.Value)));
             case 'Vasomotion amplitude percentiles', dom = domainOf(domainTable(vsmSignalOf(c.variable.Value)));
+            case 'Vasomotion marker'
+                sig = parseVsmMarkerVar(c.variable.Value);
+                dom = domainOf(domainTable(sig));
             otherwise,                   dom = 'seg';
         end
     end
@@ -1244,6 +1628,11 @@ if nargout>0, h = fig; end
         % the <sig> sub-tree - a branch ('spectrum.amp') or a deeper path ('fVectors.VB.ampMeanPct',
         % 'scalars.VB.ampPct') - tested non-empty via getNested, so a signal is offered
         % only when that product was actually stored.
+        % A MYOGRAPH recording keeps one tree per analysed SIGNAL inside each window,
+        % and the signal is chosen in the selection list (it is what a comparison is
+        % about), so there is nothing left for this menu to choose and it says so
+        % with one entry rather than offering a choice that does nothing.
+        if isMyoResults(R), items = {'Vasomotion'}; return; end
         items = {};
         sigs = {'sData','Segments (vasomotion.sData)'; 'dvsData','DVS flow (vasomotion.dvsData)'; ...
                 'dvsDiameter','DVS diameter (vasomotion.dvsDiameter)'};
@@ -1396,7 +1785,35 @@ end
 function items = allDataTypes()
 %allDataTypes  Every plot family this tool can draw, in menu order.
 items = {'Time series','Scalar metric','Vasomotion spectrum','Vasomotion time-freq', ...
-         'Vasomotion percentile spectra','Vasomotion amplitude percentiles','Image map'};
+         'Vasomotion percentile spectra','Vasomotion amplitude percentiles', ...
+         'Vasomotion marker','Diameter trace','Per-line diameter','Diameter stats', ...
+         'Propagation','Propagation lag','Diameter map','Detected walls','Image map'};
+end
+
+function items = myoDataTypes()
+%myoDataTypes  The families only a MYOGRAPH recording can produce, so they can be
+%   dropped from the menu when nothing loaded is one.  The vasomotion families are
+%   deliberately NOT here: they draw the same tree from either kind of recording -
+%   including the marker box plot, which compares the band scalars of a speckle
+%   recording exactly as readily as those of a myograph one.
+items = [myoDiameterTypes() myoPropagationTypes()];
+end
+
+function items = myoDiameterTypes()
+%myoDiameterTypes  The families that need a measured DIAMETER, so they are dropped
+%   for a wire myograph, which records channels and never measures one.
+items = {'Diameter trace','Per-line diameter','Diameter stats','Diameter map', ...
+         'Detected walls'};
+end
+
+function items = myoPropagationTypes()
+%myoPropagationTypes  The families that need a PROPAGATION estimate: the scalars it
+%   concluded, and the per-line lags those were fitted to.
+items = {'Propagation','Propagation lag'};
+end
+
+function tf = isMyoDataType(name)
+tf = any(strcmp(name, myoDataTypes()));
 end
 
 function spec = dataTypeSteps()
@@ -1404,15 +1821,27 @@ function spec = dataTypeSteps()
 %   Only families whose data is a whole result TREE are listed: a session that never
 %   ran that step cannot offer them.  Families read straight off the standard
 %   RESULTS members (time series, scalar metrics, image maps) are always offered.
-spec = {'Vasomotion spectrum',              'vasomotion'; ...
-        'Vasomotion time-freq',             'vasomotion'; ...
-        'Vasomotion percentile spectra',    'vasomotion'; ...
-        'Vasomotion amplitude percentiles', 'vasomotion'};
+%
+%   EACH ENTRY IS A LIST, because the same plot comes out of different steps in
+%   different modalities: the vasomotion of a speckle recording and of a myograph
+%   one are the identical tree, written by 'vasomotion' and by 'myoVasomotion'.
+spec = {'Vasomotion spectrum',              {'vasomotion','myoVasomotion'}; ...
+        'Vasomotion time-freq',             {'vasomotion','myoVasomotion'}; ...
+        'Vasomotion percentile spectra',    {'vasomotion','myoVasomotion'}; ...
+        'Vasomotion amplitude percentiles', {'vasomotion','myoVasomotion'}; ...
+        'Vasomotion marker',                {'vasomotion','myoVasomotion'}; ...
+        'Diameter trace',                   {'myoDiameter'}; ...
+        'Per-line diameter',                {'myoDiameter'}; ...
+        'Diameter stats',                   {'myoDiameter'}; ...
+        'Diameter map',                     {'myoDiameter'}; ...
+        'Detected walls',                   {'myoDiameter'}; ...
+        'Propagation',                      {'myoPropagation'}; ...
+        'Propagation lag',                  {'myoPropagation'}};
 end
 
 function L = emptyLegendTag()
 %emptyLegendTag  The blank legend record: one field per token legendName expands.
-L = struct('sel','','group','','rec','','animal','','type','','file','');
+L = struct('sel','','group','','rec','','animal','','type','','interval','','file','');
 end
 
 function s = labelOr(v, dflt)
@@ -1494,6 +1923,509 @@ if isfield(R,'pulsatility') && isstruct(R.pulsatility) && isfield(R.pulsatility,
 end
 end
 
+%% ==================== THE MYOGRAPH ADAPTER ============================== %%
+% Everything this tool needs to know about a myograph recording, in one place.  The
+% PLOTS are the ones that already existed - these functions only answer "which tree,
+% which trace, which unit", so that a myograph file can be handed to them.
+
+function iv = myoFlat(R)
+%myoFlat  THE WINDOWS OF A MYOGRAPH RECORDING, in the one shape this adapter reads.
+%   A pressure myograph keeps them flat in results.intervals; a wire myograph splits
+%   them by CHANNEL, because one LabChart file is several chambers.  myographIntervals
+%   knows about both and hands back one list with .channelName written onto every
+%   element, so every k below is an index into THAT list and the rest of this file
+%   never has to ask which myograph it is looking at.
+iv = [];
+if isempty(R) || ~isstruct(R) || isfield(R,'x_lazy_'), return; end
+if ~isfield(R,'intervals') && ~isfield(R,'channel'), return; end
+iv = myographIntervals(R);
+end
+
+function iv = myoIntervalAt(R,k)
+%myoIntervalAt  One window of the flat list, or [] when the index is not one.
+iv = [];
+IV = myoFlat(R);
+if k>=1 && k<=numel(IV), iv = IV(k); end
+end
+
+function tf = isMyoResults(R)
+%isMyoResults  Is this a myograph recording?  Decided by the DATA: a myograph result
+%   holds its analysis inside the WINDOWS it was measured in, and nothing else does.
+tf = ~isempty(myoFlat(R));
+end
+
+function nm = myoIntervalNames(R)
+%myoIntervalNames  What the analysed windows are called, in recording order.  A wire
+%   myograph names them PER CHANNEL: two chambers whose baseline window is called
+%   'baseline' are two different windows, and a filter that could not tell them apart
+%   would silently average the chambers together.
+nm = {};
+iv = myoFlat(R);
+for k = 1:numel(iv), nm{end+1} = myoNameOf(R,k); end %#ok<AGROW>
+end
+
+function nm = myoNameOf(R,k)
+%myoNameOf  One window's name, or what it is when nobody named it, qualified by the
+%   channel it belongs to when there is one.
+iv = myoFlat(R);
+nm = '';
+if k<1 || k>numel(iv), return; end
+if isfield(iv(k),'name'), nm = char(string(iv(k).name)); end
+if isempty(nm), nm = sprintf('interval %d',k); end
+ch = '';
+if isfield(iv(k),'channelName'), ch = char(string(iv(k).channelName)); end
+if ~isempty(ch), nm = [nm ' - ' ch]; end
+end
+
+function idx = myoIntervalIdx(R,want)
+%myoIntervalIdx  Which windows the Interval filter leaves: all of them, or the one
+%   named.  A file that does not have the named window contributes nothing, which is
+%   how one filter serves a list of recordings whose windows differ.
+idx = [];
+if ~isMyoResults(R), return; end
+nm = myoIntervalNames(R);
+if isempty(want) || strcmp(want,'(all)'), idx = 1:numel(nm); return; end
+idx = find(strcmp(nm, want));
+end
+
+function S = myoSignalList(R)
+%myoSignalList  WHAT WAS ANALYSED in this recording, as the user should see it and
+%   as the tree stores it.  A pressure myograph analyses diameter MEASURES; a wire
+%   myograph analyses CHANNELS, whose real names ('Force 1 (mN)') cannot be struct
+%   field names and are therefore kept beside their trees.  Unioned over the windows
+%   in the order they first appear.
+S = struct('name',{},'field',{},'kind',{});
+IV = myoFlat(R);
+for k = 1:numel(IV)
+    iv = IV(k);
+    for b = {'diameter','propagation','vasomotion'}
+        if ~isfield(iv,b{1}), continue; end
+        B = iv.(b{1});
+        if ~isstruct(B) || ~isscalar(B), continue; end
+        if strcmp(b{1},'diameter')
+            if ~isfield(B,'stats') || ~isstruct(B.stats), continue; end
+            flds = fieldnames(B.stats)';
+        else
+            flds = fieldnames(B)';
+        end
+        for j = 1:numel(flds)
+            nm = measureLabel(flds{j}); kind = 'measure';
+            if strcmp(b{1},'vasomotion') && isstruct(B.(flds{j})) && ...
+                    isfield(B.(flds{j}),'channelName') && ~isempty(B.(flds{j}).channelName)
+                nm = char(string(B.(flds{j}).channelName)); kind = 'channel';
+            end
+            if any(strcmp(nm,{S.name})), continue; end
+            S(end+1) = struct('name',nm,'field',flds{j},'kind',kind); %#ok<AGROW>
+        end
+    end
+end
+end
+
+function tf = myoHasBranch(R,branch)
+%myoHasBranch  Did ANY analysed window of this recording get this branch written?
+tf = false;
+iv = myoFlat(R);
+if isempty(iv) || ~isfield(iv,branch), return; end
+for k = 1:numel(iv)
+    if ~isempty(iv(k).(branch)), tf = true; return; end
+end
+end
+
+function nm = measureLabel(field)
+%measureLabel  The diameter measures, named for a reader rather than for the code.
+switch field
+    case 'outer', nm = 'outer diameter';
+    case 'mid',   nm = 'wall-centre diameter';
+    case 'inner', nm = 'luminal diameter';
+    otherwise,    nm = field;
+end
+end
+
+function f = myoSignalField(R,name)
+%myoSignalField  The tree field behind a selection, '' when this recording has none.
+f = '';
+S = myoSignalList(R);
+k = find(strcmp({S.name}, name),1);
+if ~isempty(k), f = S(k).field; end
+end
+
+function meas = myoMeasureNames(R)
+%myoMeasureNames  The diameter measures this recording carries, in the order they
+%   were measured - which is the order of the third dimension of source.data.
+meas = {};
+iv = myoFlat(R);
+for k = 1:numel(iv)
+    d = iv(k).diameter;
+    if isstruct(d) && isscalar(d) && isfield(d,'stats') && isstruct(d.stats)
+        meas = fieldnames(d.stats)'; return
+    end
+end
+end
+
+function m = myoMeasureIndex(R,name)
+%myoMeasureIndex  Which plane of the per-line arrays a selection is, read off the
+%   tree's own order rather than assumed.  Falls back to the wall centre.
+m = min(2,max(1,numel(myoMeasureNames(R))));
+k = find(strcmp(myoMeasureNames(R), myoSignalField(R,name)),1);
+if ~isempty(k), m = k; end
+end
+
+function V = myoVsmTree(R,k,name)
+%myoVsmTree  ONE window's vasomotion sub-tree for one signal.  This is the whole
+%   lever: it is the same <VSM> tree shape as results.vasomotion.<signal>, so every
+%   vasomotion plot works on it unchanged.
+V = [];
+iv = myoFlat(R);
+if k<1 || k>numel(iv), return; end
+T = iv(k).vasomotion;
+if ~isstruct(T) || ~isscalar(T), return; end
+f = myoSignalField(R,name);
+if ~isempty(f) && isfield(T,f) && isstruct(T.(f)), V = T.(f); end
+end
+
+function n = vsmUnits(V)
+%vsmUnits  How many results one signal's tree holds: one for a line-averaged trace
+%   or a channel, one per image row when the vasomotion ran per line.
+n = 0;
+if ~isstruct(V) || ~isfield(V,'scalars'), return; end
+if isfield(V.scalars,'VB') && isfield(V.scalars.VB,'ampMean')
+    n = numel(V.scalars.VB.ampMean);
+elseif isfield(V.scalars,'CB') && isfield(V.scalars.CB,'ampMean')
+    n = numel(V.scalars.CB.ampMean);
+end
+end
+
+function [x,y] = myoDiameterTrace(R,k,name)
+%myoDiameterTrace  One window's line-averaged diameter, for one measure.
+x = []; y = [];
+iv = myoFlat(R);
+if k<1 || k>numel(iv), return; end
+d = iv(k).diameter;
+if ~isstruct(d) || ~isscalar(d) || ~isfield(d,'time'), return; end
+f = myoSignalField(R,name);
+if isempty(f) || ~isfield(d,f), return; end
+x = double(d.time(:)); y = double(d.(f)); y = y(:);
+if numel(y)~=numel(x), x = []; y = []; end
+end
+
+function [x,y] = myoPropLag(R,k,name)
+%myoPropLag  One window's per-line lag - THE EVIDENCE the propagation speed was
+%   fitted to.  A straight run of lags against position is a wave crossing the field
+%   of view; a scatter is a speed that should not be believed whatever its R2 says.
+%   Stored as [row lag_s] and holding ONLY the lines the fit accepted, so the x axis
+%   is the true position along the vessel and rejected lines are simply absent.
+x = []; y = [];
+iv = myoFlat(R);
+if k<1 || k>numel(iv), return; end
+p = iv(k).propagation;
+if ~isstruct(p) || ~isscalar(p), return; end
+f = myoSignalField(R,name);
+if isempty(f) || ~isfield(p,f) || ~isstruct(p.(f)), return; end
+L = p.(f).lagByRow;
+if isempty(L) || ~isnumeric(L) || size(L,2)~=2, return; end
+x = double(L(:,1)); y = double(L(:,2));
+end
+
+function [sig,band,marker] = parseVsmMarkerVar(varItem)
+%parseVsmMarkerVar  Split a marker menu entry into the signal it belongs to, its band
+%   and its name.  A MYOGRAPH entry carries no signal prefix - its signal is chosen in
+%   the selection list, as it is for every myograph family - so the prefix is simply
+%   absent and the returned signal is never used.
+sig = 'sData'; s = char(varItem);
+pre = {'[dvs diam] ','dvsDiameter'; '[dvs] ','dvsData'; '[seg] ','sData'};
+for k = 1:size(pre,1)
+    if startsWith(s,pre{k,1}), sig = pre{k,2}; s = s(numel(pre{k,1})+1:end); break; end
+end
+t = strsplit(strtrim(s),' ');
+band = t{1}; marker = '';
+if numel(t)>1, marker = strjoin(t(2:end),' '); end
+end
+
+function v = vsmMarkerValues(V,band,marker)
+%vsmMarkerValues  One band scalar out of one <VSM> tree, as a column of units -
+%   segments for a speckle recording, lines (or the single averaged trace) for a
+%   myograph one.  Empty when that analysis level was never requested, which is how a
+%   lean tree contributes nothing instead of erroring.
+v = [];
+if ~isstruct(V) || ~isscalar(V) || ~isfield(V,'scalars') || ~isstruct(V.scalars), return; end
+S = V.scalars;
+if ~isfield(S,band) || ~isstruct(S.(band)) || ~isfield(S.(band),marker), return; end
+x = S.(band).(marker);
+if ~isnumeric(x) && ~islogical(x), return; end
+v = double(x(:));
+end
+
+function items = vsmMarkerItems(R,Rmyo)
+%vsmMarkerItems  Every band SCALAR the loaded trees actually carry, band-qualified and
+%   - for a speckle recording - prefixed with the signal it belongs to, the way the
+%   Scalar metric menu already names its two tables.  A myograph tree needs no prefix.
+%   Percentile leaves are left out on purpose: they are a vector per unit rather than a
+%   number, and the amplitude-percentile family already draws them properly.
+items = {};
+sigs = {'sData','[seg] '; 'dvsData','[dvs] '; 'dvsDiameter','[dvs diam] '};
+for k = 1:size(sigs,1)
+    items = [items, vsmMarkerNames(getNested(R,['vasomotion.' sigs{k,1}]), sigs{k,2})]; %#ok<AGROW>
+end
+IVm = myoFlat(Rmyo);
+if ~isempty(IVm)
+    for k = 1:numel(IVm)
+        T = IVm(k).vasomotion;
+        if ~isstruct(T) || ~isscalar(T), continue; end
+        f = fieldnames(T)';
+        for j = 1:numel(f)
+            items = [items, vsmMarkerNames(T.(f{j}), '')]; %#ok<AGROW>
+        end
+    end
+end
+items = unique(items,'stable');
+if isempty(items), items = {'VB ampMean'}; end
+end
+
+function items = vsmMarkerNames(V,prefix)
+%vsmMarkerNames  The scalar leaves of one <VSM> tree, as menu entries.  One column is
+%   what makes a leaf a scalar per unit; a percentile leaf is [unit x percentile] and
+%   is skipped by that test rather than by name.
+items = {};
+if ~isstruct(V) || ~isscalar(V) || ~isfield(V,'scalars') || ~isstruct(V.scalars), return; end
+bands = fieldnames(V.scalars)';
+for b = 1:numel(bands)
+    B = V.scalars.(bands{b});
+    if ~isstruct(B), continue; end
+    f = fieldnames(B)';
+    for j = 1:numel(f)
+        x = B.(f{j});
+        if isempty(x) || ~(isnumeric(x)||islogical(x)) || size(x,2)~=1, continue; end
+        items{end+1} = [prefix bands{b} ' ' f{j}]; %#ok<AGROW>
+    end
+end
+end
+
+function items = myoStatItems(R)
+%myoStatItems  The diameter statistics this recording carries.
+items = {'mean'};
+iv = myoFlat(R);
+for k = 1:numel(iv)
+    d = iv(k).diameter;
+    if ~isstruct(d) || ~isscalar(d) || ~isfield(d,'stats'), continue; end
+    fn = fieldnames(d.stats);
+    if isempty(fn), continue; end
+    items = fieldnames(d.stats.(fn{1}))'; return
+end
+end
+
+function items = myoPropItems(R)
+%myoPropItems  The propagation numbers worth comparing across recordings - the
+%   answer and the two numbers that say whether to believe it.
+want = {'speed','R2','confidence','pValue','domFreq','nRows'};
+items = want;
+iv = myoFlat(R);
+for k = 1:numel(iv)
+    p = iv(k).propagation;
+    if ~isstruct(p) || ~isscalar(p), continue; end
+    fn = fieldnames(p);
+    if isempty(fn) || ~isstruct(p.(fn{1})), continue; end
+    items = want(ismember(want, fieldnames(p.(fn{1}))'));
+    if isempty(items), items = want; end
+    return
+end
+end
+
+function kind = myoScalarKind(dataType)
+%myoScalarKind  Which myograph branch a scalar plot family reads ('' = not one).
+switch dataType
+    case 'Diameter stats', kind = 'stat';
+    case 'Propagation',    kind = 'prop';
+    otherwise,             kind = '';
+end
+end
+
+function v = myoScalar(R,k,name,kind,varName)
+%myoScalar  One number out of one window: a diameter statistic or a propagation
+%   result, for the selected measure.
+v = NaN;
+f = myoSignalField(R,name);
+if isempty(f), return; end
+iv = myoFlat(R);
+if k<1 || k>numel(iv), return; end
+switch kind
+    case 'stat'
+        d = iv(k).diameter;
+        if ~isstruct(d) || ~isscalar(d) || ~isfield(d,'stats'), return; end
+        if ~isfield(d.stats,f) || ~isfield(d.stats.(f),varName), return; end
+        v = scalarOf(d.stats.(f).(varName));
+    case 'prop'
+        p = iv(k).propagation;
+        if ~isstruct(p) || ~isscalar(p) || ~isfield(p,f), return; end
+        if ~isfield(p.(f),varName), return; end
+        v = scalarOf(p.(f).(varName));
+end
+end
+
+function v = scalarOf(x)
+v = NaN;
+if ~isempty(x) && (isnumeric(x)||islogical(x)), x = double(x); v = x(1); end
+end
+
+% ---- the two views that read the recording's SOURCE, not just its results ----
+% The per-line arrays and the wall positions live ONCE, in the SOURCE beside the
+% results (the window carries only the line-averaged trace), so these two read it -
+% and read it in BLOCKS when the file is large, because a two-hour recording's
+% arrays are not something to pull into memory to draw one picture.
+
+function S = myoSourceHandle(rPath)
+%myoSourceHandle  The SOURCE beside a myograph RESULTS file: the whole struct when
+%   it is small, an HDF5 handle when it is not - the same rule the results
+%   themselves already follow.
+S = [];
+d = strrep(char(rPath),'_r.mat','_d.mat');
+if ~isfile(d), return; end
+info = dir(d);
+if ~isempty(info) && info(1).bytes > 1.5e9
+    S = struct('x_lazy_',true,'x_path_',d);
+else
+    L = load(d,'source');
+    if isfield(L,'source'), S = L.source; end
+end
+end
+
+function v = myoSourceField(S,name)
+%myoSourceField  One small SOURCE field (a time base, a row range, a flag).
+v = [];
+if isempty(S), return; end
+if isfield(S,'x_lazy_')
+    try, v = h5read(S.x_path_, ['/source/' name]); catch, end
+else
+    if isfield(S,name), v = S.(name); end
+end
+end
+
+function sz = myoSourceSize(S,name)
+%myoSourceSize  The shape of one big SOURCE array, without reading it.
+sz = [];
+if isempty(S), return; end
+if isfield(S,'x_lazy_')
+    try
+        I = h5info(S.x_path_, ['/source/' name]); sz = I.Dataspace.Size;
+    catch
+    end
+else
+    if isfield(S,name), sz = size(S.(name)); end
+end
+end
+
+function A = myoSlab(S,name,start,count,stride)
+%myoSlab  One block of a big SOURCE array: `count` elements per dimension, spaced
+%   `stride` apart, starting at `start`.  Read straight out of the file when the
+%   SOURCE is a handle, indexed out of the struct when it is not.
+A = [];
+if isempty(S), return; end
+if isfield(S,'x_lazy_')
+    try, A = h5read(S.x_path_, ['/source/' name], start, count, stride); catch, end
+    return
+end
+if ~isfield(S,name), return; end
+subs = cell(1,numel(start));
+for i = 1:numel(start)
+    subs{i} = start(i) : stride(i) : start(i)+(count(i)-1)*stride(i);
+end
+A = S.(name)(subs{:});
+end
+
+function p = myoRecordingPath(S,rPath)
+%myoRecordingPath  THE recording this product was made from: the path the entry step
+%   wrote down, else the video sitting beside the product - the same order the
+%   diameter step uses, so this finds one exactly when the pipeline would.
+p = '';
+v = myoSourceField(S,'fName');
+if ~isempty(v)
+    if isnumeric(v), v = char(v(:)'); end
+    p = char(string(v));
+end
+if ~isempty(p) && isfile(p), return; end
+[fPath,stem] = fileparts(regexprep(char(rPath),'_MYO_r\.mat$',''));
+for ext = {'.avi','.mp4','.mov','.mkv'}
+    cand = fullfile(fPath,[stem ext{1}]);
+    if isfile(cand), p = cand; return; end
+end
+p = '';
+end
+
+function rows = myoMeasuredRows(S,nY)
+%myoMeasuredRows  The image rows the vessel was actually measured on.  Rows outside
+%   them carry an interpolated fill and are not a measurement, so nothing draws them.
+rr = double(myoSourceField(S,'rowRange'));
+rows = 1:nY;
+if numel(rr)==2
+    r0 = max(1,round(rr(1))); r1 = min(nY,round(rr(2)));
+    if r1>=r0, rows = r0:r1; end
+end
+end
+
+function [M,t,y,unit] = myoDiameterMap(R,rPath,k,name)
+%myoDiameterMap  The per-line diameter of one window as [time x line], decimated in
+%   time so a long recording draws at the size of the axes rather than of the file.
+M = []; t = []; y = []; unit = 'px';
+S = myoSourceHandle(rPath);
+if isempty(S), return; end
+iv = myoIntervalAt(R,k);
+if isempty(iv) || ~isfield(iv,'frames') || numel(iv.frames)~=2, return; end
+i0 = double(iv.frames(1)); i1 = double(iv.frames(2));
+sz = myoSourceSize(S,'data');
+if numel(sz)<3 || i1>sz(1) || i1<i0, return; end
+rows = myoMeasuredRows(S,sz(2));
+m = min(myoMeasureIndex(R,name), sz(3));
+nT = i1-i0+1;
+dec = max(1, ceil(nT/2000));
+n = floor((nT-1)/dec)+1;
+M = double(myoSlab(S,'data',[i0 rows(1) m],[n numel(rows) 1],[dec 1 1]));
+if isempty(M), return; end
+tAll = double(myoSourceField(S,'time'));
+if numel(tAll)>=i1, t = tAll(i0:dec:i0+(n-1)*dec); else, t = (0:n-1)'; end
+t = t(:)'; y = rows;
+if ~isempty(myoSourceField(S,'pixelSize')), unit = 'px'; end
+end
+
+function W = myoWallFrame(R,rPath,k,name)
+%myoWallFrame  One frame of the recording, with the detected walls of the selected
+%   measure over it.  The MIDDLE frame of the window, as the one most likely to be
+%   representative of it, and the walls come back flagged when that frame was
+%   invalid - a wall had left the field of view, so its diameter is a lower bound.
+W = struct('frame',[],'left',[],'right',[],'rows',[],'valid',true,'time',NaN);
+S = myoSourceHandle(rPath);
+if isempty(S), return; end
+iv = myoIntervalAt(R,k);
+if isempty(iv) || ~isfield(iv,'frames') || numel(iv.frames)~=2, return; end
+sz = myoSourceSize(S,'wallL');
+if numel(sz)<3, return; end
+fi = min(max(1,round(mean(double(iv.frames)))), sz(1));
+rows = myoMeasuredRows(S,sz(2));
+m = min(myoMeasureIndex(R,name), sz(3));
+W.left  = double(myoSlab(S,'wallL',[fi rows(1) m],[1 numel(rows) 1],[1 1 1])); W.left = W.left(:);
+W.right = double(myoSlab(S,'wallR',[fi rows(1) m],[1 numel(rows) 1],[1 1 1])); W.right = W.right(:);
+W.rows  = rows(:);
+if numel(W.left)~=numel(W.rows) || isempty(W.left), W = resetWalls(W); return; end
+tAll = double(myoSourceField(S,'time'));
+if numel(tAll)>=fi, W.time = tAll(fi); end
+vv = myoSourceField(S,'valid');
+if ~isempty(vv) && numel(vv)>=fi, W.valid = logical(vv(fi)); end
+video = myoRecordingPath(S,rPath);
+if isempty(video), return; end
+try
+    vr = VideoReader(video);
+    vr.CurrentTime = min(max(W.time,0), max(0, vr.Duration - 1/max(vr.FrameRate,eps)));
+    W.frame = readFrame(vr);
+catch
+    W.frame = [];
+end
+end
+
+function W = resetWalls(W)
+W.left = []; W.right = []; W.rows = []; W.frame = [];
+end
+
+function s = onOff(tf), if tf, s = 'on'; else, s = 'off'; end, end
+
+%% ======================================================================= %%
 function v = getNested(R, name)
 % Fetch results.<a>.<b>... (dotted) from a full struct; [] if missing/lazy.
 v = [];
@@ -1608,11 +2540,12 @@ end
 
 function xl = xLabelFor(name)
 switch name
-    case 'rec',    xl='recording index';
-    case 'group',  xl='group';
-    case 'animal', xl='animal';
-    case 'type',   xl='recording type';
-    otherwise,     xl='selection';
+    case 'rec',      xl='recording index';
+    case 'group',    xl='group';
+    case 'animal',   xl='animal';
+    case 'type',     xl='recording type';
+    case 'interval', xl='interval';
+    otherwise,       xl='selection';
 end
 end
 

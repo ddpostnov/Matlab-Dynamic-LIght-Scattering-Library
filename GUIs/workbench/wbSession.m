@@ -43,8 +43,8 @@
 %   key/value cell arrays so the file is Map-free on disk (the trick
 %   wbSettingsModel uses for its preset), and the whole payload is swept for
 %   function handles before it is written (stripHandles, mirroring the wrappers'
-%   reportSettings / stripFcnHandles discipline) - a session must never serialise a
-%   closure over a dead figure.
+%   reportSettings discipline) - a session must never serialise a closure over a
+%   dead figure.
 %
 %   SCHEMA.  wbSessionData.schema names the layout version (currently 7; a file
 %   without the field is the unversioned Phase-3 layout, read as 1).  Loading an
@@ -65,7 +65,13 @@
 %   the field is neither written nor read - a schema-5 sidecar's chkKeys are simply
 %   ignored, and everything else about it still loads.  Schema 7 added .reprocess,
 %   the Process tab's re-run switch; a schema-6 sidecar reads it as false, which is
-%   the default and the safe answer.
+%   the default and the safe answer.  Schema 8 is a MIGRATION rather than a new
+%   field: runInternalCycle's reference-trace mask limits were renamed
+%   trustLimitsK/trustLimitsI -> maskLimitsK/maskLimitsI, so a schema-7 sidecar's
+%   step-scoped override of the old name is moved to the new one on load - see
+%   migrateMaskLimits.  It is the one kind of change that MUST bump the schema even
+%   though the layout is untouched: the same number under the same key would
+%   otherwise keep being applied to a completely different parameter.
 %
 % Syntax:
 %    wbSession('save', path, session)      % write the sidecar
@@ -153,7 +159,7 @@ end
 end
 
 % =====================================================================
-function v = schemaVersion(), v = 7; end
+function v = schemaVersion(), v = 8; end
 
 % =====================================================================
 function s = emptySession()
@@ -280,7 +286,7 @@ end
 % a session is read by two OTHER programs, long after this figure is gone: no
 % closure over it may ever reach the file (spec §5)
 wbSessionData = stripHandles(wbSessionData);
-save(pth,'wbSessionData','-v7.3');
+save(pth,'wbSessionData','-v7.3','-nocompression');
 end
 
 % =====================================================================
@@ -323,6 +329,35 @@ if isfield(p,'aselKeys'), session.animalSel = cellsToMap(p.aselKeys, trueVals(p.
 
 % ---- the completion record (schema 5; older sidecars simply have none) -------
 if isfield(p,'doneKeys'), session.completed = cellsToMap(p.doneKeys, p.doneVals, 'any'); end
+
+session = migrateMaskLimits(session);
+end
+
+% =====================================================================
+function session = migrateMaskLimits(session)
+%migrateMaskLimits  Schema 8: runInternalCycle's reference-trace mask limits.
+%   The step used to call them trustLimitsK/trustLimitsI - the names the contrast step
+%   uses for the mask it PROPAGATES, which is why the two steps had to carry different
+%   values under one shared key.  They are now maskLimitsK/maskLimitsI, and
+%   trustLimitsK/trustLimitsI on the internal cycle mean the propagated mask, exactly as
+%   they do on the contrast step.
+%
+%   An override recorded against the old name is MOVED, not dropped: it is the user's
+%   tuning of which pixels the pulse is detected from, and it still means that.  Left
+%   alone it would keep being applied - the same number, under the same key, doing a
+%   completely different job.  wbSettingsModel owns the walk over the step-scoped
+%   layers, and deliberately leaves the SHARED bags alone: there trustLimitsK is shared
+%   by name with the contrast and segmentation steps, and there it always meant trust.
+if session.schema >= schemaVersion(), return; end
+m = struct('stepOverrides',session.stepOverrides, ...
+           'fileOverrides',session.fileOverrides, ...
+           'typeOverrides',session.typeOverrides);
+m = wbSettingsModel('renameStepField', m, 'internalCycle','trustLimitsK','maskLimitsK');
+m = wbSettingsModel('renameStepField', m, 'internalCycle','trustLimitsI','maskLimitsI');
+session.stepOverrides = m.stepOverrides;
+session.fileOverrides = m.fileOverrides;
+session.typeOverrides = m.typeOverrides;
+session.schema        = schemaVersion();
 end
 
 % =====================================================================
@@ -376,9 +411,9 @@ end
 function v = stripHandles(v)
 %stripHandles  Recursively replace every function handle by its char text.
 %   The wrappers already drop their transport hooks before writing a settings file
-%   (Core/Reporting > reportSettings) and the myograph does the same for its GUI
-%   callbacks (stripFcnHandles); a session is read by other programs entirely, so
-%   it gets the same treatment for the whole payload - one place, no exceptions.
+%   (Core/Reporting > reportSettings), the myograph wrappers included; a session is
+%   read by other programs entirely, so it gets the same treatment for the whole
+%   payload - one place, no exceptions.
 %   The text is kept rather than deleted so a stray handle is visible in the file
 %   instead of silently vanishing.
 if isa(v,'function_handle')

@@ -406,8 +406,8 @@ for fidx=1:1:numel(fNames)
 
         settings.setVesselTypes=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end
@@ -1058,8 +1058,14 @@ try
     imagesc(ax,img); axis(ax,'image','off'); colormap(ax,'gray')
     setClim(ax,prctile(img(cMask(:)>0),[1,99]));
     hold(ax,'on')
-    % the type map on top, transparent outside the vessels, on ITS own colour scale
-    axMap=axes(f,'Units',ax.Units,'Position',ax.Position,'Color','none');
+    % The type map on top, transparent outside the vessels, on ITS own colour scale.
+    % IT GOES IN THE TILE, not on the figure at a copy of the tile's position: a
+    % second axes pinned to the same tile follows it when the layout re-flows, and
+    % the layout DOES re-flow - reportSave puts the recording's name across the top
+    % of every page.  Copied coordinates would leave the map behind, out of register
+    % with the image under it and with its caption on top of the page title.
+    axMap=axes(t,'Color','none');
+    axMap.Layout.Tile=ax.Layout.Tile;
     imagesc(axMap,map,'AlphaData',~isnan(map));
     axis(axMap,'image','off'); colormap(axMap,vesselTypeColormap()); clim(axMap,[-L L]);
     hold(axMap,'on')

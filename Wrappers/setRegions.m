@@ -158,8 +158,8 @@ for g=1:1:nGroups
 
         settings.setRegions=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3');
-        save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3');
+        save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
         reportSaved(rep);
 
         % --- inherit the same regions on the co-registered siblings (s.fNamesCopyTo) ---
@@ -239,8 +239,8 @@ writeRegionsReport(rep,targetName,targetImage(targetName,results),regionsMask);
 sT=s; sT.fName=targetName;
 settings.setRegions=reportSettings(sT);
 reportWriting(rep);
-save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3');
-save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3');
+save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
 reportSaved(rep);
 end
 

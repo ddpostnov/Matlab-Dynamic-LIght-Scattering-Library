@@ -48,7 +48,7 @@ particlesN       = 1000; % number of scattering particles
 % To add camera noise + 8-bit digitisation, append (OFF by default):
 %     'addNoise',true, 'cameraParams',struct('photonsPerPixel',500)
 
-save(fullfile(outputFolder,'speckles_integrated.mat'),'I','info','-v7.3');
+save(fullfile(outputFolder,'speckles_integrated.mat'),'I','info','-v7.3','-nocompression');
 
 % Validation: per-frame spatial contrast K = std/mean (< 1 because of exposure).
 K = squeeze(std(single(I),0,[1 2])./mean(single(I),[1 2]));
@@ -76,7 +76,7 @@ particlesN       = 1000;
     'nFrames',nFrames,'particlesN',particlesN,'verbose',true);
 % Camera noise is OFF by default; append 'addNoise',true to switch it on.
 
-save(fullfile(outputFolder,'speckles_raw_brownian.mat'),'I','info','-v7.3');
+save(fullfile(outputFolder,'speckles_raw_brownian.mat'),'I','info','-v7.3','-nocompression');
 
 % Validation: g2(tau) decay and the recovered decorrelation time.
 lagMax = round(4*tauC/dT);
@@ -105,7 +105,7 @@ particlesN       = 1000;
     'particlesN',particlesN,'verbose',true);
 % Camera noise is OFF by default; append 'addNoise',true to switch it on.
 
-save(fullfile(outputFolder,'speckles_decorrelated.mat'),'I','info','-v7.3');
+save(fullfile(outputFolder,'speckles_decorrelated.mat'),'I','info','-v7.3','-nocompression');
 
 % Validation: g2(0) shows the full speckle contrast, g2(>=1) ~ 1.
 g2 = squeeze(mean(getNormalizedG2(I,10,size(I,3),[2 2]),[1 2]));
@@ -140,7 +140,7 @@ for i = 1:numel(ppsList)
     info = baseInfo; info.pixelsPerSpeckle = ppsList(i); info.pixelSize = baseInfo.speckleSize/ppsList(i);
     K(i) = mean(std(single(I),0,3)./mean(single(I),3), 'all');
     save(fullfile(outputFolder,sprintf('speckles_pps%02d.mat', round(ppsList(i)*10))), ...
-        'I','pixelsPerSpeckle','info','-v7.3');
+        'I','pixelsPerSpeckle','info','-v7.3','-nocompression');
 end
 
 figure; plot(ppsList, K, 'o', 'MarkerFaceColor',[0 0.45 0.74], 'MarkerSize',8); hold on;

@@ -112,7 +112,9 @@ c.sessBtn = uibutton(s1,'Text','Load session...','ButtonPushedFcn',@onLoadSessio
                'its animal / recording type / experimental group already resolved']);
 uilabel(s1,'Text','Glob');
 c.globF = uieditfield(s1,'text','Value','*_BFI_d.mat', ...
-    'Tooltip','dir() glob used by "Scan folder..." (searched recursively)');
+    'Tooltip',['what "Scan folder..." looks for, searched recursively.  ' ...
+               '*_BFI_d.mat for processed speckle recordings, *_MYO_d.mat for ' ...
+               'myograph ones']);
 c.clearBtn = uibutton(s1,'Text','Clear list','ButtonPushedFcn',@(~,~)clearList(), ...
     'Tooltip','empty the file list');
 c.reprobeBtn = uibutton(s1,'Text','Re-read results','ButtonPushedFcn',@(~,~)reprobeAll(), ...
@@ -919,8 +921,30 @@ if isfield(R,'dvsMetrics'),  t{end+1} = 'dvs';         end
 if isfield(R,'pulsatility'), t{end+1} = 'pulsatility'; end
 if isfield(R,'vasomotion'),  t{end+1} = 'vasomotion';  end
 if isfield(R,'CTTH'),        t{end+1} = 'CTTH';        end
-P.trees = t;
+% A myograph recording keeps its results inside its analysed WINDOWS rather than in
+% a per-segment table, so what it offers is read from there.  myographIntervals is
+% what knows the two shapes those windows are stored in - flat for a pressure
+% myograph, split by channel for a wire one.  This is a probe, not a branch:
+% exportToExcel decides which sheets a file writes, and this only says what the
+% "has" column and the availability counts should show for it.
+iv = myographIntervals(R);
+if ~isempty(iv)
+    t{end+1} = sprintf('%d intervals', numel(iv));
+    for b = {'diameter','propagation','vasomotion'}
+        if anyInterval(iv, b{1}), t{end+1} = b{1}; end %#ok<AGROW>
+    end
+end
+P.trees = unique(t,'stable');
 P.ok = true;
+end
+
+function tf = anyInterval(iv, branch)
+%anyInterval  Did ANY analysed window get this branch written into it?
+tf = false;
+if ~isfield(iv,branch), return; end
+for i = 1:numel(iv)
+    if ~isempty(iv(i).(branch)), tf = true; return; end
+end
 end
 
 function s = labelOrNone(v)

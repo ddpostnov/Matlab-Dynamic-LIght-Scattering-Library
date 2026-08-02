@@ -355,8 +355,8 @@ for fidx=1:1:numel(fNames)
         settings.runPulsatility=reportSettings(s);
         reportWriting(rep);
         %NON-DESTRUCTIVE: SOURCE (_d) is never re-saved - only RESULTS and SETTINGS.
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3');
+        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

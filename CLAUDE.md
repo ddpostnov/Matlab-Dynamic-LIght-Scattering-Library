@@ -1,0 +1,153 @@
+# Working rules for this library
+
+MATLAB R2025b. Vascular Dynamics Analysis: LSCI / DLSI contrast pipelines, the
+Processing Workbench, and the Myograph subsystem. Layers are
+`Core/` → `Wrappers/` → `Launchers/` + `GUIs/`, with tests in `claude-tests/`
+(git-excluded — **Grep respects `.git/info/exclude`, so pass that path explicitly**).
+
+---
+
+## 1. Testing effort is budgeted
+
+**No single test invocation may exceed 20 minutes. Target 2–10.**
+
+A run heading past 20 minutes is **abnormal**. It is a defect in the *test* — an
+oversized fixture, a pin being run as a per-edit check — not a fact about the library.
+Split it, shrink its fixture, or ask. **Never sit through it.** Nothing in this library
+requires it: a user processes a whole recording in under 20 minutes.
+
+**Test depth is proportional to the change.**
+
+| Tier | What it is | Cost |
+|---|---|---|
+| **T0 — static** | `checkcode` on the changed files. No MATLAB run. | seconds |
+| **T1 — targeted** | The *one* test file covering the changed surface. | < 2 min |
+| **T2 — module fast** | `test<Module>Fast` | 2–6 min |
+| **T3 — exhaustive** | `test<Module>Exhaustive` — pins, goldens, pools. **Announce first.** | 15 min+ |
+
+### Where the common cases land
+
+| Change | Tier |
+|---|---|
+| GUI label, user-facing string, layout tweak | **T1** — the module's GUI test. *Not* a suite. |
+| Comment, header, docs | **T0** |
+| A new wrapper; a registry entry | **T2** |
+| A core numerics change | **T1** (that core's golden) **+ T2** |
+| A refactor guarded by a bit-identity pin | **T3**, announced |
+| Anything touching `parfor` / `wbPool` | **T3** with `includeParfor` |
+
+Escalating a tier costs one line saying why. Dropping a tier costs nothing.
+
+**Running everything is never the default.** Ask first. And never re-run a suite that
+was already green just to print a tidier summary — you already have the result. Three
+sweeps where one was needed is the single most expensive mistake made in this repo.
+
+---
+
+## 2. Announce anything over ~2 minutes
+
+Before a MATLAB run you expect to take more than ~2 minutes, say three things:
+
+- **what** is running,
+- **which tier, and why that tier**,
+- **how long** you expect it to take.
+
+Then surface progress *while it runs*. **An hour of silence is a defect in its own
+right**, independent of whether the result was green. `runTestList` prints each test
+before it starts and carries a running total for exactly this reason.
+
+---
+
+## 3. Test entry points
+
+| Module | Fast (per-edit) | Exhaustive (on purpose) |
+|---|---|---|
+| Workbench | `testWorkbenchFast` | `testWorkbenchExhaustive([includeParfor])` |
+| Myograph | `testMyographFast` | `testMyographExhaustive` |
+| LSCI | `testLSCIFast` | `testLSCIExhaustive` |
+| Reporting | `testReportingFast` | — whole module is ~2 min |
+| Registration | run the two files directly (~12 s) | — |
+
+`claude-docs/test-cost-inventory.md` holds the measured wall time of every test.
+Consult it before running something you have not run before.
+
+---
+
+## 4. Fixtures
+
+- **Never render a fixture inside a test.** Synthetic myograph recordings go through
+  `myographCachedVideo`, which keys the cache on the *parameters* — change a parameter
+  and it re-renders; change nothing and it copies. A guard like `if ~exist(vp,'file')`
+  keys on the file *name* and will silently serve a stale recording after a parameter
+  edit.
+- **Keep test data small enough to prove the point and no larger.** Ten minutes of
+  recording is plenty; two hours is not a test, it is a bill. If an assertion needs a
+  long recording to hold, that is worth knowing and worth writing down.
+- Use `-nocompression` on `save -v7.3` for large test artifacts.
+
+---
+
+## 5. The test tree does not grow by default
+
+Every file under `claude-tests/` earns its place, and **scaffolding is retired in the
+same session as the refactor it served** — not left for someone to find later. A test
+suite that only ever grows stops being a safety net and becomes a tax.
+
+A test or its scaffolding is **obsolete** when any of these is true:
+
+- **The refactor it guarded has landed and stayed green.** A before/after pin is
+  evidence for one change. Once that change is settled the pin is spent.
+- **It cannot fail.** If it compares today's code against a golden it regenerates from
+  today's code, it asserts nothing.
+- **Its fixture no longer exists**, so it skips or throws on every run.
+- **Its default arguments no longer match its golden** — it reports a library fault that
+  is really a stale argument.
+- **It is a one-off `bench*` or `check*` script** from a session that has closed.
+
+**Never give a frozen copy the real function's name.** `setLibraryPath` now demotes the
+`claude-*` trees to the end of the path, so a library file always outranks a tooling
+copy, and its second output names any collision:
+`[dropped,shadowed] = setLibraryPath(root)`. That is a backstop, not a licence — a
+harness that shadows a wrapper is still a bug waiting for the one code path that adds
+`claude-tests` itself. Name frozen copies distinctly (`runInternalCycleBefore.m`), never
+`runInternalCycle.m`.
+
+**`claude-tests/` is git-excluded, so deletion is irreversible.** Copy anything you
+remove to a scratch folder outside the repo first, and say in your report what was
+removed and why.
+
+Adding a test means adding its measured cost to `claude-docs/test-cost-inventory.md`.
+A test with no recorded cost cannot be tiered, and anything untiered ends up in the
+per-edit path by accident.
+
+---
+
+## 6. Gotchas that have already cost time
+
+- **`matlab.exe` on Windows returns immediately** unless given `-wait`; and
+  `Start-Process` with redirected stdout makes it exit without running anything. Launch
+  batch MATLAB through `cmd`: `matlab -wait -batch "…" > log 2>&1`.
+- **Check for a running `MATLAB.exe` before starting one.** The author's session may be
+  busy; do not attach to a shared session, it will queue behind their work.
+- **PowerShell `-match` is case-insensitive.** Parsing test logs for `FAIL`/`SKIP` with
+  it matches lowercase words inside check *names* and invents failures. Use `-cmatch`.
+- **MATLAB integer arithmetic saturates, it does not wrap.** A `uint64` hash pins at
+  `intmax` after a few characters and every key collides. Hash in `double`.
+- **`VideoWriter` appends the profile's extension.** An `outPath` of `x.avi.partial`
+  produces `x.avi.partial.avi`.
+- `addpath(genpath(root))` sweeps `.claude/worktrees/*` onto the path and **shadows the
+  library**. Always use `setLibraryPath(root)`, which drops `.claude`, demotes the
+  `claude-*` trees below every library folder, and reports name collisions.
+
+---
+
+## 7. House style
+
+- Every file carries the library header block (H1 summary, syntax, inputs/outputs,
+  example, `See also`, author/copyright) and the `%------------- BEGIN CODE --------------`
+  marker.
+- User-visible strings are written for biologists: no bracketed explanations, no
+  wrapper or settings-field names, registry labels rather than ids.
+- Retire a file by renaming it `OBSOLETE<name>.m`, never by deleting it.
+- Data model: `_d` / `_r` / `_s` triplets; wrappers are `run<X>` / `set<X>`, cores are
+  `get<X>` / `fit<X>`.

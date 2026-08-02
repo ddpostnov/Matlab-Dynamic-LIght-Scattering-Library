@@ -6,7 +6,7 @@
 %   delegated to the headless brain (wbStepRegistry, wbDiscoverFiles, wbFileModel,
 %   wbStateEngine, wbPrereqs, wbTypeModel, wbTypeSelection, wbSettingsModel,
 %   wbRefBranch, wbRunRange, wbInvalidate), to wbExecutor / wbModalGuard /
-%   wbArtifacts / makeReportPdf / wbPool, and to wbSession.
+%   wbUiGuard / wbArtifacts / makeReportPdf / wbPool, and to wbSession.
 %
 %   RUN IS AN EXPANSION, NOT A SELECTION.  Pressing Run turns the per-type
 %   configuration into an ordered list of (file, step) work items - each type's
@@ -93,13 +93,26 @@
 %   token comes from the Files tab and the STAGE flag from the producing step plus
 %   that type's own settings ('_t', '_s', '_c', '_e' - the stage alone, since the
 %   product letter changes down the pipeline while the row's identity, the branch,
-%   does not; spec D8).  It is a label and never resolves a file.  Settings stay keyed by
+%   does not; spec D8 - falling back to the product token for a product that carries
+%   no stage at all).  It is a label and never resolves a file.  Settings stay keyed by
 %   (step, TYPE) - two rows of one type share them - so a divergent animal is
 %   simply a second type.  Rows are built FROM THE DATA: two types or eleven work
 %   with no code change, and nothing anywhere branches on a type's name.  The two
 %   per-animal steps (registration, vessel typing) span the animal instead and get
 %   their own box; which BRANCH FILE of each animal's reference recording every
 %   reference-taking step resolves to is reported in the selection summary.
+%
+%   ONE SESSION MAY HOLD SEVERAL MODALITIES, AND THE QUESTION IS ASKED PER SCOPE.
+%   The step registry is the UNION over the modalities the working set actually
+%   holds, so a folder of speckle recordings and videos keeps both sets of columns
+%   (it used to be filtered by the statistical MODE of the two, which silently threw
+%   the minority away).  Below that, each scope asks for itself: the CONSTRUCTOR
+%   configures a type with its own modality's registry (regFor), which is what makes
+%   a row resolve to exactly one producer and a step serving two modalities pull in
+%   the right one; a cell whose column belongs to another modality is dead and says
+%   so.  Per FILE, wbStateEngine gates on the file's own modality - the one the user
+%   set on the Files tab.  Nothing outside wbFileModel and the registry's
+%   'modalities' field ever names a modality.
 %
 %   THREE TABS, THREE PROGRAMS.  This window PROCESSES; it neither exports nor
 %   plots.  Export and Explore are separate windows (guiExport, guiExplore), so
@@ -128,6 +141,16 @@
 %                    filter, the 'Create PDF reports' switch and the link list.  All
 %                    selection lives in the Constructor - spec D6/D7) *
 %
+%   THE MONITOR'S COLUMNS SIZE THEMSELVES (spec D5).  Both state tables hand their
+%   widths to the layout engine rather than naming pixels: every real column is
+%   'fit', so a header like 'Dynamic segmentation' and a row label like a file name
+%   plus its product flag are never cropped, and one EMPTY trailing column carries a
+%   '1x' that swallows whatever is left over - so a table with room to spare covers
+%   its block instead of stopping halfway across it, and one whose content is wider
+%   scrolls sideways with nothing cropped.  The spacer is empty because a '1x' has
+%   no minimum and clips whatever column it is put on.  The engine re-runs all of it
+%   on every resize, so the window has no resize code of its own.
+%
 %   NEXT AND EXIT NEVER MOVE.  'Next' (Files -> Constructor -> Process) and 'Exit
 %   workbench' sit in the same bottom-right corner of every tab - the last tab has
 %   no Next - so the settings and Reports panels each stop one row short of the
@@ -148,13 +171,13 @@
 %
 % See also: wbStepRegistry, wbDiscoverFiles, wbTypeModel, wbTypeSelection,
 %           wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
-%           wbRefBranch, wbRunRange, wbExecutor, wbModalGuard, wbArtifacts,
-%           makeReportPdf, wbPool, wbSession, guiExport, guiExplore, guiMyograph
+%           wbRefBranch, wbRunRange, wbExecutor, wbModalGuard, wbUiGuard,
+%           wbArtifacts, makeReportPdf, wbPool, wbSession, guiExport, guiExplore
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 01-August-2026
 
 %------------- BEGIN CODE --------------
 function h = guiWorkbench(varargin)
@@ -165,8 +188,10 @@ for i = 1:2:numel(varargin)
 end
 
 app = struct();
-app.reg          = wbStepRegistry('LSCI');       % v1 columns (the LSCI steps)
-app.modality     = 'LSCI';
+app.reg          = wbStepRegistry('LSCI');       % the UNION over the modalities loaded
+app.modality     = 'LSCI';                       % the working set's most common one
+app.typeMod      = containers.Map('KeyType','char','ValueType','char'); % type -> modality
+app.regCache     = containers.Map('KeyType','char','ValueType','any');  % modality -> registry
 app.sm           = wbSettingsModel('new');        % settings bag + overrides
 app.disc         = emptyDisc();
 app.rows         = emptyRows();                    % flat, animal-major, reference-first
@@ -239,8 +264,15 @@ setappdata(fig,'app',app);
 buildFilesTab(fig);
 buildConstructorTab(fig);
 buildProcessTab(fig);
+% NOT wrapped in wbUiGuard (spec D4): this fires AFTER MATLAB has already moved to
+% the other tab, so it is a notification rather than a command.  Dropping it would
+% leave the tab switched and the monitor showing the previous tab's picture, which
+% is worse than either doing it or not doing it.
 tg.SelectionChangedFcn = @(~,~) onTabSelected(fig);   % keep the monitor in step
 
+% NOT wrapped in wbUiGuard (spec D4), for the same reason the Exit button is not:
+% closing the window must stay possible while a run holds the latch, and
+% requestExit already turns a mid-run close into a cooperative stop.
 fig.CloseRequestFcn = @(~,~) requestExit(fig);
 
 % ---- programmatic API (drives the same internal logic as the UI) ----
@@ -285,13 +317,20 @@ api = struct( ...
     'rowChecked',  @(ty,br,stepId) wbTypeSelection('isOn',getApp(fig).typeSel,ty,br,stepId), ...
     'rowShown',    @(ty,br,stepId) rowShown(getApp(fig),ty,br,stepId), ...
     'rowInherited',@(ty,br,stepId) rowInherited(getApp(fig),ty,br,stepId), ...
-    'rowSelection',@(ty,br) wbTypeSelection('steps',getApp(fig).typeSel,getApp(fig).reg,ty,br), ...
-    'rowInheritedSteps',@(ty,br) wbTypeSelection('inherited',getApp(fig).typeSel,getApp(fig).reg,ty,br), ...
+    'rowSelection',@(ty,br) wbTypeSelection('steps',getApp(fig).typeSel,regFor(getApp(fig),ty),ty,br), ...
+    'rowInheritedSteps',@(ty,br) wbTypeSelection('inherited',getApp(fig).typeSel,regFor(getApp(fig),ty),ty,br), ...
     'rowOffers',   @(br,stepId) wbTypeSelection('offers',getApp(fig).reg,br,stepId), ...
     'rowWhyNot',   @(br,stepId) wbTypeSelection('why',getApp(fig).reg,br,stepId), ...
+    ... % ---- what ONE TYPE is configured with: its modality and its own steps ----
+    'typeModality',@(ty) modalityOfType(getApp(fig),ty), ...
+    'typeStepsFor',@(ty) {regFor(getApp(fig),ty).id}, ...
+    'typeBranches',@(ty) wbTypeSelection('branches',regFor(getApp(fig),ty)), ...
+    'typeOffers',  @(ty,br,stepId) stepInReg(regFor(getApp(fig),ty),stepId) && ...
+                                   wbTypeSelection('offers',regFor(getApp(fig),ty),br,stepId), ...
+    'modalities',  @() uniqueStable({getApp(fig).modelArr.modality}), ...
     'constructorRows',@() constructorRows(getApp(fig)), ...
     'rowFlag',     @(ty,br) rowFlagFor(getApp(fig),ty,br), ...
-    'typeRows',    @(ty) wbTypeSelection('rows',getApp(fig).typeSel,getApp(fig).reg,ty), ...
+    'typeRows',    @(ty) wbTypeSelection('rows',getApp(fig).typeSel,regFor(getApp(fig),ty),ty), ...
     'derivedEnabled',@() ~isempty(constructorRows(getApp(fig))), ...
     'tickAnimalStep',@(stepId,tf) tickAnimalStep(fig,stepId,tf), ...
     'animalStepChecked',@(stepId) isKey(getApp(fig).animalSel,stepId), ...
@@ -341,6 +380,7 @@ api = struct( ...
     'rawProgressData',@() getApp(fig).c.process.rawTable.Data, ...
     'derivedProgressData',@() getApp(fig).c.process.derivedTable.Data, ...
     'derivedProgressRows',@() getApp(fig).dRows, ...
+    'monitorWidths',@(kind) monitorWidthPolicy(fig,kind), ...
     'progressCell',@(p,stepId) progressCellOf(fig,p,stepId), ...
     'derivedCell', @(id,br,stepId) derivedCellOf(fig,id,br,stepId), ...
     'fileState',   @(p,stepId) fileStateOf(getApp(fig),p,stepId), ...
@@ -376,6 +416,15 @@ end
 %% ===================== app-state helpers ============================ %%
 function app = getApp(fig), app = getappdata(fig,'app'); end
 function setApp(fig,app), setappdata(fig,'app',app); end
+function h = ui(fig, fcn)
+%ui  ONE USER ACTION AT A TIME (spec D4).  Every command callback in this window
+%   goes through wbUiGuard, so a click made while another one is still running -
+%   which, during a run, means every click the user made at a frozen window and
+%   the next drawnow then replayed - is dropped rather than queued.  The inner
+%   handle keeps its own signature; this one forwards whatever MATLAB passes.
+%   Stop, Exit and the close button are deliberately NOT wrapped: see their sites.
+h = wbUiGuard('wrap', fig, fcn);
+end
 function d = emptyDisc()
 d = struct('fNames',{{}},'models',{{}},'flat',[],'animals',[],'referenceMode',false, ...
     'patterns',wbTypeModel('emptyPatterns'));
@@ -459,18 +508,18 @@ sp = uigridlayout(lp,[1 9], ...
 uilabel(sp,'Text','look in');
 c.root = uieditfield(sp,'text','Value','','Tooltip', ...
     'The folder to search.  Every subfolder inside it is searched too.', ...
-    'ValueChangedFcn',@(s,~)onSourceEdit(fig));
-uibutton(sp,'Text','Browse...','ButtonPushedFcn',@(~,~)uiBrowseRoot(fig));
+    'ValueChangedFcn',ui(fig,@(s,~)onSourceEdit(fig)));
+uibutton(sp,'Text','Browse...','ButtonPushedFcn',ui(fig,@(~,~)uiBrowseRoot(fig)));
 uilabel(sp,'Text','for files named');
-c.glob = uieditfield(sp,'text','Value',app.glob,'ValueChangedFcn',@(s,~)onSourceEdit(fig), ...
+c.glob = uieditfield(sp,'text','Value',app.glob,'ValueChangedFcn',ui(fig,@(s,~)onSourceEdit(fig)), ...
     'Tooltip',tipGlob());
-uibutton(sp,'Text','Scan','BackgroundColor',[0.82 0.92 0.82],'ButtonPushedFcn',@(~,~)uiScan(fig), ...
+uibutton(sp,'Text','Scan','BackgroundColor',[0.82 0.92 0.82],'ButtonPushedFcn',ui(fig,@(~,~)uiScan(fig)), ...
     'Tooltip','Search the folder and start a new list from what it finds.');
-uibutton(sp,'Text','Add files...','ButtonPushedFcn',@(~,~)uiAddFiles(fig), ...
+uibutton(sp,'Text','Add files...','ButtonPushedFcn',ui(fig,@(~,~)uiAddFiles(fig)), ...
     'Tooltip','Pick files yourself and add them to the list.  You can select several at once.');
-uibutton(sp,'Text','Add folder...','ButtonPushedFcn',@(~,~)uiAddFolder(fig), ...
+uibutton(sp,'Text','Add folder...','ButtonPushedFcn',ui(fig,@(~,~)uiAddFolder(fig)), ...
     'Tooltip','Search another folder and add what it finds to the list.');
-uibutton(sp,'Text','Clear','ButtonPushedFcn',@(~,~)uiClear(fig), ...
+uibutton(sp,'Text','Clear','ButtonPushedFcn',ui(fig,@(~,~)uiClear(fig)), ...
     'Tooltip','Empty the list.  No file is deleted from your disk.');
 
 % -- regexp row: one box per label axis + the reference rule --
@@ -498,7 +547,7 @@ c.fileTbl = uitable(lp, ...
     'ColumnWidth',fileTableWidths(), ...
     'ColumnSortable',true(1,numel(fileTableColumns())),'RowName',{}, ...
     'SelectionType','row','Multiselect','on', ...
-    'CellEditCallback',@(s,e)onFileTableEdit(fig,s,e));
+    'CellEditCallback',ui(fig,@(s,e)onFileTableEdit(fig,s,e)));
 c.fileTbl.ColumnFormat{1} = 'logical';              % the reference tick
 
 % -- quick assign: give EVERY selected row the same value in one go -----------
@@ -507,17 +556,17 @@ cp = uigridlayout(lp,[1 7], ...
 uilabel(cp,'Text','Quick assign: set','FontWeight','bold');
 c.assignAxis = uidropdown(cp,'Items',assignableColumns(),'Value','type', ...
     'Tooltip','Which label the selected rows should get.', ...
-    'ValueChangedFcn',@(~,~)refreshAssignItems(fig));
+    'ValueChangedFcn',ui(fig,@(~,~)refreshAssignItems(fig)));
 uilabel(cp,'Text','=');
 c.assignVal = uidropdown(cp,'Items',{''},'Value','','Editable','on', ...
     'Tooltip',['Pick a value you have used before, or type a new one.  The names are ' ...
                'entirely yours - nothing here has a fixed list.']);
 uibutton(cp,'Text','Apply to selected rows','BackgroundColor',[0.85 0.9 1], ...
-    'ButtonPushedFcn',@(~,~)uiAssignLabel(fig), ...
+    'ButtonPushedFcn',ui(fig,@(~,~)uiAssignLabel(fig)), ...
     'Tooltip',['Give every selected row this value at once.  Select rows by clicking ' ...
                'them in the table, shift-click for a range.']);
 uibutton(cp,'Text','Delete selected','BackgroundColor',[1 0.88 0.82], ...
-    'ButtonPushedFcn',@(~,~)uiDeleteSelected(fig), ...
+    'ButtonPushedFcn',ui(fig,@(~,~)uiDeleteSelected(fig)), ...
     'Tooltip','Take the selected rows out of this list.  Nothing is deleted from your disk.');
 c.curStatus = uilabel(cp,'Text','','FontAngle','italic','FontSize',10);
 
@@ -530,14 +579,14 @@ c.status   = uilabel(lp,'Text','No files loaded.','WordWrap','on');
 %   control - nothing that opens another window belongs in it.
 ssp = uigridlayout(lp,[1 7],'RowHeight',{'fit'}, ...
     'ColumnWidth',{'fit','fit','fit','fit','1x','fit','fit'},'Padding',[0 0 0 0]);
-uibutton(ssp,'Text','Save session...','ButtonPushedFcn',@(~,~)uiSaveSession(fig));
-uibutton(ssp,'Text','Load session...','ButtonPushedFcn',@(~,~)uiLoadSession(fig));
+uibutton(ssp,'Text','Save session...','ButtonPushedFcn',ui(fig,@(~,~)uiSaveSession(fig)));
+uibutton(ssp,'Text','Load session...','ButtonPushedFcn',ui(fig,@(~,~)uiLoadSession(fig)));
 uibutton(ssp,'Text','Export...','BackgroundColor',[0.90 0.94 1.0], ...
-    'ButtonPushedFcn',@(~,~)handOffSession(fig,'guiExport'), ...
+    'ButtonPushedFcn',ui(fig,@(~,~)handOffSession(fig,'guiExport')), ...
     'Tooltip',['Save the session and open the export tool on it, to write your results ' ...
                'to Excel.  It is a separate window and this one keeps running.']);
 uibutton(ssp,'Text','Explore...','BackgroundColor',[0.90 0.94 1.0], ...
-    'ButtonPushedFcn',@(~,~)handOffSession(fig,'guiExplore'), ...
+    'ButtonPushedFcn',ui(fig,@(~,~)handOffSession(fig,'guiExplore')), ...
     'Tooltip',['Save the session and open the results explorer on it, to plot and compare ' ...
                'your results.  It is a separate window and this one keeps running.']);
 uilabel(ssp,'Text','the session remembers your file list, its labels, the references and the settings', ...
@@ -555,11 +604,16 @@ function b = nextButton(parent,fig,text,tab,tip)
 %   last.  It is the ONLY forward move the window offers, and it goes through the
 %   same gate a tab click does, so an incomplete file set is refused identically.
 b = uibutton(parent,'Text',text,'BackgroundColor',[0.82 0.92 0.82], ...
-    'ButtonPushedFcn',@(~,~)guardTabSwitchTo(fig,tab),'Tooltip',tip);
+    'ButtonPushedFcn',ui(fig,@(~,~)guardTabSwitchTo(fig,tab)),'Tooltip',tip);
 end
 function b = exitButton(parent,fig)
 %exitButton  'Exit workbench' - PERSISTENT: the same button in the same corner of
 %   all three tabs, so leaving never means hunting for the tab that owns it.
+%
+%   NOT wrapped in ui() (spec D4).  Exit is the one command that must work while a
+%   run holds the latch: requestExit already handles the mid-run case by asking for
+%   the same cooperative stop the Stop button does, and dropping it would leave the
+%   user with a window they cannot leave for the length of the batch.
 b = uibutton(parent,'Text','Exit workbench','BackgroundColor',[1 0.82 0.82], ...
     'ButtonPushedFcn',@(~,~)requestExit(fig), ...
     'Tooltip',['Stop anything still running, save your session and close the window.  ' ...
@@ -582,7 +636,7 @@ end
 function f = patField(parent,fig,axis,dflt,tip)
 %patField  One regexp box, wired to the pattern struct.
 f = uieditfield(parent,'text','Value',dflt,'Tooltip',tip, ...
-    'ValueChangedFcn',@(s,~)onPatternEdit(fig,axis,s.Value));
+    'ValueChangedFcn',ui(fig,@(s,~)onPatternEdit(fig,axis,s.Value)));
 end
 
 function cols = fileTableColumns()
@@ -620,9 +674,18 @@ end
 function t = tipGlob()
 t = sprintf(['Which file names to look for.  * stands for any text.\n' ...
     '   *.rls           raw speckle recordings\n' ...
+    '   *.avi           myograph videos\n' ...
+    '   *.adicht        LabChart recordings\n' ...
     '   *_t_K_d.mat     contrast files\n' ...
     '   *_BFI_d.mat     blood flow files\n' ...
     'The five boxes below work differently - they are search patterns, not names.']);
+end
+function f = recordingFilter()
+%recordingFilter  The Add-files dialog's own list: processed products plus every
+%   raw container the name parser knows, so a modality added to wbFileModel shows
+%   up here without a second list to remember.
+exts = wbFileModel('extensions');
+f = strjoin([{'*.mat'}, cellfun(@(e) ['*' e], exts, 'UniformOutput', false)], ';');
 end
 function t = tipAnimal()
 t = sprintf(['Finds the ANIMAL - the subject - in each file name.  Each animal has one\n' ...
@@ -710,9 +773,9 @@ c.copySrc = uidropdown(tb,'Items',{''},'Value','', ...
                'A protocol only fills the boxes in - you can still change everything.']);
 uilabel(tb,'Text','to');
 c.copyDst = uidropdown(tb,'Items',{''},'Value','','Tooltip','The type that will be overwritten.');
-uibutton(tb,'Text','Copy','BackgroundColor',[0.85 0.9 1],'ButtonPushedFcn',@(~,~)uiCopyType(fig), ...
+uibutton(tb,'Text','Copy','BackgroundColor',[0.85 0.9 1],'ButtonPushedFcn',ui(fig,@(~,~)uiCopyType(fig)), ...
     'Tooltip','Give the second type the same steps and the same parameters as the first.');
-uibutton(tb,'Text','Reset selected type','ButtonPushedFcn',@(~,~)uiResetType(fig), ...
+uibutton(tb,'Text','Reset selected type','ButtonPushedFcn',ui(fig,@(~,~)uiResetType(fig)), ...
     'Tooltip','Put the type shown on the right back to the standard parameters.');
 c.status = uilabel(tb,'Text','','FontAngle','italic','FontSize',10);
 
@@ -731,11 +794,11 @@ sel = uigridlayout(right,[2 2],'ColumnWidth',{'fit','1x'},'RowHeight',{'fit','fi
 uilabel(sel,'Text','Type','FontWeight','bold');
 c.typeDrop = uidropdown(sel,'Items',{'(no types)'},'Value','(no types)', ...
     'Tooltip','The recording type whose parameters you are editing below.', ...
-    'ValueChangedFcn',@(s,~)selectConstructorType(fig,s.Value));
+    'ValueChangedFcn',ui(fig,@(s,~)selectConstructorType(fig,s.Value)));
 uilabel(sel,'Text','Step','FontWeight','bold');
 c.stepDrop = uidropdown(sel,'Items',{''},'Value','', ...
     'Tooltip','The processing step whose parameters are shown below.', ...
-    'ValueChangedFcn',@(s,~)selectConstructorStep(fig,s.Value));
+    'ValueChangedFcn',ui(fig,@(s,~)selectConstructorStep(fig,s.Value)));
 c.stepInfo = uilabel(right,'Text','','WordWrap','on','FontAngle','italic');
 c.scopeInfo = uilabel(right,'Text','','WordWrap','on','FontSize',10);
 c.paramPanel = uipanel(right,'BorderType','none');   % the section stack owns the scroll
@@ -796,6 +859,11 @@ function renderRawMatrix(fig,parent)
 %renderRawMatrix  One checkbox per (type, raw producer).  The producers are the
 %   steps whose input is the recording itself - derived from the registry, never
 %   listed - and each writes its own independent product.
+%
+%   THE COLUMNS ARE THE SESSION'S, THE CELLS ARE THE TYPE'S.  A mixed working set
+%   shows every modality's entry steps, so the matrix stays rectangular and the
+%   user can see what the other half of the folder is being offered; a cell whose
+%   step does not run on that type's recordings is dead and says why.
 app = getApp(fig);
 types = constructorTypes(app);
 cols  = wbTypeSelection('rawSteps', app.reg);
@@ -818,7 +886,7 @@ for s = 1:numel(cols)
     hp.Layout.Row = 1; hp.Layout.Column = s+1;
     uilabel(hp,'Text',step.label,'WordWrap','on','FontSize',10,'Tooltip',rawStepTip(step));
     gr = uigridlayout(hp,[1 1],'Padding',[0 0 0 0]);
-    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
+    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',ui(fig,@(~,~)selectConstructorStep(fig,step.id)));
 end
 for r = 1:numel(types)
     ty = types{r};
@@ -827,10 +895,15 @@ for r = 1:numel(types)
     lb.Layout.Row = r+1; lb.Layout.Column = 1;
     for s = 1:numel(cols)
         step = stepById(app.reg,cols{s});
-        cb = uicheckbox(grid,'Text',rowFlagFor(app,ty,step.branch), ...
-            'Value',wbTypeSelection('isOn',app.typeSel,ty,step.branch,cols{s}), ...
-            'FontSize',10,'Tooltip',rawCellTip(app,ty,step), ...
-            'ValueChangedFcn',@(o,~)tickRaw(fig,ty,cols{s},o.Value));
+        if ~stepInReg(regFor(app,ty),cols{s})
+            cb = uicheckbox(grid,'Text','','Value',false,'Enable','off', ...
+                'FontSize',10,'Tooltip',wrongModalityTip(app,ty,step));
+        else
+            cb = uicheckbox(grid,'Text',rowFlagFor(app,ty,step.branch), ...
+                'Value',wbTypeSelection('isOn',app.typeSel,ty,step.branch,cols{s}), ...
+                'FontSize',10,'Tooltip',rawCellTip(app,ty,step), ...
+                'ValueChangedFcn',ui(fig,@(o,~)tickRaw(fig,ty,cols{s},o.Value)));
+        end
         cb.Layout.Row = r+1; cb.Layout.Column = s+1;
     end
 end
@@ -853,15 +926,16 @@ function lines = tickRaw(fig,type,stepId,tf)
 %   never touched.
 app = getApp(fig);
 type = char(type); stepId = char(stepId);
-step = stepById(app.reg,stepId);
+reg  = regFor(app,type);                  % this type's own steps, not the session's
+step = stepById(reg,stepId);
 if isempty(step), lines = {}; return; end
 br = step.branch;
-app.typeSel = wbTypeSelection('set', app.typeSel, app.reg, type, br, stepId, logical(tf));
+app.typeSel = wbTypeSelection('set', app.typeSel, reg, type, br, stepId, logical(tf));
 setApp(fig,app);
 lines = {sprintf('constructor: [%s] %s %s -> %s row %s', type, ternary(logical(tf),'+','-'), ...
     stepId, rowFlagFor(getApp(fig),type,br), ternary(logical(tf),'added','removed'))};
 if ~tf
-    kept = wbTypeSelection('steps', app.typeSel, app.reg, type, br);
+    kept = wbTypeSelection('steps', app.typeSel, reg, type, br);
     if isempty(kept)
         lines{end+1} = sprintf('  its configuration is kept - re-tick %s to get the row back', stepId);
     end
@@ -879,15 +953,30 @@ function lines = tickRow(fig,type,branch,stepId,tf)
 %   UNTICK pushes the dependants out, since they could no longer run.  Both stay
 %   INSIDE the row - the other branch of the same recording is a separate pipeline -
 %   and both are logged, because a box the user did not click must never move
-%   silently.
+%   silently.  A TICK CAN ALSO MOVE A BOX THE OTHER WAY: a step the registry says
+%   cannot run beside this one is unticked, so what came back is sorted by where
+%   each box ended up rather than assumed to be all prerequisites.
 app = getApp(fig);
 type = char(type); branch = char(branch); stepId = char(stepId);
+reg  = regFor(app,type);                  % this type's own steps, not the session's
 flag = rowFlagFor(app,type,branch);
-[app.typeSel, changed, animalIds] = wbTypeSelection('set', app.typeSel, app.reg, ...
+[app.typeSel, changed, animalIds] = wbTypeSelection('set', app.typeSel, reg, ...
     type, branch, stepId, logical(tf));
 lines = {};
 if tf
     lines{end+1} = sprintf('constructor: [%s %s] + %s', type, flag, stepId);
+    % 'effective', not 'isOn': a recording-level prerequisite is stored on the
+    % anchor row, so asking this row's own key about it would read as unticked
+    on  = changed(cellfun(@(id) wbTypeSelection('effective',app.typeSel,reg,type,branch,id), changed));
+    off = changed(~ismember(changed,on));
+    if ~isempty(off)
+        % The one line here written in LABELS rather than ids: a box the user did
+        % not click has just been cleared, and the sentence explaining why is read
+        % by the person who ticked the other one.
+        lines{end+1} = sprintf('  unticked %s - it cannot be selected together with %s', ...
+            stepWords(reg,off), stepWords(reg,{stepId}));
+    end
+    changed = on;
     if ~isempty(changed)
         lines{end+1} = sprintf('  auto-ticked prerequisite(s) of %s: %s', stepId, strjoin(changed,', '));
     end
@@ -928,10 +1017,11 @@ function rows = constructorRows(app)
 %   temporal one reads '_t_K', in the same session.
 rows = struct('type',{},'branch',{},'flag',{},'label',{},'files',{});
 types = constructorTypes(app);
-brs   = wbTypeSelection('branches', app.reg);
 for i = 1:numel(types)
+    reg = regFor(app,types{i});                 % a type's rows are ITS modality's
+    brs = wbTypeSelection('branches', reg);
     for b = 1:numel(brs)
-        if ~wbTypeSelection('rowOn', app.typeSel, app.reg, types{i}, brs{b}), continue; end
+        if ~wbTypeSelection('rowOn', app.typeSel, reg, types{i}, brs{b}), continue; end
         rows(end+1) = mkRow(app,types{i},brs{b}); %#ok<AGROW>
     end
 end
@@ -943,9 +1033,9 @@ r = struct('type',type,'branch',branch,'flag',f, ...
 end
 
 function f = rowFlagFor(app,type,branch)
-%rowFlagFor  The STAGE FLAG a (type,branch) row's files carry - '_t', '_s', '_c',
-%   '_e' (spec D8).  Never a literal: the producing step's own outSuffix supplies
-%   the default stage, and a producer whose stage is a SETTING (the contrast step's
+%rowFlagFor  The FLAG a (type,branch) row's files carry - '_t', '_s', '_c', '_e',
+%   '_MYO' (spec D8).  Never a literal: it is read off the PRODUCING STEP's own
+%   outSuffix, and a producer whose stage is a SETTING (the contrast step's
 %   contrastType) is asked for this type's answer.  Row identity is (type, BRANCH),
 %   so switching a project from temporal to spatial contrast changes the flag shown,
 %   not the configuration.
@@ -953,18 +1043,28 @@ function f = rowFlagFor(app,type,branch)
 %   THE STAGE ALONE, NOT STAGE+PRODUCT.  The product letter changes down the
 %   pipeline ('_t_K' becomes '_t_BFI' at the BFI step) while the row's identity is
 %   the BRANCH, which does not - so showing '_t_K' on a row that will end up holding
-%   a '_t_BFI' was over-specified.  This is a DISPLAY label and nothing else: no
-%   file is ever resolved through it (that goes through branchScope / wbFileModel /
-%   contrastStageForModel), so shortening it cannot move a file.
+%   a '_t_BFI' was over-specified.
+%
+%   UNLESS THERE IS NO STAGE.  A product that carries only a product token and no
+%   stage flag ('_MYO': one triplet per recording, appended to in place) would come
+%   out of the stage rule as a bare '_', so the product token stands for it.  Same
+%   rule, one fall-back, and it is what keeps this from being contrast-specific.
+%
+%   This is a DISPLAY label and nothing else: no file is ever resolved through it
+%   (that goes through branchScope / wbFileModel / contrastStageForModel), so
+%   neither the shortening nor the fall-back can move a file.
 f = '';
-pid = wbTypeSelection('producer', app.reg, branch);
+reg = regFor(app,type);
+pid = wbTypeSelection('producer', reg, branch);
 if isempty(pid), return; end
-step = stepById(app.reg,pid);
+step = stepById(reg,pid);
 if isempty(step.outSuffix), return; end
-m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t
+m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t, '_MYO_d' -> product MYO
 st = m.stage;
 alt = settingStage(app,type,step);
 if ~isempty(alt), st = alt; end
+if isempty(st), st = m.product; end                 % no stage to show: name the product
+if isempty(st), return; end
 f = ['_' st];
 end
 
@@ -983,15 +1083,15 @@ end
 
 function tf = rawChecked(app,type,stepId)
 %rawChecked  Is this raw producer on for this type - i.e. does its row exist?
-tf = wbTypeSelection('isOn', app.typeSel, type, branchOfStep(app.reg,stepId), stepId);
+tf = wbTypeSelection('isOn', app.typeSel, type, branchOfStep(regFor(app,type),stepId), stepId);
 end
 function tf = rowShown(app,type,branch,stepId)
 %rowShown  What the cell DISPLAYS: its own tick, or the one it inherits.
-tf = wbTypeSelection('effective', app.typeSel, app.reg, type, branch, stepId);
+tf = wbTypeSelection('effective', app.typeSel, regFor(app,type), type, branch, stepId);
 end
 function tf = rowInherited(app,type,branch,stepId)
 %rowInherited  Is this cell showing a tick that belongs to the copy-source row?
-[~,tf] = wbTypeSelection('effective', app.typeSel, app.reg, type, branch, stepId);
+[~,tf] = wbTypeSelection('effective', app.typeSel, regFor(app,type), type, branch, stepId);
 end
 
 function renderDerivedPanel(fig)
@@ -1033,7 +1133,7 @@ for s = 1:numel(cols)
     hp.Layout.Row = 1; hp.Layout.Column = s+1;
     uilabel(hp,'Text',step.label,'WordWrap','on','FontSize',10,'Tooltip',headerTip(step));
     gr = uigridlayout(hp,[1 1],'Padding',[0 0 0 0]);
-    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
+    uibutton(gr,'Text','settings','FontSize',9,'ButtonPushedFcn',ui(fig,@(~,~)selectConstructorStep(fig,step.id)));
 end
 for r = 1:numel(rows)
     row = rows(r);
@@ -1051,23 +1151,32 @@ end
 end
 
 function cb = makeRowCell(fig,grid,app,row,stepId,preview)
-%makeRowCell  One derived cell: live, greyed-with-a-reason, or inherited.
-why = wbTypeSelection('why', app.reg, row.branch, stepId);
+%makeRowCell  One derived cell: live, greyed-with-a-reason, or inherited.  Every
+%   question is asked of THIS ROW'S TYPE registry, so a column belonging to another
+%   modality is dead here and says so, and the row rule ('why') never has to answer
+%   for a step this type does not have.
+reg = regFor(app,row.type);
+if ~stepInReg(reg,stepId)
+    cb = uicheckbox(grid,'Text','','Value',false,'Enable','off', ...
+        'Tooltip',wrongModalityTip(app,row.type,stepById(app.reg,stepId)));
+    return
+end
+why = wbTypeSelection('why', reg, row.branch, stepId);
 if preview || ~isempty(why)
     if isempty(why), why = 'Tick a step in the panel above first, to give this type a result to work on.'; end
     cb = uicheckbox(grid,'Text','','Value',false,'Enable','off','Tooltip',why);
     return
 end
-[tf,inh] = wbTypeSelection('effective', app.typeSel, app.reg, row.type, row.branch, stepId);
+[tf,inh] = wbTypeSelection('effective', app.typeSel, reg, row.type, row.branch, stepId);
 if inh
-    src = wbTypeSelection('anchorBranch', app.reg);
+    src = wbTypeSelection('anchorBranch', reg);
     cb = uicheckbox(grid,'Text','','Value',tf,'Enable','off', ...
         'Tooltip',sprintf('%s  Tick it on the %s row instead.', ...
-        sharedReason(stepById(app.reg,stepId)), rowFlagFor(app,row.type,src)));
+        sharedReason(stepById(reg,stepId)), rowFlagFor(app,row.type,src)));
     return
 end
-cb = uicheckbox(grid,'Text','','Value',tf,'Tooltip',cellTip(app.reg,stepId), ...
-    'ValueChangedFcn',@(o,~)tickRow(fig,row.type,row.branch,stepId,o.Value));
+cb = uicheckbox(grid,'Text','','Value',tf,'Tooltip',cellTip(reg,stepId), ...
+    'ValueChangedFcn',ui(fig,@(o,~)tickRow(fig,row.type,row.branch,stepId,o.Value)));
 end
 
 function t = sharedReason(step)
@@ -1100,6 +1209,16 @@ req = wbPrereqs('describe',step);
 if ~isempty(req)
     t = [t sprintf('\nIt needs %s first.  Ticking this ticks those too, on this row.', req)];
 end
+cw = step.conflictsWith;
+if ~isempty(cw)
+    t = [t sprintf('\nIt is an alternative to %s - ticking this unticks that.', ...
+        stepWords(reg,cw))];
+end
+if isfield(step,'note') && ~isempty(step.note)
+    % The one thing about this step a person has to know before ticking it, in the
+    % registry's own words - there is nowhere else the Constructor could read it.
+    t = [t sprintf('\n%s', step.note)];
+end
 end
 
 %% ---- Constructor: the per-animal steps ----------------------------- %%
@@ -1120,10 +1239,10 @@ for i = 1:numel(ids)
     step = stepById(app.reg,ids{i});
     uicheckbox(gl,'Text',step.label,'Value',isKey(app.animalSel,step.id), ...
         'Tooltip',animalStepTip(step), ...
-        'ValueChangedFcn',@(o,~)tickAnimalStep(fig,step.id,o.Value));
+        'ValueChangedFcn',ui(fig,@(o,~)tickAnimalStep(fig,step.id,o.Value)));
     uibutton(gl,'Text','settings','FontSize',9, ...
         'Tooltip','Open this step''s parameters in the panel on the right.', ...
-        'ButtonPushedFcn',@(~,~)selectConstructorStep(fig,step.id));
+        'ButtonPushedFcn',ui(fig,@(~,~)selectConstructorStep(fig,step.id)));
 end
 uilabel(gl,'Text',['These run once per animal, over all of its recordings whatever ' ...
     'their type.  Their parameters are the same for every animal.'],'WordWrap','on', ...
@@ -1179,22 +1298,24 @@ types = constructorTypes(app);
 ticked = {};
 for t = 1:numel(types)
     ty  = types{t};
-    brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+    reg = regFor(app,ty);                            % each type answers for itself
+    if ~stepInReg(reg, step.id), continue; end       % it does not run on this type at all
+    brs = wbTypeSelection('rows', app.typeSel, reg, ty);
     if isempty(brs)                                  % no product yet: make one
-        pid = defaultProducerFor(app.reg, step.id);
+        pid = defaultProducerFor(reg, step.id);
         if ~isempty(pid)
-            app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, ty, ...
-                branchOfStep(app.reg,pid), pid);
+            app.typeSel = wbTypeSelection('tick', app.typeSel, reg, ty, ...
+                branchOfStep(reg,pid), pid);
             ticked = [ticked, {pid}]; %#ok<AGROW>
         end
-        brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+        brs = wbTypeSelection('rows', app.typeSel, reg, ty);
     end
     for b = 1:numel(brs)
-        have = wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b});
-        need = wbPrereqs('missing', step, have);     % nothing when the row already feeds it
+        have = wbTypeSelection('steps', app.typeSel, reg, ty, brs{b});
+        need = wbPrereqs('missing', stepById(reg,step.id), have);  % nothing when the row feeds it
         for r = 1:numel(need)
-            if ~wbTypeSelection('offers', app.reg, brs{b}, need{r}), continue; end
-            app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, ty, brs{b}, need{r});
+            if ~wbTypeSelection('offers', reg, brs{b}, need{r}), continue; end
+            app.typeSel = wbTypeSelection('tick', app.typeSel, reg, ty, brs{b}, need{r});
             ticked = [ticked, need(r)]; %#ok<AGROW>
         end
     end
@@ -1271,7 +1392,7 @@ function tf = stepIsSelected(app,step,type)
 if strcmp(step.arity,'perAnimal'), tf = isKey(app.animalSel,step.id); return; end
 tf = false;
 if isempty(type), return; end
-brs = wbTypeSelection('rows', app.typeSel, app.reg, type);
+brs = wbTypeSelection('rows', app.typeSel, regFor(app,type), type);
 for b = 1:numel(brs)
     if wbTypeSelection('isOn', app.typeSel, type, brs{b}, step.id), tf = true; return; end
 end
@@ -1384,14 +1505,15 @@ function ids = plannedStepIds(app, type, branches)
 %   the whole type.
 ids = animalStepsOn(app);
 if isempty(type), ids = orderIds(app.reg, ids); return; end
+reg = regFor(app,type);
 if nargin<3
-    branches = wbTypeSelection('rows', app.typeSel, app.reg, char(type));
+    branches = wbTypeSelection('rows', app.typeSel, reg, char(type));
 end
 for b = 1:numel(branches)
-    ids = [ids, wbTypeSelection('steps',     app.typeSel, app.reg, type, branches{b}), ...
-                wbTypeSelection('inherited', app.typeSel, app.reg, type, branches{b})]; %#ok<AGROW>
+    ids = [ids, wbTypeSelection('steps',     app.typeSel, reg, type, branches{b}), ...
+                wbTypeSelection('inherited', app.typeSel, reg, type, branches{b})]; %#ok<AGROW>
 end
-ids = orderIds(app.reg, ids);
+ids = orderIds(app.reg, ids);            % ordered by the SESSION's registry: one order
 end
 
 %% ---- Constructor: settings per (step, type) ------------------------ %%
@@ -1551,7 +1673,7 @@ end
 if isempty(src) || strcmp(src,dst)
     setConstructorStatus(fig,'Pick two different types.'); return
 end
-app.typeSel = wbTypeSelection('copy', app.typeSel, app.reg, src, dst);
+app.typeSel = wbTypeSelection('copy', app.typeSel, regFor(app,dst), src, dst);
 app.sm      = wbSettingsModel('copyType', app.sm, src, dst);
 setApp(fig,app);
 recomputeBase(fig);
@@ -1572,19 +1694,20 @@ function applyPreset(fig,presetName,type)
 app = getApp(fig);
 p = wbTypePresets('get', presetName);
 if isempty(p), return; end
-app.typeSel = wbTypeSelection('clear', app.typeSel, app.reg, type);
-raw = wbTypeSelection('rawSteps', app.reg);
+reg = regFor(app,type);            % a protocol lands on the steps this type has
+app.typeSel = wbTypeSelection('clear', app.typeSel, reg, type);
+raw = wbTypeSelection('rawSteps', reg);
 for i = 1:numel(p.steps)
     if ~any(strcmp(p.steps{i},raw)), continue; end
-    b = branchOfStep(app.reg,p.steps{i});
-    app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, type, b, p.steps{i});
+    b = branchOfStep(reg,p.steps{i});
+    app.typeSel = wbTypeSelection('tick', app.typeSel, reg, type, b, p.steps{i});
 end
-brs = wbTypeSelection('rows', app.typeSel, app.reg, type);
+brs = wbTypeSelection('rows', app.typeSel, reg, type);
 for i = 1:numel(p.steps)
     if any(strcmp(p.steps{i},raw)), continue; end
     for b = 1:numel(brs)
-        if ~wbTypeSelection('offers', app.reg, brs{b}, p.steps{i}), continue; end
-        app.typeSel = wbTypeSelection('tick', app.typeSel, app.reg, type, brs{b}, p.steps{i});
+        if ~wbTypeSelection('offers', reg, brs{b}, p.steps{i}), continue; end
+        app.typeSel = wbTypeSelection('tick', app.typeSel, reg, type, brs{b}, p.steps{i});
     end
 end
 for i = 1:numel(p.animalSteps), app.animalSel(p.animalSteps{i}) = true; end
@@ -1602,7 +1725,7 @@ function resetTypeConfig(fig,type)
 app = getApp(fig);
 type = char(type);
 if isempty(type), setConstructorStatus(fig,'No type selected.'); return; end
-app.typeSel = wbTypeSelection('clear', app.typeSel, app.reg, type);
+app.typeSel = wbTypeSelection('clear', app.typeSel, regFor(app,type), type);
 app.sm      = wbSettingsModel('resetType', app.sm, type);
 setApp(fig,app);
 recomputeBase(fig);
@@ -1636,18 +1759,25 @@ types = constructorTypes(app);
 for i = 1:numel(types)
     ty  = types{i};
     n   = typeFileCount(app,ty);
-    brs = wbTypeSelection('rows', app.typeSel, app.reg, ty);
+    reg = regFor(app,ty);
+    if typeIsMixed(app,ty)
+        % legal but worth saying: the type is configured for the kind of recording
+        % MOST of its files are, and the odd one out will show its steps as skipped
+        lines{end+1} = sprintf(['%s: its recordings are not all the same kind - it is set up ' ...
+            'for %s, and the others will be skipped'], ty, modalityOfType(app,ty)); %#ok<AGROW>
+    end
+    brs = wbTypeSelection('rows', app.typeSel, reg, ty);
     if isempty(brs)
         lines{end+1} = sprintf('%s: nothing selected yet - %d recording(s)', ty, n); %#ok<AGROW>
         continue
     end
     for b = 1:numel(brs)
-        ids = wbTypeSelection('steps', app.typeSel, app.reg, ty, brs{b});
-        inh = wbTypeSelection('inherited', app.typeSel, app.reg, ty, brs{b});
+        ids = wbTypeSelection('steps', app.typeSel, reg, ty, brs{b});
+        inh = wbTypeSelection('inherited', app.typeSel, reg, ty, brs{b});
         lbl = sprintf('%s (%s)', ty, rowFlagFor(app,ty,brs{b}));
-        txt = stepWords(app.reg,ids);
+        txt = stepWords(reg,ids);
         if ~isempty(inh)
-            txt = sprintf('%s + carried over: %s', txt, stepWords(app.reg,inh));
+            txt = sprintf('%s + carried over: %s', txt, stepWords(reg,inh));
         end
         lines{end+1} = sprintf('%s: %s - %d %s on %d recordings = %d runs', ...
             lbl, txt, numel(ids), plural(numel(ids),'step'), n, numel(ids)*n); %#ok<AGROW>
@@ -1740,36 +1870,41 @@ tb = uigridlayout(left,[1 13], ...
     'Padding',[0 0 0 0],'ColumnSpacing',4);
 uilabel(tb,'Text','From','FontWeight','bold','Tooltip',tipRangeFrom());
 c.fromDrop = uidropdown(tb,'Items',{noRangeItem()},'ItemsData',{''}, ...
-    'ValueChangedFcn',@(s,~)onRangeEdit(fig,'from',s.Value),'Tooltip',tipRangeFrom());
+    'ValueChangedFcn',ui(fig,@(s,~)onRangeEdit(fig,'from',s.Value)),'Tooltip',tipRangeFrom());
 uilabel(tb,'Text','To','FontWeight','bold','Tooltip',tipRangeTo());
 c.toDrop = uidropdown(tb,'Items',{noRangeItem()},'ItemsData',{''}, ...
-    'ValueChangedFcn',@(s,~)onRangeEdit(fig,'to',s.Value),'Tooltip',tipRangeTo());
-c.previewBtn = uibutton(tb,'Text','Preview order','ButtonPushedFcn',@(~,~)dryRun(fig), ...
+    'ValueChangedFcn',ui(fig,@(s,~)onRangeEdit(fig,'to',s.Value)),'Tooltip',tipRangeTo());
+c.previewBtn = uibutton(tb,'Text','Preview order','ButtonPushedFcn',ui(fig,@(~,~)dryRun(fig)), ...
     'Tooltip','List everything that would run, in the order it would run.  Nothing is processed.');
-c.runBtn = uibutton(tb,'Text','Run','ButtonPushedFcn',@(~,~)runChecked(fig), ...
+c.runBtn = uibutton(tb,'Text','Run','ButtonPushedFcn',ui(fig,@(~,~)runChecked(fig)), ...
     'BackgroundColor',[0.82 0.92 0.82], ...
     'Tooltip','Run everything from the From step to the To step, in the right order.');
+% Stop is NOT wrapped in ui() (spec D4): it is the one control that has to work
+% BECAUSE the latch is held, and the run holds it from the first click to the last
+% line of finishRun.  Dropping it would mean a run could never be stopped.
 c.stopBtn = uibutton(tb,'Text','Stop','Enable','off','ButtonPushedFcn',@(~,~)cancelRun(fig), ...
     'BackgroundColor',[1 0.86 0.86],'Tooltip','Stop once the step now running has finished.');
 c.reproCheck = uicheckbox(tb,'Text','Re-process finished files','Value',false, ...
-    'ValueChangedFcn',@(s,~)onReprocessEdit(fig,s.Value),'Tooltip',tipReprocess());
+    'ValueChangedFcn',ui(fig,@(s,~)onReprocessEdit(fig,s.Value)),'Tooltip',tipReprocess());
 c.progLabel = uilabel(tb,'Text','Ready.','FontAngle','italic');
 c.presetDrop = uidropdown(tb,'Items',{'(launcher defaults)'},'Value','(launcher defaults)', ...
-    'ValueChangedFcn',@(s,~)onPresetPick(fig,s.Value), ...
+    'ValueChangedFcn',ui(fig,@(s,~)onPresetPick(fig,s.Value)), ...
     'Tooltip','Start every parameter from a set you saved earlier.');
-uibutton(tb,'Text','Save preset...','ButtonPushedFcn',@(~,~)uiSavePreset(fig));
-uibutton(tb,'Text','Load preset...','ButtonPushedFcn',@(~,~)uiLoadPreset(fig));
+uibutton(tb,'Text','Save preset...','ButtonPushedFcn',ui(fig,@(~,~)uiSavePreset(fig)));
+uibutton(tb,'Text','Load preset...','ButtonPushedFcn',ui(fig,@(~,~)uiLoadPreset(fig)));
 c.wipeBtn = uibutton(tb,'Text','Wipe all...','BackgroundColor',[1 0.82 0.82], ...
-    'ButtonPushedFcn',@(~,~)uiWipeAll(fig),'Tooltip',tipWipeAll());
+    'ButtonPushedFcn',ui(fig,@(~,~)uiWipeAll(fig)),'Tooltip',tipWipeAll());
 
 % -- the recordings table and the run log share one row (see the header) --
-topRow = uigridlayout(left,[1 2],'ColumnWidth',{'1.5x','1x'}, ...
+%    HALF EACH, and the row is a child of 'left' just as the results table is, so
+%    the two of them plus the gap between come to exactly the results table's width.
+topRow = uigridlayout(left,[1 2],'ColumnWidth',{'1x','1x'}, ...
     'Padding',[0 0 0 0],'ColumnSpacing',8);
 rawBox = uigridlayout(topRow,[2 1],'RowHeight',{'fit','1x'},'Padding',[0 0 0 0],'RowSpacing',2);
 uilabel(rawBox,'Text','Recordings - what is done to the recording itself, and it goes first', ...
     'FontWeight','bold','Tooltip',progressLegend());
 c.rawTable = uitable(rawBox,'Data',{},'ColumnName',{'Recording'},'RowName',{}, ...
-    'ColumnEditable',false,'CellSelectionCallback',@(~,ev)onProgressSelect(fig,'raw',ev), ...
+    'ColumnEditable',false,'CellSelectionCallback',ui(fig,@(~,ev)onProgressSelect(fig,'raw',ev)), ...
     'Tooltip',progressLegend());
 logBox = uigridlayout(topRow,[2 1],'RowHeight',{'fit','1x'},'Padding',[0 0 0 0],'RowSpacing',2);
 uilabel(logBox,'Text','Run log - the preview order, the progress and the errors', ...
@@ -1780,7 +1915,7 @@ prodBox = uigridlayout(left,[2 1],'RowHeight',{'fit','1x'},'Padding',[0 0 0 0],'
 uilabel(prodBox,'Text','Results - one row for each result your setup creates', ...
     'FontWeight','bold','Tooltip',derivedLegend());
 c.derivedTable = uitable(prodBox,'Data',{},'ColumnName',{'Recording and result'},'RowName',{}, ...
-    'ColumnEditable',false,'CellSelectionCallback',@(~,ev)onProgressSelect(fig,'derived',ev), ...
+    'ColumnEditable',false,'CellSelectionCallback',ui(fig,@(~,ev)onProgressSelect(fig,'derived',ev)), ...
     'Tooltip',derivedLegend());
 c.detail = uilabel(left,'Text','Select a row to see its file.','WordWrap','on','FontAngle','italic');
 
@@ -1790,20 +1925,20 @@ head = uigridlayout(right,[1 2],'ColumnWidth',{'1x','fit'}, ...
     'Padding',[0 0 0 0],'ColumnSpacing',4);
 uilabel(head,'Text','Reports (newest first)','FontWeight','bold');
 c.kindDrop = uidropdown(head,'Items',resultKindItems(),'ItemsData',resultKindIds(), ...
-    'Value','all','ValueChangedFcn',@(s,~)setResultFilter(fig,s.Value), ...
+    'Value','all','ValueChangedFcn',ui(fig,@(s,~)setResultFilter(fig,s.Value)), ...
     'Tooltip',tipResultKind());
 c.pdfCheck = uicheckbox(right,'Text','Create PDF reports','Value',false, ...
-    'ValueChangedFcn',@(s,~)setPdfReports(fig,s.Value),'Tooltip',tipPdfReports());
+    'ValueChangedFcn',ui(fig,@(s,~)setPdfReports(fig,s.Value)),'Tooltip',tipPdfReports());
 c.delCheck = uicheckbox(right,'Text','Delete the images once the PDF is written', ...
     'Value',false,'Enable','off', ...
-    'ValueChangedFcn',@(s,~)setDeleteAfterPdf(fig,s.Value),'Tooltip',tipDeleteAfterPdf());
+    'ValueChangedFcn',ui(fig,@(s,~)setDeleteAfterPdf(fig,s.Value)),'Tooltip',tipDeleteAfterPdf());
 c.resultList = uilistbox(right,'Items',{emptyResultItem()},'ItemsData',{''}, ...
     'Tooltip',['Every report the run has produced, newest first.  Double-click one to ' ...
                'open it in your image viewer, where you can zoom while processing ' ...
                'carries on.'], ...
-    'DoubleClickedFcn',@(s,~)openArtifactViewer(fig,s.Value));
+    'DoubleClickedFcn',ui(fig,@(s,~)openArtifactViewer(fig,s.Value)));
 c.openBtn = uibutton(right,'Text','Open selected', ...
-    'ButtonPushedFcn',@(~,~)openArtifactViewer(fig,getApp(fig).c.process.resultList.Value));
+    'ButtonPushedFcn',ui(fig,@(~,~)openArtifactViewer(fig,getApp(fig).c.process.resultList.Value)));
 f = tabFooter(right,fig,'',[],'');        % the last tab: Exit only
 c.exitBtn = f.exitBtn;
 
@@ -2028,7 +2163,7 @@ n = rebuildWorkingSet(fig, paths, false);
 end
 function uiAddFiles(fig)
 app = getApp(fig);
-[f,p] = uigetfile({'*.mat;*.rls;*.cxd;*.avi','Recordings & products';'*.*','All files'}, ...
+[f,p] = uigetfile({recordingFilter(),'Recordings & products';'*.*','All files'}, ...
     'Pick files (multiselect)','MultiSelect','on',defaultDir(app.root));
 if isequal(f,0), return; end
 if ischar(f), f = {f}; end
@@ -2212,17 +2347,30 @@ end
 end
 
 function adoptDiscovery(fig,disc,keepOverlay)
-%adoptDiscovery  Adopt a discovery grid: flatten to rows, set modality, render.
+%adoptDiscovery  Adopt a discovery grid: flatten to rows, set the modalities, render.
+%
+%   A SESSION IS NOT ONE MODALITY.  It used to be: the working set's modalities
+%   were reduced to their statistical MODE and the whole registry filtered by it,
+%   so a folder holding twelve speckle recordings and four videos silently lost
+%   every video step - and one holding more videos than recordings lost the lot.
+%   app.reg is now the UNION over the modalities actually present, in registry
+%   order, and the two questions that are NOT session-wide are asked one scope
+%   down: per FILE by wbStateEngine (a step is applicable when the file's own
+%   modality exposes it) and per TYPE by regFor, which is what keeps a row's
+%   producer, its branch and its requiresAny resolving to exactly one answer.
+%   app.modality survives as the one-word summary in the Files-tab status line.
 app = getApp(fig);
 app.disc = disc;
 [app.rows, app.animalNames, app.modelArr] = flattenDisc(disc);
-if ~isempty(app.modelArr)
-    mods = {app.modelArr.modality};
-    app.modality = modeStr(mods);
-else
-    app.modality = 'LSCI';
-end
-app.reg = wbStepRegistry(app.modality);
+mods = {};
+if ~isempty(app.modelArr), mods = uniqueStable({app.modelArr.modality}); end
+mods = mods(~cellfun(@isempty,mods));
+if isempty(mods), mods = {'LSCI'}; end
+app.modality = modeStr({app.modelArr.modality});
+app.reg      = wbStepRegistry(mods);
+app.regCache = containers.Map('KeyType','char','ValueType','any');
+for i = 1:numel(mods), app.regCache(mods{i}) = wbStepRegistry(mods{i}); end
+app.typeMod  = typeModalities(app);
 if nargin<3 || ~keepOverlay
     % a fresh load starts with no invalidation overlay
     app.stale = containers.Map('KeyType','char','ValueType','any');
@@ -2235,6 +2383,77 @@ logPerFileFlips(fig);         % D6: say so when a cell stopped reading as done
 renderConstructor(fig);       % types are data: a label edit adds/removes a row live
 refreshStatus(fig);
 autosaveSession(fig);         % the state changed -> the last session follows it
+end
+
+function m = typeModalities(app)
+%typeModalities  Each recording TYPE's modality: the modality of its files.
+%   A type is a group of recordings processed the same way, so in practice its
+%   files are one modality.  When they are not, the MODE stands for the type (and
+%   the selection summary says so) - the Constructor has to configure the type
+%   somehow, and the majority is the only defensible reading.  Nothing is stored
+%   for a type with no files: regFor then falls back to the union.
+m = containers.Map('KeyType','char','ValueType','char');
+if isempty(app.files), return; end
+tys = uniqueStable({app.files.type});
+for i = 1:numel(tys)
+    if isempty(tys{i}), continue; end
+    mods = {app.files(strcmp({app.files.type}, tys{i})).modality};
+    mods = mods(~cellfun(@isempty,mods));
+    if isempty(mods), continue; end
+    m(tys{i}) = modeStr(mods);
+end
+end
+
+function reg = regFor(app,type)
+%regFor  THE REGISTRY ONE TYPE IS CONFIGURED WITH - the union filtered down to that
+%   type's own modality (wbStepRegistry, which also prunes the requirements naming
+%   steps the filter removed).
+%
+%   WHY PER TYPE AND NOT PER SESSION.  Every Constructor question is asked of a
+%   type: which rows it has, which step produces each row, which steps a row
+%   offers, what a tick pulls in.  Each of those has exactly one answer only within
+%   one modality - two modalities can name the same branch, and a step serving both
+%   lists a producer for each in requiresAny - so asking them of the union would
+%   resolve a row to another modality's producer.  The union is still right for
+%   everything that spans the session: the monitor's columns, the run range, the
+%   settings panel, and the per-file gating.
+reg = app.reg;
+ty = char(type);
+if isempty(ty) || ~isfield(app,'typeMod') || ~isKey(app.typeMod,ty), return; end
+md = app.typeMod(ty);
+if isfield(app,'regCache') && isKey(app.regCache,md), reg = app.regCache(md);
+else,                                                 reg = wbStepRegistry(md);
+end
+end
+
+function md = modalityOfType(app,type)
+%modalityOfType  What regFor filtered by ('' when the type has no files).
+md = '';
+ty = char(type);
+if ~isempty(ty) && isfield(app,'typeMod') && isKey(app.typeMod,ty), md = app.typeMod(ty); end
+end
+
+function tf = typeIsMixed(app,type)
+%typeIsMixed  Does this type hold more than one modality?  Legal, and reported in
+%   the selection summary, because the type is then configured for its majority.
+tf = false;
+if isempty(app.files), return; end
+mods = {app.files(strcmp({app.files.type}, char(type))).modality};
+tf = numel(unique(mods(~cellfun(@isempty,mods)))) > 1;
+end
+
+function tf = stepInReg(reg,stepId)
+%stepInReg  Is this column one of the steps that type's recordings can run?
+tf = ~isempty(reg) && any(strcmp(char(stepId), {reg.id}));
+end
+
+function t = wrongModalityTip(app,type,step)
+%wrongModalityTip  Why a column is dead for this type - the file's own kind, in the
+%   words the Files tab uses for it.
+md = modalityOfType(app,type);
+if isempty(md), md = 'these'; end
+t = sprintf('%s does not run on %s recordings, and %s is %s.', ...
+    step.label, strjoin(step.modalities,'/'), type, md);
 end
 
 function n = logPerFileFlips(fig)
@@ -3046,11 +3265,15 @@ else
     nUntyped = sum(strcmp({app.files.type}, wbTypeModel('default','type')));
     nTy = numel(wbTypeModel('values', app.labels, 'type'));
     nGr = numel(wbTypeModel('values', app.labels, 'expGroup'));
+    mods = uniqueStable({app.files.modality});
+    mods = mods(~cellfun(@isempty,mods));
+    if isempty(mods), mods = {app.modality}; end
     txt = sprintf(['%d files - %d %s - %d recording %s - %d experimental %s - ' ...
-        '%d untyped - %d %s without a reference recording.  Modality %s.'], ...
+        '%d untyped - %d %s without a reference recording.  %s %s.'], ...
         numel(app.files), numel(animalsNow), plural(numel(animalsNow),'animal'), ...
         nTy, plural(nTy,'type'), nGr, plural(nGr,'group'), ...
-        nUntyped, nNoRef, plural(nNoRef,'animal'), app.modality);
+        nUntyped, nNoRef, plural(nNoRef,'animal'), ...
+        ternary(isscalar(mods),'Modality','Modalities'), strjoin(mods,', '));
 end
 app.c.files.status.Text = txt;
 end
@@ -3204,7 +3427,7 @@ for i = 1:numel(app.files)
         continue
     end
     if isempty(f.type), continue; end
-    brs = wbTypeSelection('rows', app.typeSel, app.reg, f.type);
+    brs = wbTypeSelection('rows', app.typeSel, regFor(app,f.type), f.type);
     for b = 1:numel(brs)
         key = [f.model.identity '||' brs{b}];
         if isKey(seen,key), continue; end              % one row per (recording, product)
@@ -3274,12 +3497,45 @@ refreshProgressDetail(fig);
 end
 
 function setTableColumns(h, firstName, ids, reg)
-%setTableColumns  Column headers of one monitor table, from the registry's labels.
+%setTableColumns  Column headers of one monitor table, from the registry's labels,
+%   and the width policy both of them run under (spec D5).
+%
+%   THE WIDTHS ARE THE ENGINE'S JOB, NOT OURS.  R2025b's ColumnWidth takes 'fit'
+%   (size to this column's own content, header included) and '1x' (take what is
+%   left, the way a uigridlayout's '1x' or a WPF star does).  Both were fixed
+%   numbers here - 240 for the name and 94 for every step - and both cropped:
+%   'Internal cycle' alone measures 95 px and 'Dynamic segmentation' 163, while a
+%   row label is a file name plus a product flag plus, sometimes, the word
+%   reference.  An earlier attempt estimated the widths in MATLAB instead
+%   (px-per-character, measured back from the table's own contents); it was dropped
+%   because the estimate is necessarily coarser than the metrics the renderer
+%   already has - it wanted 1725 px for the results table where 'fit' needs about
+%   1100 - and because it needed a resize hook the layout engine does for free.
+%
+%   EVERY REAL COLUMN 'fit', PLUS AN EMPTY TRAILING COLUMN THAT CARRIES THE '1x'.
+%   The spacer is the whole trick, and it is there because a '1x' has NO MINIMUM: it
+%   absorbs the shortfall by shrinking, so whichever real column carries it gets
+%   clipped instead of the table scrolling.  Measured, on the recordings table:
+%   the star on the NAME column clips the file name, and moving it to the last
+%   column just clips 'Internal cycle' down to 'I..' - in both cases with no
+%   scrollbar, which is precisely what the fixed widths were being replaced for.
+%   An empty column has nothing to clip, so:
+%     room to spare  - the spacer takes the leftover and the table covers its block,
+%                      header band and all, instead of stopping halfway across it;
+%     content wider  - the spacer collapses to nothing and the table SCROLLS
+%                      sideways with every real column at its own content width.
+%   It costs one column of '' in ColumnName and in Data (paintProgressTable), which
+%   is why the two tables have one more column than they have steps.
+%
+%   Known and accepted: 'fit' re-fits when content changes, so a column whose header
+%   is narrower than 'running' (BFI, Guided, Regions) shifts by 8-18 px as a run
+%   walks its cells - twice per run, since the column takes the widest cell of all
+%   its rows.  Pin those columns to a number if it ever reads as noise.
 if ~isgraphics(h), return; end
 lbls = cell(1,numel(ids));
 for i = 1:numel(ids), lbls{i} = reg(strcmp({reg.id},ids{i})).label; end
-h.ColumnName  = [{firstName}, lbls];
-h.ColumnWidth = [{240}, repmat({94},1,numel(ids))];
+h.ColumnName  = [{firstName}, lbls, {''}];
+h.ColumnWidth = [repmat({'fit'},1,numel(ids)+1), {'1x'}];
 end
 
 function refreshCells(fig,identities)
@@ -3306,9 +3562,9 @@ h = c.(fld);
 if isempty(rows), h.Data = {}; return; end
 ids  = monitorColumns(app.reg, kind);
 D    = h.Data;
-nCol = numel(ids)+1;
+nCol = numel(ids)+2;         % the name, one per step, and the '1x' spacer (D5)
 if ~iscell(D) || size(D,1)~=numel(rows) || size(D,2)~=nCol
-    D = cell(numel(rows), nCol);
+    D = repmat({''}, numel(rows), nCol);               % '' so the spacer draws blank
     identities = {};                                   % a fresh grid: fill it all
 end
 if isempty(identities)
@@ -3327,6 +3583,16 @@ end
 h.Data = D;
 end
 
+function w = monitorWidthPolicy(fig, kind)
+%monitorWidthPolicy  One monitor table's ColumnWidth, for a headless check of D5.
+%   The widths themselves are the layout engine's and are not readable from MATLAB;
+%   what IS checkable is that this window asks for content sizing rather than the
+%   fixed numbers that cropped.
+c = getApp(fig).c.process;
+if strcmp(kind,'raw'), w = c.rawTable.ColumnWidth; else, w = c.derivedTable.ColumnWidth; end
+if ~iscell(w), w = {w}; end
+end
+
 function ids = plannedStepsFor(app, r)
 %plannedStepsFor  Which steps THIS ROW's configuration runs on it, in registry
 %   order.  The row hands over its BRANCH rather than having one guessed from a file
@@ -3338,7 +3604,7 @@ function ids = plannedStepsFor(app, r)
 %   The per-animal steps are added for the animal, not the row: they span every
 %   type by definition.
 if isempty(r.type), ids = plannedStepIds(app, ''); return; end
-brs = wbTypeSelection('rows', app.typeSel, app.reg, r.type);
+brs = wbTypeSelection('rows', app.typeSel, regFor(app,r.type), r.type);
 if strcmp(r.kind,'derived')
     brs = brs(strcmp(brs, r.branch));                  % the row IS a branch
 elseif ~isempty(r.branch) && any(strcmp(r.branch, brs))
@@ -3354,14 +3620,22 @@ end
 
 function txt = progressCellText(app, r, step, planned)
 %progressCellText  ONE cell of the monitor (spec D4).  The words are the states a
-%   watcher cares about, in this order of authority: what the run is doing now,
-%   then what the disk says, then what the configuration intends.
+%   watcher cares about, in this order of authority: what THIS RUN is doing with
+%   the cell - or is about to - then what the disk says, then what the
+%   configuration intends.
+%
+%   THE OVERLAY OUTRANKS THE DISK, INCLUDING FOR 'queued' (spec D2).  That is the
+%   whole point of the pre-run pass: a step being re-processed has a finished result
+%   on disk, and reading 'done' off it while the run is on its way to overwrite it
+%   described the last run rather than this one.  Once the run has marked a cell,
+%   the run owns the word until it ends.
 key = cellKey(r.identity, step.id);
 if isKey(app.runState,key) && stepTouchesFile(step, r.branch)
     switch app.runState(key)
         % 'running' carries NO percentage.  A wrapper says what it started and what
         % it finished and nothing in between, so there is no fraction to show and a
         % made-up one would be worse than none.
+        case 'queued',  txt = 'queued';  return
         case 'running', txt = 'running'; return
         case 'done',  txt = 'done';  return
         case 'error', txt = 'error'; return
@@ -3424,11 +3698,20 @@ end
 function onProgressSelect(fig, kind, ev)
 %onProgressSelect  Remember which row of WHICH table the user clicked, and describe
 %   it below - selecting a row still shows its file, from either half.
-if isempty(ev) || ~isfield(struct(ev),'Indices') || isempty(ev.Indices), return; end
+if isempty(ev) || ~hasMember(ev,'Indices') || isempty(ev.Indices), return; end
 app = getApp(fig);
 app.pSel = struct('kind',char(kind),'idx',ev.Indices(1,1));
 setApp(fig,app);
 refreshProgressDetail(fig);
+end
+
+function tf = hasMember(v, name)
+%hasMember  Does this event carry that field - WITHOUT converting it.  A real
+%   CellSelectionChangeData is an OBJECT, and struct(obj) is the deprecated
+%   conversion MATLAB warns about once per call; a headless test passes a plain
+%   struct instead, and both callers have to keep working.  So ask each of them in
+%   its own language rather than making one look like the other.
+if isstruct(v), tf = isfield(v,name); else, tf = isprop(v,name); end
 end
 
 function refreshProgressDetail(fig)
@@ -3450,7 +3733,7 @@ bits = {sprintf('%s%s   animal %s | type %s | group %s', r.path, ...
     dashIfEmpty(r.animal), dashIfEmpty(r.type), dashIfEmpty(r.expGroup))};
 blocked = firstSkipped(app, r);
 if ~isempty(blocked)
-    bits{end+1} = sprintf('%s skipped - %s', blocked, unavailableReason(app,r.identity,blocked));
+    bits{end+1} = sprintf('%s skipped - %s', blocked, unavailableReason(app,r,blocked));
 end
 err = lastErrorFor(app, r.identity);
 if ~isempty(err), bits{end+1} = ['last error: ' err]; end
@@ -3482,12 +3765,22 @@ for i = 1:numel(k)
 end
 end
 
-function s = unavailableReason(app,identity,stepId)
+function s = unavailableReason(app,r,stepId)
 %unavailableReason  A short line for a step that cannot run (modality / prereqs).
+%
+%   THE MODALITY IS THE ROW'S OWN FILE, not the session's.  It used to be app.modality
+%   - the working set's most common modality - which was the only modality there was
+%   when a session could hold only one.  Now that a session can hold several, saying
+%   'not for LSCI' about a video would name the wrong recording's kind entirely; the
+%   gate itself has always been per file (wbStateEngine>applicable), so this just
+%   quotes the same fact it read.
 s = 'not available yet';
 step = stepById(app.reg,stepId);
-if isKey(app.base,identity) && ~any(strcmp(app.modality,step.modalities))
-    s = ['not for ' app.modality];
+if isempty(step), return; end
+md = '';
+if isstruct(r) && isfield(r,'model') && isfield(r.model,'modality'), md = r.model.modality; end
+if isKey(app.base,r.identity) && ~isempty(md) && ~any(strcmp(md,step.modalities))
+    s = ['not for ' md];
 elseif ~isempty(wbPrereqs('all',step))
     s = ['needs: ' wbPrereqs('describe',step)];
 end
@@ -3611,14 +3904,14 @@ cb = @(o) onSettingEditScoped(fig,type,step.id,field,o.Value);
 if isfield(step.enums,field)
     items = step.enums.(field);
     v = char(string(val)); if ~any(strcmp(v,items)), v = items{1}; end
-    uidropdown(parent,'Items',items,'Value',v,'ValueChangedFcn',@(o,~)cb(o));
+    uidropdown(parent,'Items',items,'Value',v,'ValueChangedFcn',ui(fig,@(o,~)cb(o)));
 elseif islogical(defaultType(step,field))
-    uicheckbox(parent,'Text','','Value',logical(firstTrue(val)),'ValueChangedFcn',@(o,~)cb(o));
+    uicheckbox(parent,'Text','','Value',logical(firstTrue(val)),'ValueChangedFcn',ui(fig,@(o,~)cb(o)));
 elseif iscell(val)
-    uieditfield(parent,'text','Value',cellToStr(val),'ValueChangedFcn',@(o,~)cb(o), ...
+    uieditfield(parent,'text','Value',cellToStr(val),'ValueChangedFcn',ui(fig,@(o,~)cb(o)), ...
         'Tooltip','comma-separated list');
 else
-    uieditfield(parent,'text','Value',val2str(val),'ValueChangedFcn',@(o,~)cb(o));
+    uieditfield(parent,'text','Value',val2str(val),'ValueChangedFcn',ui(fig,@(o,~)cb(o)));
 end
 end
 
@@ -3945,8 +4238,12 @@ for i = 1:numel(tbK), app.sm.typeBag(tbK{i}) = tbV{i}; end
 toK = keys(session.typeOverrides); toV = values(session.typeOverrides);
 for i = 1:numel(toK), app.sm.typeOverrides(toK{i}) = toV{i}; end
 % the row set is rebuilt THROUGH wbTypeSelection, so a sidecar written before the
-% (type,branch) rows existed is upgraded to them instead of being read as empty
-app.typeSel   = wbTypeSelection('fromCells', keys(session.typeSel), app.reg);
+% (type,branch) rows existed is upgraded to them instead of being read as empty.
+% AGAINST THE WHOLE REGISTRY, not this window's: the files have not been read back
+% yet, so which modalities the session holds is not known here - and fromCells
+% drops a key naming a step the registry does not have, which against a
+% modality-filtered registry would quietly delete another modality's ticks.
+app.typeSel   = wbTypeSelection('fromCells', keys(session.typeSel), wbStepRegistry());
 app.animalSel = session.animalSel;
 app.stale     = session.staleOverlay;
 app.completed = session.completed;                 % what already ran, per file/step
@@ -4051,12 +4348,15 @@ for i = 1:numel(app.rows)
     end
 
     % ---- the type's rows, and what each of them runs on this file ------------
+    % asked of the TYPE's registry (its own modality), while the step's COLUMN
+    % INDEX stays the session's, so one step-major order covers every modality
     if isempty(ty), continue; end
-    brs = wbTypeSelection('rows', app.typeSel, reg, ty);
+    treg = regFor(app, ty);
+    brs = wbTypeSelection('rows', app.typeSel, treg, ty);
     for b = 1:numel(brs)
-        ids = wbTypeSelection('steps', app.typeSel, reg, ty, brs{b});
+        ids = wbTypeSelection('steps', app.typeSel, treg, ty, brs{b});
         for j = 1:numel(ids)
-            step = stepById(reg, ids{j});
+            step = stepById(treg, ids{j});
             if isempty(step) || strcmp(step.arity,'perAnimal'), continue; end
             k = cellKey(r.identity, ids{j});
             if isKey(seen,k), continue; end             % one work item per (file,step)
@@ -4284,7 +4584,7 @@ function tf = stepAlreadyDone(app, identity, type, branch, step)
 %   product alone got a BFI must still get one on the contrast side.
 brs = {branch};
 if ~strcmp(step.branchScope,'one')
-    brs = wbTypeSelection('rows', app.typeSel, app.reg, type);
+    brs = wbTypeSelection('rows', app.typeSel, regFor(app,type), type);
 end
 tf = false;
 for b = 1:numel(brs)
@@ -4318,7 +4618,8 @@ seenAny = false;
 for i = 1:numel(app.rows)
     if app.rows(i).animalIdx ~= animalIdx, continue; end
     id  = app.rows(i).identity;
-    brs = wbTypeSelection('rows', app.typeSel, app.reg, typeOfIdentity(app,id));
+    ty  = typeOfIdentity(app,id);
+    brs = wbTypeSelection('rows', app.typeSel, regFor(app,ty), ty);
     for b = 1:numel(brs)
         key = [id '||' brs{b}];
         if ~isKey(app.branchState,key), return; end          % nothing produced there yet
@@ -4354,6 +4655,15 @@ function runChecked(fig)
 %runChecked  Run what the per-type configuration says, through wbExecutor.
 app = getApp(fig);
 if isfield(app,'running') && app.running, return; end       % already running
+% ONE USER ACTION FOR THE WHOLE RUN (spec D4).  The Run button's own callback is
+% wrapped, but the latch has to outlive the click: the confirmation dialog, the
+% executor loop and the unwind below all drawnow, and each of those dispatches
+% whatever the user clicked while the window was frozen.  Taken here, released by
+% the token when this function unwinds - alongside finishRun, not inside a try.
+% IT IS TAKEN BEFORE the finishRun cleaner below ON PURPOSE: cleanup objects are
+% cleared newest-first, so this one goes LAST and finishRun still repaints - and
+% still dispatches - with the latch held.  Do not swap the two lines.
+latch = wbUiGuard('hold', fig); %#ok<NASGU>
 [entries, info] = runOrderIn(fig, app.rangeFrom, app.rangeTo);
 if isempty(entries)
     setLog(fig,{rangeHeadline(info), ...
@@ -4388,21 +4698,77 @@ function ok = confirmRun(fig, entries, info)
 %   RANGE is on the same card, and so is the Re-process tick: overwriting finished
 %   work has to be visible at the moment of consent, not only in the toolbar, and
 %   the tick is easy to leave on from the last time.
+%
+%   AND SO IS THE DELETION (item 9, spec D10).  Recomputing a source file removes
+%   the results derived from it, which is destructive and irreversible, so it is
+%   STATED BEFORE the user says Run rather than discovered in the log afterwards.
+%   The count is taken from the very list this dialog is describing - a dry run of
+%   the same wbProducts question the executor will ask - so the number on the card
+%   is the number of files that will actually go.
 ok = true;
 n  = numel(entries);
 tys = unique({entries.type},'stable');
 tys = tys(~cellfun(@isempty,tys));
 sts = unique({entries.stepId},'stable');
-msg = sprintf('%s\nAbout to run %d %s across %d recording %s - %d jobs in all.%s  Continue?', ...
+msg = sprintf('%s\nAbout to run %d %s across %d recording %s - %d jobs in all.%s%s  Continue?', ...
     rangeHeadline(info), numel(sts), plural(numel(sts),'step'), ...
     numel(tys), plural(numel(tys),'type'), n, ...
-    ternary(info.forced,'  Results that are already saved will be overwritten.',''));
+    ternary(info.forced,'  Results that are already saved will be overwritten.',''), ...
+    supersededSentence(numel(supersededFiles(getApp(fig), entries))));
 wbLog(fig,msg);
 if ~isvalid(fig) || strcmp(fig.Visible,'off'), return; end   % headless: never block
 sel = uiconfirm(fig, msg, 'Run', 'Options',{'Run','Cancel'}, ...
     'DefaultOption',1, 'CancelOption',2, 'Icon','question');
 ok = strcmp(sel,'Run');
 if ~ok, wbLog(fig,'Run cancelled at the summary.'); end
+end
+
+function s = supersededSentence(n)
+%supersededSentence  The author's own line on the consent card, or nothing at all
+%   when this run deletes nothing - which is the ordinary case, and a warning that
+%   fires every time is a warning nobody reads.
+s = '';
+if n <= 0, return; end
+s = sprintf('  Recomputing source files will delete %d previously computed %s.', ...
+    n, plural(n,'result'));
+end
+
+function files = supersededFiles(app, entries)
+%supersededFiles  A DRY run of the executor's own deletion question over the
+%   entries about to run: which results this run will remove.  Deduped across
+%   entries, because two producers of one recording can only ever name disjoint
+%   sets but the same file must never be counted twice if they ever did.
+%
+%   It reads the disk, once per producer entry - the only entries that survive the
+%   outKind test - and it is asked at the moment a modal dialog is being built, so
+%   the cost is paid where the user is already waiting for an answer.
+files = cell(1,0);
+if isempty(entries), return; end
+for i = 1:numel(entries)
+    step = stepById(app.reg, entries(i).stepId);
+    if isempty(step) || ~strcmp(step.outKind,'new'), continue; end
+    ms = entryModels(app, entries(i));
+    for k = 1:numel(ms)
+        stage = wbProducts('writes', step, contrastStageForModel(app, ms(k)));
+        files = [files, wbProducts('below', app.reg, ms(k), step.id, stage)]; %#ok<AGROW>
+    end
+end
+files = unique(files,'stable');
+end
+
+function ms = entryModels(app, e)
+%entryModels  The recordings one run entry touches: the animal's members for a
+%   per-animal step, its own recording otherwise.
+if strcmp(e.arity,'perAnimal')
+    sel = app.rows([app.rows.animalIdx]==e.animalIdx);
+    if isempty(sel), ms = []; return; end
+    [~,ord] = sort([sel.rowInAnimal]);
+    ms = [sel(ord).model];
+    return
+end
+ms = [];
+k = find(strcmp({app.rows.identity}, e.identity),1);
+if ~isempty(k), ms = app.rows(k).model; end
 end
 
 function ctx = buildExecContext(fig)
@@ -4420,11 +4786,87 @@ ctx.contrastStage = @(mdl) contrastStageOf(fig,mdl);
 % and shows it in the summary, so the executor consumes that answer rather than
 % re-deriving one that could disagree with what the user was shown
 ctx.refFile       = @(ai,sid) animalRefFile(fig,ai,sid);
+% THE WORKING SET IS A FENCE (round-2 item 8).  The input glob that fills a
+% wrapper's fNames is a directory listing, so a product an EARLIER session left in
+% the folder used to join it; this is the answer that stops it, taken from the same
+% configuration the derived monitor table is built from.  It is resolved ONCE, here,
+% for every recording of the run - the configuration cannot change while the latch
+% is held, and the alternative is a settings resolve per candidate file.
+ctx.admits        = admitsFcn(getApp(fig));
 ctx.setState      = @(id,sid,state,msg) execSetState(fig,id,sid,state,msg);
 ctx.log           = @(msg) wbLog(fig,msg);
 ctx.isCancelled   = @() execIsCancelled(fig);
 ctx.modalGuard    = @(fcn) wbModalGuard(fig,fcn);
 ctx.afterDone     = @(id,sid,mdl) execAfterDone(fig,id,sid,mdl);
+end
+
+function f = admitsFcn(app)
+%admitsFcn  ctx.admits, with the per-recording answer resolved up front.  The map
+%   is keyed by recording identity, and a recording the run has never heard of
+%   falls through UNFENCED - this hook may narrow what a session uses, never what
+%   it can see.
+m = containers.Map('KeyType','char','ValueType','any');
+for i = 1:numel(app.rows)
+    id = app.rows(i).identity;
+    if ~isKey(m,id), m(id) = admissibleFlagsFor(app,id); end
+end
+f = @(id,p) admitsWith(m,id,p);
+end
+function tf = admitsWith(m, identity, path)
+id = char(identity);
+if ~isKey(m,id), tf = true; return; end
+tf = wbProducts('admits', m(id), path);
+end
+
+function fl = admissibleFlagsFor(app, identity)
+%admissibleFlagsFor  WHICH STAGE FLAGS THIS RECORDING'S CONFIGURATION PRODUCES
+%   (spec D7) - what the run may consume and what the reports may list.  It is the
+%   configuration that answers, not the disk: the same wbTypeSelection rows the
+%   derived monitor table is built from, so "listed in the table" and "allowed into
+%   the run" are one fact by construction.
+%
+%   NO CONFIGURATION MEANS NO FENCE.  A recording whose type has no ticked row
+%   falls back to the branches its own files on the Files tab carry, and if those
+%   name no branch at all (a working set of raw recordings) the answer is EMPTY,
+%   which wbProducts reads as "no answer" and admits everything.  A recording is
+%   never fenced down to nothing.
+ty  = typeOfIdentity(app, identity);
+reg = regFor(app, ty);
+if ~isempty(ty) && ~isempty(wbTypeSelection('rows', app.typeSel, reg, ty))
+    fl = wbProducts('flags', reg, app.typeSel, ty, contrastStageForType(app,ty));
+    return
+end
+fl = filesTabFlags(app, identity);
+end
+
+function fl = filesTabFlags(app, identity)
+%filesTabFlags  The fall-back admissible set: the branches this recording's files
+%   in the WORKING SET actually carry.  {} when none of them carries one, which is
+%   how "no fence" is said.
+fl = {};
+for i = 1:numel(app.files)
+    if ~strcmp(app.files(i).model.identity, identity), continue; end
+    st = app.files(i).model.stage;
+    if isempty(st) || any(strcmp(st,fl)), continue; end
+    fl{end+1} = st; %#ok<AGROW>
+end
+if ~isempty(fl), fl = [{''}, fl]; end       % the raw recording rides along
+end
+
+function st = contrastStageForType(app, type)
+%contrastStageForType  The stage flag a settings-driven producer writes for one
+%   TYPE - the type-level twin of contrastStageForModel, and the same rule
+%   (rowFlagFor > settingStage).  WHICH producer is settings-driven is derived,
+%   not named: it is the one whose resolved settings choose a stage at all.
+st = '';
+reg = regFor(app, type);
+brs = wbTypeSelection('branches', reg);
+for b = 1:numel(brs)
+    pid = wbTypeSelection('producer', reg, brs{b});
+    if isempty(pid), continue; end
+    alt = settingStage(app, type, stepById(reg,pid));
+    if ~isempty(alt), st = alt; return; end
+end
 end
 
 function p = animalRefFile(fig,animalIdx,stepId)
@@ -4446,22 +4888,40 @@ function execSetState(fig,identity,stepId,state,msg)
 %   table DATA (never a per-cell component - that is what the read-only monitor
 %   buys) and fold the change into the durable session, so a crash or a Stop still
 %   leaves a resumable record behind.
+%
+%   IT TAKES A LIST (spec D3).  'identity' is one recording or a cellstr of them,
+%   because the executor marks a whole call at once - the pre-run 'queued' pass over
+%   a 200-file project is 3000 cells, and one repaint per cell would be 3000 full
+%   table repaints before the first wrapper was even called.  One map pass, one
+%   refreshCells, one drawnow, whatever the length of the list.
 if ~isvalid(fig), return; end
 if nargin<5, msg = ''; end
+ids = identity; if ~iscell(ids), ids = {char(ids)}; end
+if isempty(ids), return; end
 app = getApp(fig);
-key = cellKey(identity,stepId);
-if isempty(state)
-    if isKey(app.runState,key), remove(app.runState,key); end
-    if isKey(app.cellMsg,key),  remove(app.cellMsg,key);  end
-else
-    app.runState(key) = state;
-    if ~isempty(msg), app.cellMsg(key) = msg; end
+for k = 1:numel(ids)
+    key = cellKey(ids{k},stepId);
+    if isempty(state)
+        if isKey(app.runState,key), remove(app.runState,key); end
+        if isKey(app.cellMsg,key),  remove(app.cellMsg,key);  end
+    else
+        app.runState(key) = state;
+        if ~isempty(msg), app.cellMsg(key) = msg; end
+    end
 end
 setApp(fig,app);
-if any(strcmp(state,{'done','error'})), recordCompletion(fig,identity,stepId,state,msg); end
-refreshCells(fig,{identity});
+if any(strcmp(state,{'done','error'}))
+    for k = 1:numel(ids), recordCompletion(fig,ids{k},stepId,state,msg); end
+end
+refreshCells(fig,ids);
 refreshProgressDetail(fig);
-drawnow limitrate;
+% PLAIN drawnow, NOT limitrate (spec D1).  limitrate DROPS an update issued less
+% than ~50 ms after the previous one, and the run path no longer has anything
+% high-frequency to throttle: the progress axis is gone, and what is left is one
+% update per call.  'queued' -> setRunningUI -> 'running' -> the wrapper's first
+% line all land inside one 50 ms window, so limitrate dropped exactly the three
+% updates that mattered and the monitor stayed a step behind for the whole run.
+drawnow;
 end
 
 function tf = execIsCancelled(fig)
@@ -4540,7 +5000,7 @@ c = getApp(fig).c.process;
 if isfield(c,'progLabel') && isgraphics(c.progLabel)
     c.progLabel.Text = ternary(wasCancel,'Stopped.','Done.');
 end
-drawnow limitrate;
+drawnow;
 % Exit pressed mid-run: the stop it asked for has now happened and the session is
 % written, so this is the first safe moment to close (see requestExit).
 if getfieldOr(getApp(fig),'exitAfterStop',false), onClose(fig); end
@@ -4673,7 +5133,7 @@ if isfield(c,'fromDrop')   && isgraphics(c.fromDrop),   c.fromDrop.Enable   = on
 if isfield(c,'toDrop')     && isgraphics(c.toDrop),     c.toDrop.Enable     = onoff; end
 if isfield(c,'stopBtn')    && isgraphics(c.stopBtn),    c.stopBtn.Enable    = ternary(running,'on','off'); end
 if isfield(c,'wipeBtn')    && isgraphics(c.wipeBtn),    c.wipeBtn.Enable    = onoff; end
-drawnow limitrate;
+drawnow;
 end
 
 function m = modelByIdentity(fig,identity)
@@ -4723,13 +5183,19 @@ function files = addResults(fig,identity,stepId,model)
 %   It RETURNS what it resolved, whether or not the entry was new, so the per-column
 %   PDF is assembled from the same answer the list was painted from - wbArtifacts
 %   stays the ONE place that knows how a report image is named.
+%
+%   AND THE SAME FENCE THE RUN USES (item 8).  wbArtifacts lists by base name, so a
+%   '_rep_*.jpg' an earlier session left beside this recording matched a tail like
+%   any other and joined both the list and the per-column PDF.  Handing it this
+%   recording's admissible flags is the whole fix - the PDF inherits it for free,
+%   since it is assembled from exactly these files.
 files = cell(1,0);
 if ~isvalid(fig), return; end
 app = getApp(fig);
 step = stepById(app.reg,stepId);
 if nargin<4 || isempty(model), model = modelByIdentity(fig,identity); end
 if isempty(model) || isempty(step), return; end
-files = wbArtifacts(model,step);
+files = wbArtifacts(model,step,admissibleFlagsFor(app,identity));
 lbl = @(p) resultLabel(shortId(identity), step.label, p);
 if ~pushResults(fig, files, stepId, lbl), return; end
 refreshResultList(fig);
@@ -5147,17 +5613,23 @@ end
 
 %% ===================== log ========================================= %%
 function wbLog(fig,msg)
+%wbLog  Append one line and SHOW it.  Plain drawnow, not limitrate (spec D1): the
+%   whole log of a run is three lines per recording (Core/Reporting emits Starting,
+%   Writing results, Finished), which is nowhere near limitrate's ~50 ms threshold -
+%   so all it could ever do here is drop the "Starting ..." that arrives in the same
+%   instant as the cell going 'running', which is precisely the line the operator is
+%   waiting for while a wrapper blocks the thread for the next few minutes.
 app = getApp(fig); c = app.c.process;
 v = c.log.Value; if ischar(v), v = {v}; end
 v{end+1} = msg;
 if numel(v)>400, v = v(end-400:end); end
-c.log.Value = v; drawnow limitrate;
+c.log.Value = v; drawnow;
 end
 function setLog(fig,lines)
 app = getApp(fig);
 if ischar(lines), lines = {lines}; end
 if numel(lines)>400, lines = lines(end-400:end); end
-app.c.process.log.Value = lines; drawnow limitrate;
+app.c.process.log.Value = lines; drawnow;
 end
 function v = getLog(fig)
 v = getApp(fig).c.process.log.Value; if ischar(v), v = {v}; end
