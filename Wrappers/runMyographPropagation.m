@@ -1,8 +1,8 @@
 %runMyographPropagation  Direction and speed of the diameter changes along the vessel
 %
-%   runMyographPropagation(s,fNames) asks, for every interval of every *_MYO_d.mat
+%   runMyographPropagation(s,fNames) asks, for every interval of every *_MYO_r.mat
 %   recording in fNames, whether the constriction/dilation TRAVELS along the vessel
-%   and, if so, how fast and which way.  fNames is a cell array of *_MYO_d.mat
+%   and, if so, how fast and which way.  fNames is a cell array of *_MYO_r.mat
 %   paths; the wrapper iterates them itself, so there is no launcher for-loop.
 %
 %   The estimator is the lag at maximum cross-correlation and nothing else: each
@@ -35,7 +35,7 @@
 %                .propMinCoh        how well a location must correlate to be used
 %                .propMinRows       fewest locations an estimate may rest on
 %                .propNShuffle      surrogate repeats behind the p-value
-%     fNames   cell array of *_MYO_d.mat paths.  Empty cells are skipped.
+%     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
 %     and s.cancelFcn()->tf (checked between files).
 %
@@ -50,7 +50,7 @@
 %   EXAMPLE
 %     s.diameterMeasures = {'mid'};
 %     s.vFR = [0.05 0.25];
-%     D = dir(fullfile(rootFolder,'*_MYO_d.mat'));
+%     D = dir(fullfile(rootFolder,'*_MYO_r.mat'));
 %     runMyographPropagation(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -78,8 +78,10 @@
 
 function runMyographPropagation(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_MYO_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_MYO_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_MYO_r.mat'').']);
 end
 if ~isfield(s,'diameterMeasures') || isempty(s.diameterMeasures)
     s.diameterMeasures={'mid'};

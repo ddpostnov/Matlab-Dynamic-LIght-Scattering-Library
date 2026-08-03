@@ -1,7 +1,7 @@
 %setMyographPresetIntervals  Choose a myograph's analysis windows BEFORE measuring it
 %
 %   setMyographPresetIntervals(s,fNames) opens the interval editor on every
-%   *_MYO_d.mat recording in fNames while nothing has been measured yet, and writes
+%   *_MYO_r.mat recording in fNames while nothing has been measured yet, and writes
 %   the windows the operator picks - names and times, nothing else - into that
 %   recording's own _MYO triplet.  ONE WINDOW PER RECORDING, blocking, no file
 %   dropdown: the wrapper loops the files, exactly as setRegions does.
@@ -32,7 +32,7 @@
 %                  profile has.  More is a finer curve and a longer wait before the
 %                  window opens; the wait grows with this number, not with the length
 %                  of the recording.
-%     fNames   cell array of *_MYO_d.mat paths.  Empty cells are skipped.
+%     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     fNamesRaw (optional) the matching raw recordings.  Omitted, each recording's
 %              own source.fName is used.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
@@ -46,7 +46,7 @@
 %     <name>_MYO_s.mat   settings.setMyographPresetIntervals = s
 %
 %   EXAMPLE
-%     D = dir(fullfile(rootFolder,'*_MYO_d.mat'));
+%     D = dir(fullfile(rootFolder,'*_MYO_r.mat'));
 %     setMyographPresetIntervals(struct(), fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -68,8 +68,10 @@
 
 function setMyographPresetIntervals(s,fNames,fNamesRaw)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_MYO_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_MYO_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_MYO_r.mat'').']);
 end
 if nargin<3, fNamesRaw={}; end
 if ~isfield(s,'profileSamples') || isempty(s.profileSamples), s.profileSamples=1200; end
@@ -111,7 +113,7 @@ function opts=editorOptions(results,fName)
 %   windows it already carries, titled with the recording so a run of files never
 %   leaves any doubt about which one is on screen.
 [ivT,names]=intervalsOf(results);
-[~,stem]=fileparts(regexprep(fName,'_MYO_d\.mat$',''));
+[~,stem]=fileparts(regexprep(fName,'_MYO_[drs]\.mat$',''));
 opts=struct('mode','PMYO','intervals',ivT,'names',{names}, ...
     'title',['Pre-set intervals - ' stem]);
 end

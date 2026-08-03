@@ -76,8 +76,13 @@
 %   back one flat list with the channel written onto each element.  Nothing else
 %   should have to test which modality it is looking at.
 %
+%   getProductPath answers the same question for the rest of the library, but only
+%   for a name that already carries a role letter.  This one also takes the RAW
+%   recording, which is what the entry step is holding before any product exists.
+%
 % See also: runMyographVideo, runMyographDiameter, runMyographPropagation,
-%           runMyographVasomotion, myographIntervals, reportSettings, wbFileModel
+%           runMyographVasomotion, myographIntervals, reportSettings, wbFileModel,
+%           getProductPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

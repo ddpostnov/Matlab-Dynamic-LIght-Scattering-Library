@@ -1,4 +1,4 @@
-%setVesselTypes  Semi-automatic vessel/ROI labelling for *_BFI_d.mat datasets
+%setVesselTypes  Semi-automatic vessel/ROI labelling for *_BFI_r.mat datasets
 %
 %   setVesselTypes(s,fNames) opens an interactive GUI for each BFI dataset in
 %   fNames, displays the BFI image together with a provisional artery/vein
@@ -20,7 +20,7 @@
 %                • useReference   true / false
 %                • refFName       path to reference file (if used)
 %                • prchNSize      grid spacing for parenchyma fill-in
-%     fNames   cell array of *_BFI_d.mat paths.
+%     fNames   cell array of *_BFI_r.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
 %     s.cancelFcn()->tf (between files).
 %
@@ -35,7 +35,7 @@
 %
 %   EXAMPLE
 %     p.useReference = false;
-%     D = dir(fullfile(dataRoot,'*_BFI_d.mat'));
+%     D = dir(fullfile(dataRoot,'*_BFI_r.mat'));
 %     setVesselTypes(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -65,7 +65,7 @@
 % %convienintly done in a loop as below, but REQUIRES proper file naming.
 % for idxA=5 %animals index list
 %     for idxR=1:2 %ROIs index list
-%         files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*LH%03d*c_BFI_d.mat', idxR, idxA))); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+%         files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*LH%03d*c_BFI_r.mat', idxR, idxA))); %<---ALWAYS REFER TO "_K_r.mat" files, but you may use regexp to define specific "_K_r.mat" files of interest
 %         fNames     = fullfile({files.folder}', {files.name}');
 %         s.refFName=fNames{1};
 %         setVesselTypes(s,fNames)
@@ -76,8 +76,10 @@
 
 function setVesselTypes(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_BFI_d.mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_c_BFI_r.mat'').']);
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -93,8 +95,8 @@ for fidx=1:1:numel(fNames)
         s.fName=fNames{fidx};
         reportFile(rep,fidx,s.fName);
         clearvars results source settings
-        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
         if (fidx==1 &&  s.useReference ) || ~s.useReference
             idxs=results.sMetrics{:,'idx'};
             ctgs=results.sMetrics{:,'category'};
@@ -406,8 +408,8 @@ for fidx=1:1:numel(fNames)
 
         settings.setVesselTypes=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(fNames{fidx},'results','-v7.3','-nocompression');
+        save(getProductPath(fNames{fidx},'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

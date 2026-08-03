@@ -82,8 +82,8 @@ s.libraryFolder=libraryFolder;
 % however many you draw - draw nothing, or skip this step entirely (as here), to keep
 % the whole window.  Uncomment to try it:
 %
-% dName=strrep(rawName,'.rls','_t_K_d.mat');
-% setRegions(s,{dName}); %LAUNCHES THE INTERACTIVE ROI EDITOR
+% rName=strrep(rawName,'.rls','_t_K_r.mat');
+% setRegions(s,{rName}); %LAUNCHES THE INTERACTIVE ROI EDITOR
 
 %% STEP 3 Perform segmentation (categories + labels; builds results.sMap / sMetrics / sData)
 close all
@@ -114,25 +114,25 @@ s.correctNodes=true; % Branching correction
 s.simR=0.3;          % minimal similarity ratio between branches to be the same vessel
 s.difR=0.4;          % minimal difference ratio to be considered different vessels
 
-dName=strrep(rawName,'.rls','_t_K_d.mat');
-runSegmentation(s,{dName}); %LAUNCHES THE PROCESSING ROUTINE
+rName=strrep(rawName,'.rls','_t_K_r.mat');
+runSegmentation(s,{rName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 4 GUIDED STEP - full-resolution per-segment contrast from the raw file
 close all
 clearvars -except libraryFolder rootFolder rawName procType
 s.libraryFolder=libraryFolder;
 
-dName=strrep(rawName,'.rls','_t_K_d.mat');
+rName=strrep(rawName,'.rls','_t_K_r.mat');
 
 % Pass the raw file explicitly (it is also auto-detected if omitted).  Use
 % runGuidedIntensity instead for per-segment mean intensity (e.g. fluorescence).
-runGuidedContrast(s,{dName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
+runGuidedContrast(s,{rName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 5 See the results - segmentation overview
 close all
 clearvars -except libraryFolder rootFolder rawName procType
-dName=strrep(rawName,'.rls','_t_K_d.mat');
-load(strrep(dName,'_d.mat','_r.mat'),'results');
+rName=strrep(rawName,'.rls','_t_K_r.mat');
+load(rName,'results');
 
 sMap=single(results.sMap); sMap(sMap==0)=NaN;
 imgK=results.imgK;                      % mean contrast (dark = fast flow = vessels)
@@ -154,12 +154,12 @@ h=imagesc(ax2,sMap); set(h,'AlphaData',~isnan(sMap));
 axis(ax2,'image'); colormap(ax2,cmap); set(ax2,'Color',[1 1 1]);
 title(ax2,sprintf('%d segments (%d vessels)',n,nnz(results.sMetrics.category==5)));
 drawnow
-print(f,strrep(dName,'_d.mat','_guided_overview.jpg'),'-djpeg','-r200');
+print(f,strrep(rName,'_r.mat','_guided_overview.jpg'),'-djpeg','-r200');
 
 %% STEP 6 See the results - one vessel at full vs decimated resolution
 clearvars -except libraryFolder rootFolder rawName procType
-dName=strrep(rawName,'.rls','_t_K_d.mat');
-load(strrep(dName,'_d.mat','_r.mat'),'results');
+rName=strrep(rawName,'.rls','_t_K_r.mat');
+load(rName,'results');
 
 % Pick the largest lumen (vessel) segment
 isLumen=results.sMetrics.category==5;
@@ -204,12 +204,12 @@ ax2=nexttile(t);
 plot(ax2,fAx,P,'k','LineWidth',1); grid(ax2,'on'); xlim(ax2,[0 min(20,fs/2)]);
 xlabel(ax2,'Frequency, Hz'); ylabel(ax2,'Amplitude'); title(ax2,'Spectrum of the full-resolution trace');
 drawnow
-print(f,strrep(dName,'_d.mat','_guided_trace.jpg'),'-djpeg','-r200');
+print(f,strrep(rName,'_r.mat','_guided_trace.jpg'),'-djpeg','-r200');
 
 %% STEP 7 See the results - dynamic perfusion movie (from gsData + sMap)
 clearvars -except libraryFolder rootFolder rawName procType
-dName=strrep(rawName,'.rls','_t_K_d.mat');
-load(strrep(dName,'_d.mat','_r.mat'),'results');
+rName=strrep(rawName,'.rls','_t_K_r.mat');
+load(rName,'results');
 
 %EDIT THESE IF YOU LIKE
 frameStride=2;   % show every Nth frame (2 keeps the movie short)
@@ -234,7 +234,7 @@ if ~(clim0(2)>clim0(1)), clim0=[min(field(:)) max(field(:))]; end
 
 frames=1:frameStride:size(field,1);
 if saveVideo
-    vidFile=strrep(dName,'_d.mat','_guided_perfusion.mp4');
+    vidFile=strrep(rName,'_r.mat','_guided_perfusion.mp4');
     try
         vw=VideoWriter(vidFile,'MPEG-4'); vw.FrameRate=fps; open(vw);
     catch ME   % e.g. the file is open elsewhere or locked by a sync client
@@ -271,5 +271,5 @@ if saveVideo, close(vw); fprintf('Saved perfusion movie to %s\n',vidFile); end
 % close all
 % clearvars -except libraryFolder rootFolder rawName procType
 % s.libraryFolder=libraryFolder;
-% dName=strrep(rawName,'.rls','_t_K_d.mat');
-% runGuidedIntensity(s,{dName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
+% rName=strrep(rawName,'.rls','_t_K_r.mat');
+% runGuidedIntensity(s,{rName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE

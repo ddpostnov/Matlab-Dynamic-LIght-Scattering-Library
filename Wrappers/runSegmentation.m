@@ -1,7 +1,7 @@
 %runSegmentation  Categorize + label vessels/parenchyma from LSCI mean images
 %
 %   runSegmentation(s,fNames) is the fully automatic static-segmentation step: for
-%   every *_K_d.mat / *_I_d.mat file it builds the five-level categorical mask, turns
+%   every *_K_r.mat / *_I_r.mat file it builds the five-level categorical mask, turns
 %   it into an indexed vessel/parenchyma label map, extracts per-structure scalar
 %   metrics and mean/median time-series, saves the updated *_r.mat / *_s.mat, and
 %   writes two report pages (_rep_categories, _rep_segments).  It takes NO
@@ -28,9 +28,9 @@
 %              Traces: sStat ('mean' or, default, 'median').
 %              s.fNamesCopyTo (optional, default {}): assign the computed segmentation
 %                to co-registered sibling files - see below.
-%     fNames   FLAT (order-independent) cell array of *_K_d.mat / *_I_d.mat paths;
+%     fNames   FLAT (order-independent) cell array of *_K_r.mat / *_I_r.mat paths;
 %              iterate element by element (grouping was setRegions' job).  Each file
-%              must have matching *_s.mat / *_r.mat siblings.
+%              must have matching *_d.mat / *_s.mat siblings.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf.
 %
@@ -38,7 +38,7 @@
 %     Mirrors fNames with one extra dimension: s.fNamesCopyTo(i,:) lists the sibling
 %     files that inherit the segmentation computed for fNames{i} (0..K targets per
 %     source; use a COLUMN fNames so row i lines up with source i, e.g.
-%     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat')).  For each target
+%     s.fNamesCopyTo = regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat')).  For each target
 %     the SHARED SPATIAL products (cMask, regionsMask, mask, sMap, pMap, sMetrics) are
 %     copied verbatim and the target's OWN sData is RE-EXTRACTED from its OWN cube using
 %     the copied sMap (siblings are different temporal data on the same FOV, so masks/
@@ -52,9 +52,9 @@
 %     <name>_rep_segments.jpg    segments report page
 %
 %   EXAMPLE
-%     fNames = getFileNamesList(root,'*_t_K_d.mat');           % flat column list
+%     fNames = getFileNamesList(root,'*_t_K_r.mat');           % flat column list
 %     setRegions(s,fNames);                                    % define regions first
-%     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+%     s.fNamesCopyTo = regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat');
 %     runSegmentation(s,fNames);                               % segment _t, copy onto _c
 %     runDynamicSegmentation(s,fNames);                        % optional heavy loop
 %
@@ -93,8 +93,10 @@
 
 function runSegmentation(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_r.mat')|| contains(x,'_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_K_r.mat" or "_I_r.mat".  ' ...
+        'Every step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_t_K_r.mat'').']);
 end
 if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 % Resolved here, not only in the core, so the choice is RECORDED in the saved
@@ -115,12 +117,12 @@ for fidx=1:1:numel(fNames)
     s.fName=fNames{fidx};
     reportFile(rep,fidx,s.fName);
     clearvars results source settings
-    load(s.fName,'source')
-    load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-    load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+    load(getProductPath(s.fName,'d'),'source')
+    load(getProductPath(s.fName,'s'),'settings');
+    load(s.fName,'results');
 
     % --- mean image + modality ---
-    isK=contains(s.fName,'_K_d.mat');
+    isK=contains(s.fName,'_K_r.mat');
     if isK
         if isfield(results,'imgK')
             imgIni=results.imgK;
@@ -239,8 +241,8 @@ for fidx=1:1:numel(fNames)
     %Save the data
     settings.runSegmentation=reportSettings(s);
     reportWriting(rep);
-    save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
-    save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+    save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
+    save(s.fName,'results','-v7.3','-nocompression');
     reportSaved(rep);
 
     % --- assign the segmentation to co-registered siblings (s.fNamesCopyTo) ---
@@ -275,11 +277,11 @@ function copySegmentationOnto(s,targetName,shared,rep,fidx)
 reportFile(rep,fidx,targetName);
 sT=s; sT.fName=targetName;
 clearvars results source settings
-load(targetName,'source')
-load(strrep(targetName,'_d.mat','_s.mat'),'settings');
-load(strrep(targetName,'_d.mat','_r.mat'),'results');
+load(getProductPath(targetName,'d'),'source')
+load(getProductPath(targetName,'s'),'settings');
+load(targetName,'results');
 
-isK=contains(targetName,'_K_d.mat');
+isK=contains(targetName,'_K_r.mat');
 if isK
     if isfield(results,'imgK'), imgIni=results.imgK; else, imgIni=mean(source.data,3,'omitmissing'); end
 else
@@ -306,8 +308,8 @@ reportSave(rep,fh,'segments',targetName);
 
 settings.runSegmentation=reportSettings(sT);  % carry edgeSize / sStat onto the sibling
 reportWriting(rep);
-save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
-save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+save(getProductPath(targetName,'s'),'settings','-v7.3','-nocompression');
+save(targetName,'results','-v7.3','-nocompression');
 reportSaved(rep);
 end
 

@@ -8,8 +8,7 @@
 %
 %   D = exScan(results, path) does the same and additionally knows which file it
 %   came from, which lets exAxes reach the sibling settings file for the percentile
-%   levels.  When `results` is the lazy handle struct('x_lazy_',true,'x_path_',p)
-%   the walk is done through h5info instead, and nothing is loaded.
+%   levels.
 %
 %   THE THREE SKIP RULES ARE NOT TIDINESS - each is forced by the real data, and
 %   getting one wrong offers the user a plot that cannot be drawn.
@@ -56,31 +55,27 @@
 %   schema returns unit 'auto' and the item count decides.  On the reference
 %   pressure recording every <VSM> leaf comes back with one unit, hence 'whole'.
 %
-%   THE LAZY PATH IS COMPLETE FOR THE BRANCHES THAT NEED IT.  Measured on the real
-%   3.63 GB LSCI_...._t_BFI_r.mat: h5info(f,'/results') returns in 45 ms and the walk
-%   reaches every leaf of its vasomotion tree - all four signals, scalars /
-%   fVectors / timeVectors / spectrum, down to spectrum/amp [1480 x 70 x 289].  It
-%   STOPS at struct arrays, which appear as opaque object-reference datasets, and
-%   tables are opaque the same way (sMetrics reports as a [6x1] object - the table's
-%   six internal fields, not its 1480 rows).  Neither limitation overlaps with the
-%   big files: struct arrays are a myograph shape and myograph files are megabytes,
-%   while the multi-gigabyte files are per-pixel speckle results whose heavy
-%   branches are plain scalar-struct trees.  Everything the h5 walk produces carries
-%   .lazy true, so exFetch knows to go through h5read.
+%   THE TREE IS ALWAYS A LOADED STRUCT, however large the file (D7).  There used to
+%   be a second walk over an HDF5 header for files past a size limit, and it could
+%   not see inside a struct array or a table: on the 3.63 GB reference recording it
+%   found 208 leaves where this walk finds 247, the 39 missing ones being every
+%   numeric column of sMetrics and dvsMetrics - which is to say the vessel types,
+%   the labels and the areas that a selection is made of.  A file that is only
+%   partly readable is a file whose menus are quietly wrong, so the header walk is
+%   gone and the whole of a results file is read.  Measured: 4.8 s and 3.5 GB
+%   resident for that recording, and 0.50 s to walk it.
 %
 %   Syntax:
 %      D = exScan(results)
 %      D = exScan(results, path)
 %
 %   INPUTS
-%     results  the RESULTS member of a triplet, loaded; or the lazy handle
-%              struct('x_lazy_',true,'x_path_',<file>).
-%     path     the _r.mat it came from.  Optional for a loaded tree, and only used
-%              to find the sibling _s.mat; taken from the handle when lazy.
+%     results  the RESULTS member of a triplet, loaded.
+%     path     the _r.mat it came from.  Optional, and only used to find the
+%              sibling _s.mat.
 %
 %   OUTPUTS
-%     D  1xN struct array, sorted by path so a loaded scan and a lazy one of the
-%        same tree are comparable:
+%     D  1xN struct array, sorted by path:
 %          .path        dotted and resolvable: 'intervals(2).vasomotion.outer.f'.
 %                       A component is a struct-array INDEX only when it is
 %                       name(<digits>), which is why the metrics column
@@ -103,10 +98,14 @@
 %          .suspect     true when a size did not agree with its axis
 %          .note        why, when it did not
 %          .inferred    true when no schema row claimed it
-%          .lazy        true when it must be fetched through h5read
-%          .pairedWith  'speed' for a confidence interval; '' otherwise.  A
-%                       descriptor with this set is an error bar on another
-%                       variable, so a variable LIST filters on isempty(.pairedWith)
+%          .pairedWith  the leaf this one RIDES WITH, '' when it is a quantity of
+%                       its own.  A descriptor with this set is part of another
+%                       variable's answer - an interval, a fitted line, a caption,
+%                       or the pooled form of a per-item leaf - so a variable LIST
+%                       filters on isempty(.pairedWith)
+%          .pairRole    what it is for: 'interval' | 'fit' | 'caption' | 'pooled';
+%                       '' when .pairedWith is.  exSchema declares both, and 'pooled'
+%                       is dropped again here when the file carries no host to pool
 %
 %   EXAMPLE
 %      S = load('LSCI_20240809_1ADCF08BP_c_BFI_r.mat');
@@ -131,19 +130,10 @@ if nargin<2, resultsPath = ''; end
 D = emptyDescriptors();
 if isempty(results) || ~isstruct(results) || ~isscalar(results), return; end
 
-lazy = isfield(results,'x_lazy_');
-if lazy && isempty(resultsPath) && isfield(results,'x_path_')
-    resultsPath = char(results.x_path_);
-end
-
-ctx = struct('R',results, 'path',char(resultsPath), 'lazy',lazy, ...
+ctx = struct('R',results, 'path',char(resultsPath), ...
              'ax',containers.Map('KeyType','char','ValueType','any'));
 
-if lazy
-    D = walkH5(D, ctx);
-else
-    D = walkStruct(D, results, '', ctx, '');
-end
+D = walkStruct(D, results, '', ctx, '');
 D = sortByPath(D);
 end
 
@@ -195,50 +185,6 @@ for j = 1:numel(vn)
 end
 end
 
-% =====================================================================
-function D = walkH5(D, ctx)
-%walkH5  The same walk over an HDF5 header, for a file too big to load.
-try
-    info = h5info(ctx.path, '/results');
-catch
-    return
-end
-D = walkH5Group(D, info, '', ctx);
-end
-
-function D = walkH5Group(D, g, pth, ctx)
-for i = 1:numel(g.Datasets)
-    d = g.Datasets(i);
-    if isSkippedName(d.Name), continue; end
-    if ~isPlainNumeric(d), continue; end
-    sz = reshape(d.Dataspace.Size,1,[]);
-    if isempty(sz) || any(sz==0), continue; end
-    D(end+1) = describe(joinPath(pth,d.Name), padSize(sz,2), ctx, ''); %#ok<AGROW>
-end
-for i = 1:numel(g.Groups)
-    nm = g.Groups(i).Name;
-    k = strfind(nm,'/'); nm = nm(k(end)+1:end);
-    if isSkippedName(nm), continue; end
-    D = walkH5Group(D, g.Groups(i), joinPath(pth,nm), ctx);
-end
-end
-
-function tf = isPlainNumeric(d)
-%isPlainNumeric  Is this dataset a number array, or one of the opaque things?  A
-%   struct array is stored as object references; a table, a cell and a string are
-%   stored as composites that h5info describes but cannot flatten.
-tf = false;
-if isfield(d,'Datatype') && isfield(d.Datatype,'Class') && ...
-        any(strcmp(d.Datatype.Class,{'H5T_REFERENCE','H5T_COMPOUND','H5T_VLEN'}))
-    return
-end
-cls = 'double';
-for a = 1:numel(d.Attributes)
-    if strcmp(d.Attributes(a).Name,'MATLAB_class'), cls = char(d.Attributes(a).Value); end
-end
-tf = ~any(strcmp(cls,{'struct','table','cell','char','string','categorical','datetime','function_handle'}));
-end
-
 % ================================================================== ONE LEAF
 
 function d = describe(pth, sz, ctx, sigLabel)
@@ -246,7 +192,6 @@ function d = describe(pth, sz, ctx, sigLabel)
 d = blankDescriptor();
 d.path        = pth;
 d.size        = sz;
-d.lazy        = ctx.lazy;
 d.signalLabel = sigLabel;
 
 A = axesFor(ctx, scopeOf(pth));
@@ -266,6 +211,19 @@ d.dims       = r.dims;
 d.label      = r.label;
 d.yUnit      = r.yUnit;
 d.pairedWith = r.pairedWith;
+d.pairRole   = r.pairRole;
+
+% A POOLED FORM RIDES ONLY WHEN THE FILE CARRIES WHAT IT POOLS.  Every myograph
+% result written before runMyographDiameter stored the per-line arrays holds
+% diameter.<measure> and no diameter.lines: there the trace is the ONLY form of that
+% quantity in the file, and hiding it would lose the diameter outright.  The schema
+% cannot decide it - it reads nothing - so it is decided here, off the same tree the
+% leaf came out of.  Only this role is checked: the other three are written by the
+% same producer in the same breath as their host, and checking them would flag a
+% correct file whose propagation happened to fail.
+if strcmp(d.pairRole,'pooled') && ~hasLeafAt(ctx, siblingPath(pth, d.pairedWith))
+    d.pairedWith = ''; d.pairRole = '';
+end
 
 d.nUnits = unitCount(sz, d.layout, numel(d.dims));
 if strcmp(r.unit,'auto')
@@ -277,6 +235,44 @@ else
 end
 
 d = verify(d, A);
+end
+
+% =====================================================================
+function p = siblingPath(pth, rider)
+%siblingPath  A companion named from its host's own container: the path with its last
+%   component swapped for the rider's name.  It is the same rule exFetch resolves a
+%   companion by, so a declaration cannot mean one thing here and another there.
+p = [regexprep(char(pth),'[^.]+$','') char(rider)];
+end
+
+function tf = hasLeafAt(ctx, pth)
+%hasLeafAt  Is there a non-empty numeric leaf at this path in the tree being walked?
+tf = true;
+R = ctx.R;
+if ~isstruct(R) || ~isscalar(R), return; end
+v = R;
+c = strsplit(char(pth),'.');
+for i = 1:numel(c)
+    [nm, idx] = parseComp(c{i});
+    if ~isstruct(v) || ~isfield(v,nm), tf = false; return; end
+    v = v.(nm);
+    if ~isempty(idx)
+        if ~isstruct(v) || idx>numel(v), tf = false; return; end
+        v = v(idx);
+    elseif isstruct(v) && ~isscalar(v)
+        tf = false; return
+    end
+end
+tf = (isnumeric(v) || islogical(v)) && ~isempty(v);
+end
+
+function [nm, idx] = parseComp(c)
+%parseComp  A path component is an INDEX only when it is name(<digits>) - the same
+%   rule pathComponents applies, which is why 'std(diameter)' is never mistaken for
+%   one.
+idx = [];
+t = regexp(c,'^(.+)\((\d+)\)$','tokens','once');
+if isempty(t), nm = c; else, nm = t{1}; idx = str2double(t{2}); end
 end
 
 % =====================================================================
@@ -302,7 +298,10 @@ function d = verify(d, A)
 %   vector to disagree with, only a count taken from the same file, so the check
 %   would compare a number against itself.  What is checked is the trailing
 %   coordinates, and that nothing is left over afterwards.
-if ~isempty(d.pairedWith), return; end       % an interval on a scalar, not a curve
+% A RIDER IS NOT SIZED AGAINST AN AXIS.  An interval is a pair, a fitted slope is
+% one number about a curve it is not the same length as - they are parts of another
+% leaf's answer, and checking them against a coordinate would flag correct data.
+if ~isempty(d.pairedWith), return; end
 
 sz  = padSize(d.size, 6);
 nd  = max(2, numel(d.size));
@@ -426,8 +425,7 @@ end
 
 function A = axesFor(ctx, scope)
 %axesFor  The axis registry at one scope, remembered.  exScan asks for the same
-%   dozen scopes over and over - once per leaf - and on a lazy file each miss is an
-%   HDF5 header read.
+%   dozen scopes over and over - once per leaf - and each miss walks the tree again.
 M = ctx.ax;                                 % containers.Map is a handle
 if M.isKey(scope), A = M(scope); return; end
 A = exAxes(ctx.R, scope, ctx.path);
@@ -496,8 +494,8 @@ end
 
 % =====================================================================
 function D = sortByPath(D)
-%sortByPath  A stable order, so the loaded walk and the h5 walk of one tree line up
-%   and a pinned inventory means something.  Indices are zero-padded in the sort KEY
+%sortByPath  A stable order, so a pinned inventory means something.  Indices are
+%   zero-padded in the sort KEY
 %   only, so intervals(10) does not land between intervals(1) and intervals(2).
 if numel(D)<2, return; end
 keys = cell(1,numel(D));
@@ -519,7 +517,7 @@ function d = blankDescriptor()
 d = struct('path','', 'family','', 'signal','', 'signalLabel','', 'leaf','', ...
     'branch','', 'unit','', 'layout','', 'dims',{{}}, 'size',[], 'nUnits',0, ...
     'kinds',{{}}, 'label','', 'yUnit','', 'suspect',false, 'note','', ...
-    'inferred',false, 'lazy',false, 'pairedWith','');
+    'inferred',false, 'pairedWith','', 'pairRole','');
 end
 
 function D = emptyDescriptors()

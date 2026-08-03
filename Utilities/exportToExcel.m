@@ -1,10 +1,10 @@
 %exportToExcel  Dump processed metrics and traces to an .xlsx workbook
 %
-%   exportToExcel(fNames) opens each processed *.mat dataset in fNames
-%   (contrast-derived *_BFI_d / _BFI_r / _BFI_s or later), converts numeric
+%   exportToExcel(fNames) opens each processed dataset in fNames - the RESULTS
+%   member of the triplet (*_BFI_r.mat or later) - converts numeric
 %   category codes to readable text, builds several summary tables, and
 %   writes them as separate sheets in a single Excel file whose name mirrors
-%   the input file (e.g.  Foo_BFI_d.mat → Foo_BFI.xlsx):
+%   the input file (e.g.  Foo_BFI_r.mat → Foo_BFI.xlsx):
 %
 %       Sheet             Content
 %       ─────────────────────────────────────────────────────────────────
@@ -170,7 +170,7 @@
 %     written to disk.
 %
 %   EXAMPLE
-%     files = dir(fullfile(dataRoot,'*BFI_d.mat'));
+%     files = dir(fullfile(dataRoot,'*BFI_r.mat'));
 %     fNames = fullfile({files.folder}',{files.name}');
 %     exportToExcel(fNames);                              % full legacy workbook
 %     exportToExcel(fNames, struct('sheets',{{'sMetrics','pulsatility'}}));
@@ -179,7 +179,7 @@
 %                                                         % unweighted per-vessel-type means
 %     exportToExcel(fNames, struct('merge',true,'labels',L,'outFile',out));
 %                                                         % one workbook for statistics
-%     exportToExcel({'Mouse1_MYO_d.mat'});                 % the myograph workbook
+%     exportToExcel({'Mouse1_MYO_r.mat'});                 % the myograph workbook
 %
 %   DEPENDS ON
 %     MATLAB R2019b+ (for writetable with 'Sheet' option) and data schema
@@ -195,8 +195,10 @@
 
 function exportToExcel(fNames, opts)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain ".mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_r.mat".  Export reads ' ...
+        'the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_BFI_r.mat'').']);
 end
 
 if nargin<2, opts = struct(); end
@@ -209,9 +211,9 @@ for fidx=1:1:numel(fNames)
     tic
     disp(['Processing file ',num2str(fidx),' out of ',num2str(numel(fNames))])
     fName=fNames{fidx};
-    load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
+    load(fName,'results');
 
-    fName=strrep(fName,'_d.mat',O.ext);
+    fName=strrep(fName,'_r.mat',O.ext);
     sink=openFile(sink,fName,fNames{fidx},fidx);        % target file / merged row prefix
 
     % WHICH SHEET SET, DECIDED BY THE DATA.  A myograph recording carries analysed
@@ -334,7 +336,7 @@ function sink = emitSegmentSheets(sink, results, O, wantSheet)
 end
 
 %% ===================== THE MYOGRAPH SHEET SET ========================== %%
-function sink = emitMyographSheets(sink, results, O, wantSheet, dPath)
+function sink = emitMyographSheets(sink, results, O, wantSheet, rPath)
 %emitMyographSheets  THE myograph sheet set: the windows a recording was analysed
 %   in, what was measured inside each of them, and what it was all measured with.
 %
@@ -363,7 +365,7 @@ function sink = emitMyographSheets(sink, results, O, wantSheet, dPath)
 iv = myographIntervals(results);
 if isempty(iv), return; end
 
-sink = emitLazy(sink,wantSheet,'settings',       @() settingsTable(results,dPath));
+sink = emitLazy(sink,wantSheet,'settings',       @() settingsTable(results,rPath));
 sink = emitLazy(sink,wantSheet,'comments',       @() commentsTable(results));
 sink = emitLazy(sink,wantSheet,'intervals',      @() pickColumns(intervalsTable(iv),O.columns));
 sink = emitLazy(sink,wantSheet,'propagation',    @() pickColumns(propagationTable(iv),O.columns));
@@ -374,7 +376,7 @@ sink = emitLazy(sink,wantSheet,'ampPctSpectra',  @() ampPctSpectraTable(iv,O));
 sink = emitLazy(sink,wantSheet,'diameterTraces', @() diameterTraceTable(iv,O));
 end
 
-function T = settingsTable(results, dPath)
+function T = settingsTable(results, rPath)
 %settingsTable  WHAT THE RECORDING WAS PROCESSED WITH: one row per parameter, so
 %   the sheet stacks across recordings in a merged workbook and two protocols can be
 %   read side by side.  (The old myograph exporter wrote this as a two-column block
@@ -395,7 +397,7 @@ if isfield(results,'meta') && isstruct(results.meta)
     end
 end
 % ---- one block per step that wrote settings ----
-S = loadSettings(dPath);
+S = loadSettings(rPath);
 fn = fieldnames(S);
 for i = 1:numel(fn)
     st = S.(fn{i});
@@ -442,11 +444,11 @@ s = '';
 if ischar(v), s = v; elseif isstring(v) && ~isempty(v), s = char(v(1)); end
 end
 
-function S = loadSettings(dPath)
+function S = loadSettings(rPath)
 %loadSettings  The SETTINGS member of this recording's triplet, or an empty struct.
 S = struct();
-if isempty(dPath), return; end
-sName = strrep(char(dPath),'_d.mat','_s.mat');
+if isempty(rPath), return; end
+sName = getProductPath(rPath,'s');
 if ~isfile(sName), return; end
 try
     L = load(sName,'settings');
@@ -1233,7 +1235,7 @@ function P = prefixRow(inName, labels, fidx)
 %   'type' here is the RECORDING type (spec §2); a per-segment VESSEL type column
 %   is renamed 'vesselType' when the two meet (addPrefix).
 [~,nm,ex] = fileparts(inName);
-P = table(string(regexprep([nm ex],'_d\.mat$','')),'VariableNames',{'file'});
+P = table(string(regexprep([nm ex],'_[drs]\.mat$','')),'VariableNames',{'file'});
 if isempty(labels) || fidx > numel(labels), return; end
 L = labels(fidx);
 P.animal = string(labelField(L,{'animal'}));

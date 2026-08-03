@@ -67,7 +67,7 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %Set the file names to process
-fNames{1}='C:\Dropbox\Work\Data\20230116_PSY01_a1_crop_t_K_d.mat';
+fNames{1}='C:\Dropbox\Work\Data\20230116_PSY01_a1_crop_t_K_r.mat';
 
 runBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 

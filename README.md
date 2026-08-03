@@ -47,7 +47,7 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 
 | Folder | Contents |
 |---|---|
-| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `readLabChart` (LabChart `.adicht`: channels on their own sampling rates, comments and record boundaries — the only file that touches the `+adi` package), `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles` |
+| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `readLabChart` (LabChart `.adicht`: channels on their own sampling rates, comments and record boundaries — the only file that touches the `+adi` package), `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles`, `getProductPath` (the `_d`/`_r`/`_s` member beside a product) |
 | `Core/Laser Speckle Contrast Imaging` | Contrast engine — `getK`, `getContrastFromRLS`, `getContrastFromMRAW`, `getSpeckleSize`, `getEdgeSizeSLSCI`; segmentation cores — `enhanceForDisplay`, `getPixelCategories` (5-level category mask), `getSegmentationLabels` (indexed vessel/parenchyma maps), `showSegmentsPreview` |
 | `Core/Dynamic Light Scattering Imaging` | g2 autocorrelation & DLSI/DCS model fitting — `getNormalizedG2`, `fitDLSI`, `getTauC` |
 | `Core/Registration` | Landmark / mask registration — `registerToReference`, `enhanceForRegistration`, `registerRetinaLSCI`, `manualByPointRegistration` |
@@ -148,7 +148,12 @@ Each processing step appends flags to the original file name, e.g.:
 - `_t_e_K_d.mat` — (t) temporal contrast, (e) estimated epoch, (K) contrast, (d) 3-D data;
 - `_c_BFI_r.mat` — (c) cardiac cycle, (BFI) blood flow index, (r) results.
 
-Most users only touch `_BFI_r.mat` (results) and `_BFI_d.mat` (3-D data) files. File selection is often done with wildcards / regular expressions — see `getFileNamesList`.
+**A product is named by its `_r.mat`.** Every step reads and writes the RESULTS file, while
+only some of them open the 3-D data at all — so the file list you hand a step (`fNames`) is
+always an `_r.mat` glob, and the step names the `_d` and `_s` members from it with
+`getProductPath`. Most users only touch `_BFI_r.mat` (results) and `_BFI_d.mat` (3-D data)
+files. File selection is often done with wildcards / regular expressions — see
+`getFileNamesList`.
 
 ### File format
 
@@ -241,7 +246,7 @@ guiWorkbench
 ```
 
 1. **1 - Files** — build and curate the working set. Point **root** at a folder, put an
-   extension or glob in **files** (`*.rls`, `*_t_K_d.mat`) and press **Scan** to recurse
+   extension or glob in **files** (`*.rls`, `*_t_K_r.mat`) and press **Scan** to recurse
    the whole tree; **Add files…** and **Add folder…** add more by hand without throwing
    the scan away. The five regexp boxes (**Animal**, **Type**, **Rec. index**,
    **Group**, **Reference**) label what the scan finds — hover each for worked examples.
@@ -420,7 +425,8 @@ LSCI first should not go looking for pages that were never written.
 
 ## Exploring processed results
 
-Follow any pipeline to a `_BFI_d.mat` file (3-D data `X × Y × Time` plus a time vector)
+Follow any pipeline to a `_BFI_d.mat` file (the 3-D data `X × Y × Time` plus a time vector,
+written beside the `_BFI_r.mat` its steps were given)
 and explore it with basic MATLAB skills — ROI selection, filtering, plotting as image or
 video.
 

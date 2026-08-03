@@ -1,6 +1,6 @@
 %runCTTH  Bolus transit landmarks (baseline, arrival, upslope, peak, recirculation)
 %
-%   runCTTH(s,fNames) loads every *b_I_d.mat file in fNames (bolus-intensity
+%   runCTTH(s,fNames) loads every *b_I_r.mat file in fNames (bolus-intensity
 %   datasets that store traces in the same SOURCE/RESULTS structures as the
 %   contrast "_K_" files), and—per spatial ROI and, optionally, per pixel—
 %   derives model-free transit-time landmarks from each intensity trace:
@@ -55,7 +55,8 @@
 %                            the client and starts no pool.  NOTE the parfor is over
 %                            image COLUMNS inside a serial loop over ROWS, so a
 %                            parallel run enters the pool once per row.
-%     fNames   cell array of *b_I_d.mat paths.
+%     fNames   cell array of *b_I_r.mat paths - the RESULTS member of each bolus
+%              product.  The SOURCE cube and the SETTINGS are named from it.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf.
 %
@@ -72,7 +73,7 @@
 %     s.slopeWin=9; s.promFrac=0.2;      % robust upslope / peak
 %     s.minStep=1;                       % uint16 resolution
 %     s.parforCTTHPixels=true;           % false: no parallel pool (slower per-pixel pass)
-%     files=dir(fullfile(dataRoot,'*b_I_d.mat'));
+%     files=dir(fullfile(dataRoot,'*b_I_r.mat'));
 %     runCTTH(s,fullfile({files.folder}',{files.name}'));
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
@@ -82,8 +83,10 @@
 
 function runCTTH(s,fNames)
 
-if ~all( cellfun(@(f) isempty(f) || contains(f,'b_I_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "b_I_d.mat".');
+if ~all( cellfun(@(f) isempty(f) || contains(f,'b_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "b_I_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_b_I_r.mat'').']);
 end
 
 % ---- defaults (every window size lives in s, nothing hardcoded below) ----
@@ -119,9 +122,9 @@ for fidx=1:numel(fNames)
     s.fName=fNames{fidx};
     reportFile(rep,fidx,s.fName);
     clearvars results source settings
-    load(s.fName)
-    load(strrep(fNames{fidx},'_d.mat','_s.mat'));
-    load(strrep(fNames{fidx},'_d.mat','_r.mat'));
+    load(getProductPath(s.fName,'d'))
+    load(getProductPath(s.fName,'s'));
+    load(s.fName);
 
     dt=results.time(2)-results.time(1);
     if ~isfield(s,'baseWin') || isempty(s.baseWin)
@@ -175,8 +178,8 @@ for fidx=1:numel(fNames)
 
     settings.ctthCalculation=reportSettings(s);
     reportWriting(rep);
-    save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-    save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+    save(s.fName,'results','-v7.3','-nocompression');
+    save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
     reportSaved(rep);
 end
 end

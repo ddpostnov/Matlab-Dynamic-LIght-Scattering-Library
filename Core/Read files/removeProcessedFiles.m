@@ -14,7 +14,9 @@
 % Inputs:
 %    fNames      - cell array of file names (may be 2-D); empty entries are left
 %                  in place.
-%    extStr      - token/extension to replace, e.g. '.rls' or '_d.mat'.
+%    extStr      - token/extension to replace, e.g. '.rls' or '_r.mat'.  It must
+%                  really occur in the names being filtered: a raw '.rls' list
+%                  filtered on '_r.mat' matches nothing and drops nobody.
 %    extReplStr  - replacement giving the SETTINGS file, e.g. '_c_K_s.mat'.
 %    currentStep - settings field name to test for, e.g. 'registration'.
 %    keepFirst   - (optional, default false) when true the first column
@@ -30,7 +32,7 @@
 %    fNames = removeProcessedFiles(fNames,'.rls','_c_K_s.mat','registration');
 %
 % Dependencies: base MATLAB; SETTINGS *.mat files saved by the LSCI workflow.
-% See also: getFileNamesList
+% See also: getFileNamesList, getProductPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

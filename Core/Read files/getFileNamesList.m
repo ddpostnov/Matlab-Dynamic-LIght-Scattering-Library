@@ -12,7 +12,9 @@
 %
 % Inputs:
 %    rootFolder         - folder searched recursively.
-%    fileTypeIdentifier - dir() glob, e.g. '*c_K_d.mat' ('*' is allowed).
+%    fileTypeIdentifier - dir() glob, e.g. '*c_K_r.mat' ('*' is allowed).  The
+%                         library refers to a data product by its RESULTS member,
+%                         so a step's file list is an '*_r.mat' glob.
 %    animalIdentifier   - (optional) regexp extracting the animal id, e.g.
 %                         '[A-Z]+\d+'.  Empty/omitted -> no grouping (flat list).
 %    sortingPatterns    - (optional) either a cell array of regexps (one output
@@ -25,11 +27,11 @@
 %             otherwise one row per animal, columns set by the sorting rule.
 %
 % Examples:
-%    fNames = getFileNamesList(root, '*c_K_d.mat');
-%    fNames = getFileNamesList(root, '*c_K_d.mat', '[A-Z]+\d+', '1BP\.mat');
-%    fNames = getFileNamesList(root, '*c_K_d.mat', '[A-Z]+\d+', {'BV\.mat$','BP\.mat$'});
+%    fNames = getFileNamesList(root, '*c_K_r.mat');
+%    fNames = getFileNamesList(root, '*c_K_r.mat', '[A-Z]+\d+', '1BP\.mat');
+%    fNames = getFileNamesList(root, '*c_K_r.mat', '[A-Z]+\d+', {'BV\.mat$','BP\.mat$'});
 %
-% See also: dir, regexp, removeProcessedFiles
+% See also: dir, regexp, removeProcessedFiles, getProductPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

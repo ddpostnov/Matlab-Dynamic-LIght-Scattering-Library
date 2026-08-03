@@ -24,7 +24,18 @@
 %   a picture, or a picture with a dimension to scrub through.  One quantity can
 %   appear under more than one - a per-segment number really is both a box plot
 %   across groups and a map painted back into the image - and that is the question
-%   the Kind menu is asking.
+%   the Kind menu is asking.  A Kind with nothing behind it is not offered: a
+%   recording whose only stack of pictures is a MASK has no video, because a mask's
+%   layers are a stack and not a coordinate, and the status line says so rather than
+%   leaving a menu entry that empties the window.
+%
+%   PUTTING SEGMENTS BACK IN THE MAP IS A CHOICE, NOT A KIND.  Painting each segment's
+%   own value into the segment map is something you DO to a quantity, so it is named
+%   where the other such choices are - "Units are", in section 3 - as the answer that
+%   combines nothing: keep every unit, and put it back where it came from.  For a
+%   number that is a map; for a time series it is a video of that map, one frame per
+%   sample, which is the video an LSCI recording actually has.  The Plot step reaches
+%   the same two plots directly, and lands in the same state.
 %
 % THE SHAPE MODEL - WHY SOME PLOTS ARE OFFERED AND OTHERS ARE NOT
 %   Everything measured belongs to some UNIT and varies along some AXES.  An axis is
@@ -80,14 +91,35 @@
 %   drug against washout).  The SIGNAL of a myograph comparison is the diameter
 %   measure, or the recorded channel under the real name LabChart gave it.
 %
+%   THE WINDOW AXIS IS THE PROTOCOL STEP, BY NAME.  Windows that share a name are
+%   one x-category however many chambers, recordings or animals they came from - so
+%   'baseline' from four wire chambers is one category with four series in it, not
+%   four categories.  The chamber is separated by the SIGNAL, which is what a wire
+%   recording's channel already is, and separating it twice is what used to leave the
+%   protocol with no axis of its own.  A recording that has no window called
+%   'washout' contributes nothing to that category: nothing is padded and nothing
+%   is invented.
+%
 %   IT IS ALSO THE ONLY PLACE A MYOGRAPH FIGURE COMES FROM.  No myograph step writes
 %   a report page, by design, so the checks such a page would have carried live here:
-%   the diameter along the vessel, which shows whether detection held; the detected
-%   walls over a frame of the recording, which shows whether it found the right
-%   edges; and the individual line traces, which show whether the lines moved
-%   together - the assumption a propagation speed is fitted under.  Those three read
-%   the recording beside the results rather than the results themselves, and are
-%   offered as variables of their own under the Diameter family.
+%   whether detection held along the vessel, and whether the lines moved together -
+%   the assumption a propagation speed is fitted under.  Both are the SAME variable,
+%   the diameter, which a window now stores per line as well as averaged: 'Units are'
+%   turns it from one trace into one curve per position, and Kind = Image turns it
+%   into the position-time map.  Nothing here reads the recording or its source, and
+%   nothing here invents a variable the results file does not contain.
+%
+%   WHICH COST ONE VIEW, AND THE DECISION IS RECORDED HERE RATHER THAN MISSED LATER.
+%   This tool used to offer "Detected walls" - one frame of the RECORDING with the
+%   detected edges drawn on it.  A video frame is source by definition and no amount
+%   of writing it into a results file would make it a result, so when reading only
+%   the _r became a rule it went, and it is not coming back through another door.
+%   What is lost is the "did it find the right edges" picture at a glance.  What
+%   answers the same question instead: the position-time map, which is fed from the
+%   results and shows a wall that wandered as a stripe and a lost wall as a band; and
+%   'fraction of frames measured' / 'fraction of frames accepted', which carry the
+%   same fact as numbers that can go on an axis.  The place to LOOK at a frame of the
+%   recording is the interval editor, which owns the recording and is built for it.
 %
 % WHEN TO USE IT
 %   After processing recordings to *_r.mat results, to look at single-recording
@@ -131,15 +163,23 @@
 %      shape - the three diameter measures together, or the two bands of one marker -
 %      because two shapes on one axes would need two y-scales.  Picking something of
 %      a different shape starts a fresh selection rather than refusing the click.
+%      Each Variable carries its place in the results tree in brackets after the
+%      phrase, so what was plotted can be found in the file and quoted in a methods
+%      section without anybody having to guess which leaf the words meant.
 %   3. Choose WHERE in section 3: a vessel category, a named label, a region of the
 %      map - offered from what the file actually holds, so a category it never had is
-%      never listed.  "Units are" says how the segments or positions INSIDE one
-%      recording are combined before recordings are compared; "X axis" and "Colour"
+%      never listed.  Pick SEVERAL and a curve draws one series each, while a picture
+%      combines them: arteries and veins together are more of the map than either
+%      alone.  "Units are" says how the segments or positions INSIDE one
+%      recording are combined before recordings are compared - or, with "Reconstructed
+%      map", that they are not combined at all and go back into the map they came
+%      from; "X axis" and "Colour"
 %      say how the recordings are then compared, over the FIVE independent axes -
 %      group, recording index, animal, type, analysed window - which do not nest: an
 %      animal may span groups and a group may span animals.  "Interval" narrows every
-%      myograph plot to one analysed window, and is switched off when nothing loaded
-%      has any.
+%      myograph plot to one step of the protocol, named - so it reaches every
+%      chamber and every recording that has a window of that name - and is switched
+%      off when nothing loaded has any.
 %   4. If a slider appears under the picture, move it to look along the dimension the
 %      picture is a slice of.  It is labelled in the recording's own coordinate
 %      ("frequency = 0.12 Hz", never "frame 7"), where it sits is part of what an
@@ -147,8 +187,14 @@
 %      colours held fixed so a recording that barely changes does not look alive.
 %      There is no in-app playback.  A map AVERAGED over time and a single frame of
 %      the same cube look identical, so the title always says which one it is.
+%      A LONG RECORDING IS WALKED AT A STRIDE: a reconstructed video of 61 208
+%      samples would be a slider nobody can land on, so it stops at a few hundred
+%      evenly spaced positions - every one of them a real sample of the recording,
+%      named by its own time in seconds, with nothing averaged and nothing invented.
 %   5. Tweak titles / labels / legend, then "Plot".  Set DPI + format and "Export
-%      image".
+%      image".  Every series is named by whatever actually separates it from the
+%      others - the group, the animal, the analysed window, whichever it turned out
+%      to be - and "Legend fmt" is there to overrule that, not to supply it.
 %
 % PROGRAMMATIC USE
 %   getappdata(fig,'exploreAPI') hands back the same logic as a struct of handles, so
@@ -178,16 +224,34 @@
 %     it, in GUIs/explore: exModality (which kind of recording), exAxes (the shared
 %     coordinate vectors), exSchema (what each container holds), exScan (the walk
 %     that produces the variable list), exPlotRules (which plots a quantity admits),
-%     exFetch (the numbers behind one plot) and exMyograph (the three views that read
-%     the recording rather than the results).  This file keeps the window, the
-%     cascade, the renderers and the export.
+%     exFetch (the numbers behind one plot) and exMyograph (what a myograph
+%     recording's analysed windows are called, and which of them a path belongs to).
+%     This file keeps the window, the cascade, the renderers and the export.
+%   - THERE IS ONE PLOT-ID NAMESPACE and it is exPlotRules'.  While the per-line
+%     diameter had to be read out of the recording this file carried two ids of its
+%     own beside it, and a reader had to know both to know what could be drawn.  Both
+%     went with the reads.  renderInto and plotLabel are now exactly as wide as
+%     exPlotRules('ids') - a plot the rules offer has a renderer AND words, and a
+%     renderer answers to nothing the rules do not offer - and testExploreTool asserts
+%     both directions, because the failure it catches is the quiet one: an id added to
+%     the rule table that no renderer draws.
 %   - Only category-5 (lumen) segments are used for Artery/Vein/All-vessel selections
 %     and, by default, for named vessel labels; parenchyma uses category 1.  See the
 %     library README and getPixelCategories for the category definitions.
-%   - Very large results files (per-pixel vasomotion, typically) are read leaf by leaf
-%     rather than loaded, so time series, images and spectra can still be shown.  A
-%     metrics table cannot be read that way, so for such a file every unit counts
-%     equally and the status line says so.
+%   - It reads *_r.mat RESULTS files and nothing else.  That is a rule and not a
+%     default: a file that is not an _r.mat never enters the list whatever the
+%     Include pattern says, and the status line counts what it turned away.  The one
+%     file opened beside them is the sibling _s.mat, for the percentile levels a
+%     percentile curve is drawn against - a setting, which no results file carries.
+%   - Results files are loaded whole, however large - a 3.63 GB recording costs about
+%     five seconds - because plotting what the file really holds matters more than
+%     conserving memory.  What bounds memory is the KIND: a picture holds ONE
+%     recording entire, while numbers and curves compare many and drop the per-pixel
+%     maps they cannot reach.  The status line says how much is resident.  A
+%     reconstructed video costs nothing extra: the per-segment matrix it paints from
+%     is a few megabytes, and the cube it would otherwise be is 26 TB, so it is never
+%     built - the frame under the slider is painted when it is asked for, and the
+%     export paints one frame at a time as it writes.
 %
 % Syntax:
 %    guiExplore                         % open the tool (folder / file route)
@@ -214,7 +278,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 03-August-2026
 
 %------------- BEGIN CODE --------------
 
@@ -230,8 +294,14 @@ app.root        = '';        % chosen folder, or the folder of the chosen file
 app.files       = emptyEntries();
 app.cache       = containers.Map('KeyType','char','ValueType','any');
 app.cacheOrder  = {};        % LRU order of cached paths
-app.cacheLimit  = 6;         % max fully-loaded files kept in memory
-app.sizeLimitGB = 3;         % above this a file is read field-by-field (HDF5)
+% MEMORY IS BOUNDED BY THE KIND, NOT BY A SIZE LIMIT (D7).  Every results file is
+% loaded whole, however large; what varies is how many are kept and how much of each.
+% A picture needs one file entire, so Image and Video hold ONE; curves and numbers
+% compare many files and cannot reach a per-pixel leaf at all, so those are dropped
+% from the resident copy.  See kindMemoryPolicy.
+app.cacheLimit  = 6;         % max loaded files kept in memory; 1 for a picture
+app.pruned      = {};        % paths whose resident copy has lost its per-pixel leaves
+app.bytes       = containers.Map('KeyType','char','ValueType','any'); % resident bytes/file
 app.groupOverride = containers.Map('KeyType','char','ValueType','char'); % hand-made groups (path->name)
 app.manual      = struct('title',false,'xlab',false,'ylab',false); % user-edited?
 app.sessionPath = '';        % the session this file list came from ('' = none)
@@ -241,6 +311,9 @@ app.sessionPath = '';        % the session this file list came from ('' = none)
 % some of them is still offered and the files that lack it simply contribute nothing.
 app.index       = containers.Map('KeyType','char','ValueType','any');
 app.vars        = emptyVars();
+app.varPlain    = {};        % the Variable list WITHOUT its technical names, in the
+                             % list's own order, so a caller can still name a step by
+                             % the phrase it reads rather than by the path behind it
 % ONE MODALITY AT A TIME (spec §6).  Locked by the first file a scan or a session
 % produces; files of the other modality stay in the list, marked, and are excluded
 % from every plot.  'Clear' or a new source releases it.
@@ -250,7 +323,10 @@ app.excluded    = {};        % paths excluded by the modality lock
 % files - '_c_K', '_c_BFI', '_t_K', '_t_BFI' - and they disagree about what their own
 % variable names mean, so they are filtered rather than pooled.
 app.products    = {};        % the (branch, product) pairs present, in menu order
-app.myoIntervals = {};       % the analysed windows, unioned over the file list
+% THE PROTOCOL AXIS.  The BARE window names, unioned over the file list, so a step
+% two chambers and three animals all have is ONE entry.  It is a labelling question,
+% not an addressing one - exMyograph('index') is what addresses a window.
+app.myoIntervals = {};
 app.notes       = {};        % caveats the last fetch raised, for the status bar
 app.hint        = '';        % a one-shot explanation of something the tool just did
 % THE SCRUB POSITION (D3).  Which dimension the slider under the axes walks, its
@@ -379,16 +455,20 @@ c.selList = uilistbox(s3,'Items',{'All vessels (lumen)'},'Multiselect','on', ...
     'ValueChangedFcn',@(~,~)onWhere());
 c.selList.Layout.Row = 1; c.selList.Layout.Column = [1 2];
 c.interval = labelledDrop(s3,2,'Interval',{'(all)'},@(~,~)requestRender());
-c.interval.Tooltip = ['Which analysed window a myograph recording is plotted for.  ' ...
-    'Switched off when nothing loaded has any.'];
+c.interval.Tooltip = ['Which step of the protocol a myograph recording is plotted ' ...
+    'for, by name: windows called the same thing are the same step, whichever ' ...
+    'chamber, recording or animal they came from.  A recording that never had that ' ...
+    'window simply contributes nothing.  Switched off when nothing loaded has any.'];
 c.interval.Enable = 'off';
 c.units    = labelledDrop(s3,3,'Units are', ...
     {'Auto','Pooled (area-weighted)','One point each','One curve each'}, ...
-    @(~,~)requestRender());
+    @(~,~)onUnits());
 c.units.Tooltip = ['How the segments, vessels or positions INSIDE one recording are ' ...
     'combined before recordings are compared with each other.  Pooling weights by area, ' ...
-    'so a large vessel counts for more than a small one.'];
-c.baseline = uicheckbox(s3,'Text','As % of its own baseline','Value',false, ...
+    'so a large vessel counts for more than a small one.  "Reconstructed map" is the ' ...
+    'answer that combines nothing: every segment keeps its own value and is put back ' ...
+    'where it came from, as a map or - for a time series - as a video of one.'];
+c.baseline = uicheckbox(s3,'Text','As % of its own mean','Value',false, ...
     'ValueChangedFcn',@(~,~)requestRender(), ...
     'Tooltip',['Divide every curve by its own mean, so vessels of different calibre ' ...
                'become comparable and a dilation is a number a reader recognises.']);
@@ -413,10 +493,12 @@ c.ylabF.ValueChangedFcn  = @(src,~)onManualEdit('ylab',src);
 c.legendChk = uicheckbox(s4,'Text','Show legend','Value',true, ...
     'ValueChangedFcn',@(~,~)requestRender());
 c.legendChk.Layout.Row = 4; c.legendChk.Layout.Column = [1 2];
-c.legendF = labelledField(s4,5,'Legend fmt','%s%g%r');
+c.legendF = labelledField(s4,5,'Legend fmt',defaultLegendPattern());
 c.legendF.ValueChangedFcn = @(~,~)requestRender();
+c.legendF.Tooltip = ['Left as it is, every series is named by whatever actually ' ...
+    'separates it from the others.  Type a pattern to name them your own way.'];
 c.legHelp = uilabel(s4,'Text',['tokens: %s sel  %g group  %r index  %a animal  ' ...
-    '%t type  %i interval  %f file  %v variable  %n signal'], ...
+    '%t type  %i interval  %c chamber  %f file  %v variable  %n signal'], ...
     'FontColor',[0.5 0.5 0.5],'FontSize',10,'WordWrap','on');
 c.legHelp.Layout.Row = 6; c.legHelp.Layout.Column = [1 2];
 c.cmap = labelledDrop(s4,7,'Image cmap',{'parula','turbo','hot','gray','jet'},@(~,~)requestRender());
@@ -488,15 +570,21 @@ if nargout>0, h = fig; end
                 setPatternFields('on');
                 onScan();
             case 'Single file'
-                [f,p] = uigetfile({'*_r.mat;*.mat','LSCI results (*_r.mat)'}, ...
+                [f,p] = uigetfile({'*_r.mat','LSCI results (*_r.mat)'}, ...
                     'Select a results file');
                 if isequal(f,0), return; end
+                if ~isResultsFile(f)
+                    uialert(fig,['This tool plots RESULTS.  Pick the *_r.mat of the ' ...
+                        'recording, not another member of the set.'],'Not a results file');
+                    return
+                end
                 releaseModality();
                 app.mode = 'file'; app.root = p; app.sessionPath = '';
                 app.files = makeEntry(fullfile(p,f),'all','1');
                 c.sourceLbl.Text = ['File: ' f];
                 setPatternFields('off');
                 applyFilters(); refreshFileList(); refreshIndex(); doRender();
+                setStatus(sprintf('%s.%s', f, residentNote()));
         end
     end
 
@@ -507,7 +595,8 @@ if nargout>0, h = fig; end
         app.mode=''; app.root=''; app.sessionPath=''; app.files = emptyEntries();
         app.index = containers.Map('KeyType','char','ValueType','any');
         app.cache = containers.Map('KeyType','char','ValueType','any');
-        app.cacheOrder = {};
+        app.bytes = containers.Map('KeyType','char','ValueType','any');
+        app.cacheOrder = {}; app.pruned = {};
         c.sourceLbl.Text = '(nothing selected)';
         setPatternFields('on');
         refreshFileList(); refreshIndex();
@@ -554,9 +643,9 @@ if nargout>0, h = fig; end
             setStatus('The session has no *_r.mat results yet - process it first.');
             return
         end
-        setStatus(sprintf('Session: %d results file(s), %d group(s), %d animal(s), %d type(s).%s', ...
+        setStatus(sprintf('Session: %d results file(s), %d group(s), %d animal(s), %d type(s).%s%s', ...
             numel(app.files), nUnique('group'), nUnique('animal'), nUnique('type'), ...
-            filterNote()));
+            filterNote(), residentNote()));
         doRender();
     end
 
@@ -590,20 +679,23 @@ if nargout>0, h = fig; end
         if ~strcmp(app.mode,'folder'), return; end
         setStatus('Scanning folder...');
         try
-            entries = buildFileEntries(app.root, c.includeF.Value, c.groupF.Value, c.recF.Value);
+            [entries, nRefused] = buildFileEntries(app.root, c.includeF.Value, ...
+                c.groupF.Value, c.recF.Value);
         catch ME
             uialert(fig,ME.message,'Scan error'); setStatus('Scan failed.'); return;
         end
         if isempty(entries)
             app.files = entries; refreshFileList(); refreshIndex();
-            setStatus('No files matched the Include pattern.'); return;
+            setStatus(['No results files matched the Include pattern.' refusedNote(nRefused)]);
+            return;
         end
         releaseModality();
         app.files = applyGroupOverrides(entries);   % keep any hand-made groups
         applyFilters(); refreshFileList(); refreshIndex();
-        setStatus(sprintf('Found %d files, %d group(s), %d index level(s).%s', ...
+        setStatus(sprintf('Found %d files, %d group(s), %d index level(s).%s%s%s', ...
             numel(app.files), numel(unique({app.files.group})), ...
-            numel(unique({app.files.rec})), filterNote()));
+            numel(unique({app.files.rec})), filterNote(), refusedNote(nRefused), ...
+            residentNote()));
         doRender();
     end
 
@@ -647,7 +739,14 @@ if nargout>0, h = fig; end
         end
     end
 
-    function onKind(~,~),   refreshFamilyItems();   onFamily();   end
+    function onKind(~,~)
+        % Choosing a picture is what forces one file, so the policy is applied HERE as
+        % well as in refreshCascade - the two entries to a Kind change are a click and
+        % setState, and only one of them goes through the cascade rebuild.
+        if forceSingleFile(), refreshIndex(); requestRender(); return; end
+        kindMemoryPolicy();
+        refreshFamilyItems();   onFamily();
+    end
     function onFamily(~,~), refreshSignalItems();   onSignal();   end
     function onSignal(~,~)
         enforceSignature(c.signal);      % D2: one shape per axes
@@ -702,7 +801,7 @@ if nargout>0, h = fig; end
     end
 
     function onExportVideo(~,~)
-        if ~strcmp(currentPlot(),'video')
+        if ~isVideoPlot(currentPlot())
             uialert(fig,'Choose the video plot first, then export it.','Export video');
             return
         end
@@ -742,6 +841,10 @@ if nargout>0, h = fig; end
         end
         keep = find(~arrayfun(@(f) isExcluded(f.path), app.files));
         if isempty(keep), c.fileList.Value = {}; return; end
+        % A PICTURE IS OF ONE RECORDING, so while one is being shown the list is
+        % single-select and selecting everything is not a value it can take.  Without
+        % this, re-scanning a folder with an image on screen throws.
+        if strcmp(c.fileList.Multiselect,'off'), keep = keep(1); end
         c.fileList.Value = reshape(keep,1,[]);     % everything usable, selected
     end
 
@@ -852,6 +955,15 @@ if nargout>0, h = fig; end
         m = exModality(R);
     end
 
+    function s = refusedNote(n)
+        %refusedNote  What the _r rule turned away, counted.  A pattern that lets a
+        %   _d.mat through is a mistake worth seeing rather than a silence.
+        s = '';
+        if n>0
+            s = sprintf('  %d file(s) skipped: this tool reads results (*_r.mat) only.', n);
+        end
+    end
+
     function s = filterNote()
         %filterNote  What the two filters took out, named and counted.
         s = '';
@@ -883,12 +995,16 @@ if nargout>0, h = fig; end
         IV = {};
         for i = idx
             pth = app.files(i).path;
-            [D,S] = indexOf(pth);
+            D = indexOf(pth);
             R = tryLoad(pth);
             if strcmp(exModality(R),'myograph')
-                nm = exMyograph('names',R); IV = [IV, nm(~ismember(nm,IV))]; %#ok<AGROW>
+                % THE UNION IS OVER NAMES, INSIDE ONE FILE AS WELL AS ACROSS THEM: a
+                % wire recording answers with one window per chamber, all called the
+                % same thing, and they are one step of one protocol.
+                nm = unique(exMyograph('names',R),'stable');
+                IV = [IV, nm(~ismember(nm,IV))]; %#ok<AGROW>
             end
-            rows = addRows(rows, D, S);
+            rows = addRows(rows, D);
         end
         app.vars = sortVars(rows);
         app.myoIntervals = IV;
@@ -896,15 +1012,22 @@ if nargout>0, h = fig; end
         refreshCascade();
     end
 
-    function [D,S] = indexOf(pth)
+    function D = indexOf(pth)
         %indexOf  One file's descriptors, scanned once and kept with the file.  The
         %   cache is dropped with the loaded struct, so a file that leaves memory
         %   leaves the index with it and cannot go stale against a re-read.
+        %
+        %   EVERY VARIABLE COMES FROM HERE, and that is the whole of it.  This used to
+        %   return a second list beside the index - three views of a myograph
+        %   recording read out of the _d.mat sibling, because the per-line diameter
+        %   was not in the results.  It is now, so the index finds it, and a tool that
+        %   invents variables the file does not contain is one fewer thing to keep in
+        %   step.
         if app.index.isKey(pth)
-            v = app.index(pth); D = v.D; S = v.S; return
+            v = app.index(pth); D = v.D; return
         end
         R = tryLoad(pth);
-        D = []; S = emptyVars();
+        D = [];
         if ~isempty(R)
             try
                 D = exScan(R, pth);
@@ -912,26 +1035,27 @@ if nargout>0, h = fig; end
                 setStatus(sprintf('%s could not be read: %s', shortName(pth), ME.message));
                 D = [];
             end
-            S = sourceViews(R, pth);
         end
-        app.index(pth) = struct('D',D,'S',S);
+        app.index(pth) = struct('D',D);
     end
 
-    function rows = addRows(rows, D, S)
+    function rows = addRows(rows, D)
         %addRows  Fold one file's descriptors into the union.  A row is one
         %   (family, signal, variable) - the concrete leaf paths behind it are
         %   resolved again at draw time, per file and per analysed window.
         for k = 1:numel(D)
             d = D(k);
-            if ~isempty(d.pairedWith), continue; end   % a confidence interval is an
-                                                       % error bar, not a variable
+            % A COMPANION IS NOT A MENU ENTRY.  exSchema declares that some leaves
+            % ride with others in a role - an interval on a scalar, the fit of a
+            % scatter, the caption of a plot, the pooled form of a per-line leaf - and
+            % exFetch hands them to the renderer with their host.  Offering them here
+            % as well would ask the user to plot half of an answer, or the same
+            % quantity twice.
+            if ~isempty(d.pairedWith), continue; end
             P = exPlotRules(d);
             if isempty(P), continue; end               % no legal plot: nothing to offer
             r = mkVarRow(d, P);
             rows = mergeRow(rows, r);
-        end
-        for k = 1:numel(S)
-            rows = mergeRow(rows, S(k));
         end
     end
 
@@ -961,13 +1085,16 @@ if nargout>0, h = fig; end
         r(1).varId       = varIdOf(d);
         r(1).varLabel    = d.label; if isempty(r(1).varLabel), r(1).varLabel = d.leaf; end
         r(1).leaf        = d.leaf;
+        % D8.  THE TECHNICAL NAME IS THE DOTTED PATH, and it belongs to the ROW: the
+        % label is a container's phrase, and several files' leaves merge into one row,
+        % so the path shown is the one the FIRST file gave and no list is built.
+        r(1).path        = d.path;
         r(1).unit        = d.unit;
         r(1).dims        = d.dims;
         r(1).sig         = signatureOf(d.unit, d.dims);
         r(1).kinds       = exPlotRules('kinds', d);
         r(1).plots       = P;
         r(1).suspect     = d.suspect;
-        r(1).srcView     = '';
         r(1).nFiles      = 1;
         r(1).key         = [d.family '||' d.signal '||' r(1).varId];
     end
@@ -994,6 +1121,13 @@ if nargout>0, h = fig; end
 %% ==================== THE CASCADE ======================================= %%
     function refreshCascade()
         refreshKindItems();
+        % THE KIND DECIDES HOW MANY FILES (D7).  A picture is of ONE recording, so
+        % choosing Image or Video drops the rest of the selection - and when it does,
+        % the union the menus were built from is no longer the union on screen, so the
+        % index is rebuilt and this function starts again.  It cannot loop: the second
+        % pass has one file selected and has nothing left to drop.
+        if forceSingleFile(), refreshIndex(); return; end
+        kindMemoryPolicy();
         refreshFamilyItems();
         refreshSignalItems();
         refreshVariableItems();
@@ -1009,9 +1143,20 @@ if nargout>0, h = fig; end
         %refreshKindItems  WHAT YOU SEE ON THE AXES - one number each, curves, a
         %   picture, or something to scrub through.  Offered in that fixed order, and
         %   only where the loaded files hold something that can be drawn that way.
+        %
+        %   AND AN ABSENT KIND IS EXPLAINED RATHER THAN JUST MISSING.  Video used to
+        %   be offered on any file with a mask stack in it and then emptied every
+        %   step below it, because the mask was the only thing it had; masks are
+        %   pictures now, so a recording with no time series to reconstruct and no
+        %   per-pixel stack simply has no video - which is worth one sentence, since
+        %   the alternative is a user looking for a menu that is not there.
         order = {'Scalar','Vector','Image','Video'};
         items = order(cellfun(@(k) any(cellfun(@(K) any(strcmp(K,k)), {app.vars.kinds})), order));
         setStep(c.kindLbl, c.kind, items, items);
+        if ~isempty(app.vars) && ~any(strcmp(items,'Video'))
+            app.hint = ['Nothing in this recording varies along a dimension a slider ' ...
+                        'could walk, so there is no Video to offer.'];
+        end
     end
 
     function refreshFamilyItems()
@@ -1032,7 +1177,7 @@ if nargout>0, h = fig; end
         %   filtered at index time, because a confidence interval has no plot of its
         %   own and offering it would be a dead end.
         rows = rowsForSignal();
-        [keys,labels] = variableItems(rows);
+        [keys,labels,app.varPlain] = variableItems(rows);
         setStepList(c.variableLbl, c.variable, labels, keys);
     end
 
@@ -1078,9 +1223,78 @@ if nargout>0, h = fig; end
         %refreshUnitsDefault  A box wants the distribution, a bar wants the pooled
         %   value, a family of curves indexed by position wants one curve each.  The
         %   default therefore comes from the PLOT and never from a constant.
+        %
+        %   'RECONSTRUCTED MAP' IS THE FOURTH ANSWER TO THE SAME QUESTION (D6).  The
+        %   other three say how the units inside one recording are COMBINED; this one
+        %   says do not combine them - keep every unit and put it back where it came
+        %   from.  It is a resolution, exactly as 'one curve each' is a resolution
+        %   rather than a statistic, so it belongs in this list and not in the Kind
+        %   menu: painting into the map is something you DO to a quantity, not a kind
+        %   of quantity.  ONE RULE DECIDES WHETHER AN ENTRY IS OFFERED - can the
+        %   variable in hand actually be resolved that way - and for the other three
+        %   the answer is yes for every unit but 'whole', which is why they look
+        %   unconditional.
         rows = rowsForVariable();
         if isempty(rows) || isempty(currentPlot()), c.units.Enable='off'; return; end
         c.units.Enable = onOff(~strcmp(rows(1).unit,'whole'));
+        items = {'Auto','Pooled (area-weighted)','One point each','One curve each'};
+        if ~isempty(paintedPlotFor(rows)) && hasMapToPaint(rows(1))
+            items{end+1} = 'Reconstructed map';
+        end
+        setDropKeeping(c.units, items);
+        % THE CONTROL SAYS WHAT IS ON SCREEN.  Reaching a painted plot through the
+        % Plot step is the same state as reaching it through this list, so the two
+        % routes must read the same - otherwise 'Units are: pooled' would sit beside a
+        % map in which nothing was pooled.
+        if isPaintedPlot(currentPlot())
+            if any(strcmp(c.units.Items,'Reconstructed map'))
+                c.units.Value = 'Reconstructed map';
+            end
+        elseif strcmp(c.units.Value,'Reconstructed map')
+            c.units.Value = 'Auto';
+        end
+    end
+
+    function p = paintedPlotFor(rows)
+        %paintedPlotFor  WHICH PLOT 'Reconstructed map' MEANS for the variable in
+        %   hand.  One choice, two plots, decided by what the leaf is: a number per
+        %   unit is painted into the map, a time series per unit is painted once per
+        %   sample.  A leaf offers one or the other and never both, so the order here
+        %   settles nothing.  '' when the leaf cannot be painted at all.
+        p = '';
+        if isempty(rows), return; end
+        for q = {'image.fromSegments','video.fromSegments'}
+            if any(strcmp(rows(1).plots, q{1})), p = q{1}; return; end
+        end
+    end
+
+    function tf = hasMapToPaint(row)
+        %hasMapToPaint  Is there a map in the recording to paint into?  exPlotRules
+        %   cannot answer this - it reads nothing - so the offering is gated here, on
+        %   the file, which is the same rule the Where list is built by.
+        tf = false;
+        idx = selectedFileIdx();
+        if isempty(idx), return; end
+        R = tryLoad(app.files(idx(1)).path);
+        if isempty(R) || ~isstruct(R), return; end
+        nm = 'sMap'; if strcmp(row.unit,'dvs'), nm = 'dvsMap'; end
+        tf = isfield(R,nm) && isnumeric(R.(nm)) && ~isempty(R.(nm));
+    end
+
+    function onUnits(~,~)
+        %onUnits  Choosing 'Reconstructed map' MOVES THE PLOT, because that is what
+        %   the answer means: keep every unit and put it back in the map, which is
+        %   image.fromSegments for a number and video.fromSegments for a time series.
+        %   It lands in exactly the state the Plot step would have reached, so the two
+        %   routes to a painted map cannot show different things.
+        pp = paintedPlotFor(rowsForVariable());
+        if strcmp(c.units.Value,'Reconstructed map') && ~isempty(pp) && ...
+                ~strcmp(currentPlot(), pp)
+            setPick(c.kind, kindOfPlot(pp)); onKind();
+            if any(strcmp(c.plot.ItemsData, pp)), setPick(c.plot, pp); onPlot(); end
+            return
+        end
+        requestRender();
     end
 
 % ---- the scrub strip (D3) --------------------------------------------------
@@ -1103,7 +1317,7 @@ if nargout>0, h = fig; end
         tf = ~isempty(app.scrub.name) && app.scrub.n > 1;
         app.axLayout.RowHeight = {'1x', scrubRowHeight(tf)};
         app.scrubBar.Visible = onOff(tf);
-        c.videoBtn.Enable = onOff(strcmp(currentPlot(),'video') && tf);
+        c.videoBtn.Enable = onOff(isVideoPlot(currentPlot()) && tf);
         refreshScrubChoices();
         if ~tf, c.scrubLbl.Text = ''; return; end
         c.scrub.Limits = [1 app.scrub.n];
@@ -1136,11 +1350,11 @@ if nargout>0, h = fig; end
     function s = scrubSpec(want)
         %scrubSpec  Which dimension the current plot leaves for the slider, asked of
         %   exFetch rather than worked out here: the length of a dim is a fact about
-        %   the leaf and the axis registry together, and a window that guessed it
-        %   would be guessing about a lazy file it never read.
+        %   the leaf and the axis registry together, and a window that read the length
+        %   alone would still not know which coordinate it was.
         s = blankScrub();
         P = currentPlot(); rows = rowsForVariable(); idx = selectedFileIdx();
-        if isempty(P) || isempty(rows) || isempty(idx) || ~isempty(rows(1).srcView), return; end
+        if isempty(P) || isempty(rows) || isempty(idx), return; end
         pth = app.files(idx(1)).path;
         d = firstDescriptor(pth, rows(1));
         if isempty(d), return; end
@@ -1183,12 +1397,19 @@ if nargout>0, h = fig; end
         %   are independent - an animal may span groups and a group may span animals -
         %   so what is offered is simply whichever of them differs across what is
         %   loaded, plus the selection when more than one was picked.
+        %
+        %   FOUR OF THEM SEPARATE FILES, and a picture is of one file, so under Image
+        %   or Video they are not offered at all - there is nothing left for them to
+        %   separate.  Interval is not one of them: several windows live inside one
+        %   recording.
         avail = {'Auto'};
         idx = selectedFileIdx();
-        if numel(unique({app.files(idx).group}))>1,  avail{end+1}='Group';           end
-        if numel(unique({app.files(idx).rec}))>1,    avail{end+1}='Recording index'; end
-        if numel(unique({app.files(idx).animal}))>1, avail{end+1}='Animal';          end
-        if numel(unique({app.files(idx).type}))>1,   avail{end+1}='Type';            end
+        if ~wholeFileKind()
+            if numel(unique({app.files(idx).group}))>1,  avail{end+1}='Group';           end
+            if numel(unique({app.files(idx).rec}))>1,    avail{end+1}='Recording index'; end
+            if numel(unique({app.files(idx).animal}))>1, avail{end+1}='Animal';          end
+            if numel(unique({app.files(idx).type}))>1,   avail{end+1}='Type';            end
+        end
         if numel(app.myoIntervals)>1 && strcmp(c.interval.Value,'(all)'), avail{end+1}='Interval'; end
         sels = c.selList.Value; if ischar(sels), sels={sels}; end
         if numel(sels)>1, avail{end+1}='Selection'; end
@@ -1258,13 +1479,31 @@ if nargout>0, h = fig; end
         end
     end
 
-    function [keys,labels] = variableItems(rows)
-        keys = uniqueStable({rows.varId}); labels = cell(1,numel(keys));
+    function [keys,labels,plain] = variableItems(rows)
+        %variableItems  THE MEANINGFUL PHRASE, THEN THE TECHNICAL NAME (D8).  The
+        %   phrase alone does not say which leaf of the tree it came from, and two
+        %   containers can spell one quantity the same way, so the dotted path follows
+        %   it in brackets - here, in the Variable list, and nowhere else.  The
+        %   suspect marker goes LAST: a warning that a technical name has pushed off
+        %   the end of the line is a warning that was not given.
+        keys = uniqueStable({rows.varId});
+        labels = cell(1,numel(keys)); plain = cell(1,numel(keys));
         for i = 1:numel(keys)
             j = find(strcmp({rows.varId}, keys{i}),1);
-            labels{i} = rows(j).varLabel;
+            plain{i}  = rows(j).varLabel;
+            labels{i} = [plain{i} technicalName(rows(j))];
             if rows(j).suspect, labels{i} = [labels{i} '  (check this one)']; end
         end
+    end
+
+    function s = technicalName(r)
+        %technicalName  ' (<dotted path>)', with the leading 'results.' taken off
+        %   because every path has it and no class, because the shape is already what
+        %   the cascade above sorted on.  Every row has one: every variable is a leaf
+        %   of a results file and nothing else.
+        s = '';
+        if ~isfield(r,'path') || isempty(r.path), return; end
+        s = [' (' regexprep(char(r.path),'^results\.','') ')'];
     end
 
     function nm = signalName(r)
@@ -1330,9 +1569,8 @@ if nargout>0, h = fig; end
             case 'heat.positionTime', renderDiameterMap(ax, onePayload());
             case {'image','image.fromSegments','image.timeAverage','image.frame'}
                                       renderImage(ax, onePayload());
-            case 'video',             renderVideo(ax, onePayload());
-            case 'lines.overlay',     renderPerLineDiameter(ax, onePayload());
-            case 'image.walls',       renderWalls(ax, onePayload());
+            case {'video','video.fromSegments'}
+                                      renderVideo(ax, onePayload());
             otherwise
                 error('guiExplore:noRenderer','%s has no renderer.', char(P));
         end
@@ -1356,16 +1594,16 @@ if nargout>0, h = fig; end
             for r = 1:numel(rows)
                 ds = descriptorsFor(pth, rows(r));
                 for k = 1:numel(ds)
-                    iv = intervalNameOf(R, ds(k));
-                    if ~intervalWanted(iv), continue; end
+                    w = windowOf(R, ds(k));
+                    if ~intervalWanted(w.name), continue; end
                     for s = 1:numel(sels)
-                        p = fetchPayload(R, pth, ds(k), rows(r), P, sels{s});
+                        p = fetchPayload(R, pth, ds(k), P, sels{s});
                         noteFrom(p);
                         if ~p.ok || isempty(p.Y), continue; end
                         meta.xlabel = p.xlab; meta.ylabel = p.ylab; meta.xlog = p.xlog;
                         [Y,meta.ylabel] = asBaseline(p.Y, meta.ylabel);
                         for col = 1:size(Y,2)
-                            obs(end+1) = mkObs(p.x, Y(:,col), sels{s}, i, iv, rows(r)); %#ok<AGROW>
+                            obs(end+1) = mkObs(p.x, Y(:,col), sels{s}, i, w, rows(r), compOf(p)); %#ok<AGROW>
                         end
                     end
                 end
@@ -1388,17 +1626,18 @@ if nargout>0, h = fig; end
             for r = 1:numel(rows)
                 ds = descriptorsFor(pth, rows(r));
                 for k = 1:numel(ds)
-                    iv = intervalNameOf(R, ds(k));
-                    if ~intervalWanted(iv), continue; end
+                    w = windowOf(R, ds(k));
+                    if ~intervalWanted(w.name), continue; end
                     for s = 1:numel(sels)
-                        p = fetchPayload(R, pth, ds(k), rows(r), P, sels{s});
+                        p = fetchPayload(R, pth, ds(k), P, sels{s});
                         noteFrom(p);
                         if ~p.ok, continue; end
                         meta.ylabel = p.ylab;
                         v = double(p.Y(:)); v = v(isfinite(v));
+                        [lo,hi] = companionInterval(p, numel(v));
                         for j = 1:numel(v)
                             vals(end+1,1) = v(j); %#ok<AGROW>
-                            tags(end+1)   = mkTag(sels{s}, i, iv, rows(r)); %#ok<AGROW>
+                            tags(end+1)   = mkTag(sels{s}, i, w, rows(r), lo, hi); %#ok<AGROW>
                         end
                     end
                 end
@@ -1408,9 +1647,15 @@ if nargout>0, h = fig; end
 
     function P = onePayload()
         %onePayload  THE single-recording views: one file, one signal, one variable,
-        %   one window, one selection.  Several selected is not an error - the first
-        %   is shown and the status bar says so, which is what the tool has always
-        %   done for a picture.
+        %   one window - and EVERY SELECTION AT ONCE (H).
+        %
+        %   Every plot this serves comes back as ONE payload, so choosing one of
+        %   several selections was arbitrary; for a painted map it is worse than
+        %   arbitrary, because arteries, veins and parenchyma combine SPATIALLY and
+        %   taking the first draws a fragment and calls it the map.  So the list goes
+        %   to exFetch, which ORs the row masks.  The several-series renderers are
+        %   untouched: they fetch each selection separately, which is what makes them
+        %   several series, and there a selection genuinely is a thing to compare.
         P = [];
         rows = rowsForVariable();
         sels = selectionList();
@@ -1423,18 +1668,18 @@ if nargout>0, h = fig; end
             if isempty(R), continue; end
             ds = descriptorsFor(pth, rows(1));
             for k = 1:numel(ds)
-                iv = intervalNameOf(R, ds(k));
-                if ~intervalWanted(iv), continue; end
+                w = windowOf(R, ds(k));
+                if ~intervalWanted(w.name), continue; end
                 nDrawn = nDrawn + 1;
                 if nDrawn>1, continue; end
-                P = fetchPayload(R, pth, ds(k), rows(1), currentPlot(), sels{1});
-                P.title = seriesTitle(app.files(i), iv, rows(1), sels{1});
+                P = fetchPayload(R, pth, ds(k), currentPlot(), sels);
+                P.title = seriesTitle(app.files(i), w.name, rows(1), sels);
                 noteFrom(P);
             end
         end
-        more = numel(idx)*max(numel(rows),1)*numel(sels);
+        more = numel(idx)*max(numel(rows),1);
         if nDrawn>1 || more>1
-            setStatus('This view shows one recording and one selection; showing the first.');
+            setStatus('This view shows one recording at a time; showing the first.');
         end
     end
 
@@ -1443,13 +1688,7 @@ if nargout>0, h = fig; end
         %descriptorsFor  The concrete leaves one menu row stands for, in one file.  A
         %   myograph recording answers with one per analysed WINDOW, which is what
         %   puts the window on an axis; everything else answers with exactly one.
-        [D,S] = indexOf(pth);
-        if ~isempty(row.srcView)
-            ds = S; if isempty(ds), return; end
-            ds = ds(strcmp({ds.key}, row.key));
-            return
-        end
-        ds = D;
+        ds = indexOf(pth);
         if isempty(ds), return; end
         keep = false(1,numel(ds));
         for i = 1:numel(ds)
@@ -1463,38 +1702,71 @@ if nargout>0, h = fig; end
         if isempty(ds), d = []; else, d = ds(1); end
     end
 
-    function P = fetchPayload(R, pth, d, row, plotId, sel)
-        %fetchPayload  THE seam.  Everything a renderer draws comes through here, so a
-        %   renderer never reaches into a results tree and session 4 can add one
-        %   without touching the cascade.
-        if ~isempty(row.srcView)
-            P = fetchSourceView(R, pth, d, plotId);
-            return
-        end
-        opts = struct('select',sel, 'units',unitsChoice(), 'path',pth, ...
+    function P = fetchPayload(R, pth, d, plotId, sel)
+        %fetchPayload  THE seam, and now the ONLY one.  Everything a renderer draws
+        %   comes through exFetch, so a renderer never reaches into a results tree and
+        %   nothing reaches outside the _r at all.
+        % .select IS WRAPPED because it may be a LIST.  A cell passed to struct()
+        % makes a struct ARRAY of that cell's size, so two selections would silently
+        % become two option structs and the fetch would see one of them.
+        opts = struct('select',{sel}, 'units',unitsChoice(), 'path',pth, ...
                       'rows',[], 'interval',[], 'slice',sliceNow(), 'scrub',app.want);
         try
             P = exFetch(R, d, plotId, opts);
         catch ME
             P = struct('ok',false,'note',ME.message,'Y',[],'x',[],'img',[],'cdata',[], ...
-                'yvals',[],'frames',[],'fvals',[],'names',{{}},'w',[], ...
+                'yvals',[],'frames',[],'paint',[],'fvals',[],'names',{{}},'w',[], ...
                 'xlab','','ylab','','clab','','flab','','xlog',false,'xscale','linear', ...
-                'nUnits',0,'plot',plotId,'kind','');
+                'nUnits',0,'plot',plotId,'kind','', ...
+                'companions',{struct('leaf',{},'role',{},'value',{},'label',{},'unit',{})});
         end
         if ~isfield(P,'title'), P.title = ''; end
     end
 
-    function nm = intervalNameOf(R, d)
-        %intervalNameOf  Which analysed window a leaf belongs to, '' when the
-        %   recording has none.  A wire myograph hangs its windows off the CHANNEL, so
-        %   the flat index has to be recomposed - two chambers both calling their
-        %   first window 'interval1' would otherwise be averaged together.
-        nm = '';
-        if isfield(d,'srcView') && ~isempty(d.srcView)
-            nm = exMyograph('name', R, d.srcInterval); return
+    function w = windowOf(R, d)
+        %windowOf  WHICH ANALYSED WINDOW A LEAF BELONGS TO - the protocol step it
+        %   names, and the chamber it was measured in, which are two different facts.
+        %   A wire myograph hangs its windows off the CHANNEL, so the flat index has
+        %   to be recomposed from both: that is ADDRESSING, and it is what stops two
+        %   chambers' first window being read as one.  What comes back OUT of it is
+        %   the BARE name, because naming is the other job - two chambers' 'baseline'
+        %   is one step of one protocol and belongs in one x-category.
+        w = struct('name','','channel','');
+        k = 0;
+        if isfield(d,'path'), k = exMyograph('index', R, d.path); end
+        if k<1, return; end
+        w.name    = exMyograph('name', R, k);
+        w.channel = exMyograph('channel', R, k);
+    end
+
+    function [lo,hi] = companionInterval(p, n)
+        %companionInterval  A COMPANION INTERVAL IS ABOUT ONE NUMBER.  speedCI is the
+        %   interval on THE speed of that window, so it is carried only when the
+        %   payload came back as a single number; a distribution over segments has no
+        %   one number for it to be about, and repeating the same bar over every point
+        %   would claim it had been measured once per point.  An open-ended interval
+        %   (the slope's lower bound crossed zero, so the speed's upper bound is Inf)
+        %   is not drawn: there is no bar that says "unbounded" honestly.
+        lo = NaN; hi = NaN;
+        if n~=1, return; end
+        cmp = compOf(p);
+        if isempty(cmp), return; end
+        k = find(strcmp({cmp.role},'interval'),1);
+        if isempty(k), return; end
+        v = double(cmp(k).value(:));
+        if numel(v)<2 || ~all(isfinite(v(1:2))), return; end
+        lo = min(v(1:2)); hi = max(v(1:2));
+    end
+
+    function cmp = compOf(p)
+        %compOf  What rode with a payload, or nothing.  A renderer that asks is a
+        %   renderer that does not reach into a results tree.
+        %   NOT NAMED c: every function in this file is NESTED, so a local called c
+        %   would not be local - it would be the control-handle struct, wiped.
+        cmp = struct('leaf',{},'role',{},'value',{},'label',{},'unit',{});
+        if isstruct(p) && isfield(p,'companions') && ~isempty(p.companions)
+            cmp = p.companions;
         end
-        k = exMyograph('index', R, d.path);
-        if k>0, nm = exMyograph('name', R, k); end
     end
 
     function tf = intervalWanted(nm)
@@ -1509,24 +1781,33 @@ if nargout>0, h = fig; end
     end
 
     function u = unitsChoice()
+        %unitsChoice  THE ONE PLACE THE WORDS BECOME A TOKEN.  'Reconstructed map' is
+        %   deliberately the empty token: the painted plots already declare that they
+        %   keep every unit, so the resolution is carried by the PLOT and asking for a
+        %   second one here would be two answers to one question.
         switch c.units.Value
             case 'Pooled (area-weighted)', u = 'pooled';
             case 'One point each',         u = 'points';
             case 'One curve each',         u = 'curves';
+            case 'Reconstructed map',      u = '';      % the plot IS the resolution
             otherwise,                     u = '';      % let the plot decide
         end
     end
 
     function [Y,ylab] = asBaseline(Y, ylab)
-        %asBaseline  Each curve against ITS OWN mean, which is how a myograph result
+        %asBaseline  Each curve against ITS OWN MEAN, which is how a myograph result
         %   is usually read: vessels of different calibre become comparable and a
-        %   dilation is a number a reader recognises.
+        %   dilation is a number a reader recognises.  THE AXIS SAYS 'MEAN' BECAUSE
+        %   THAT IS THE DIVISOR - it is the mean of the whole trace on screen, not of
+        %   a baseline window, and calling it a baseline invited the reader to believe
+        %   a period had been chosen for them.  The state key is still 'Baseline', so
+        %   a saved script keeps working.
         if ~c.baseline.Value, return; end
         for j = 1:size(Y,2)
             b = mean(Y(:,j),'omitnan');
             if isfinite(b) && b~=0, Y(:,j) = 100*Y(:,j)/b; else, Y(:,j) = NaN; end
         end
-        ylab = [ylab ', % of baseline'];
+        ylab = [ylab ', % of the mean'];
     end
 
     function noteFrom(p)
@@ -1539,19 +1820,20 @@ if nargout>0, h = fig; end
         if ~any(strcmp(app.notes,n)), app.notes{end+1} = n; end
     end
 
-    function o = mkObs(x,y,sel,i,interval,row)
+    function o = mkObs(x,y,sel,i,w,row,comp)
         o = struct('x',x(:),'y',y(:),'sel',prettySel(sel), ...
             'group',app.files(i).group,'rec',app.files(i).rec, ...
             'animal',app.files(i).animal,'type',app.files(i).type, ...
-            'interval',interval,'file',app.files(i).name, ...
-            'var',row.varLabel,'signal',signalName(row));
+            'interval',w.name,'channel',w.channel,'file',app.files(i).name, ...
+            'var',row.varLabel,'signal',signalName(row),'comp',{comp});
     end
 
-    function t = mkTag(sel,i,interval,row)
+    function t = mkTag(sel,i,w,row,lo,hi)
         t = struct('sel',prettySel(sel),'group',app.files(i).group, ...
             'rec',app.files(i).rec,'animal',app.files(i).animal, ...
-            'type',app.files(i).type,'interval',interval,'file',app.files(i).name, ...
-            'var',row.varLabel,'signal',signalName(row));
+            'type',app.files(i).type,'interval',w.name,'channel',w.channel, ...
+            'file',app.files(i).name, ...
+            'var',row.varLabel,'signal',signalName(row),'lo',lo,'hi',hi);
     end
 
 %% ==================== RENDERERS ========================================= %%
@@ -1583,14 +1865,94 @@ if nargout>0, h = fig; end
                     'HandleVisibility','off');
             end
             hLeg(m) = plot(ax, xg, mu, '-','Color',cols(m,:),'LineWidth',1.8);
+            drawFit(ax, obs(sel), cols(m,:));
             names{m} = legendName(leg{firstIndex(key,uk(m))});
         end
         if numel(uk)<2, hLeg=gobjects(0); names={}; end   % nothing to distinguish -> no legend
         finishAxes(ax, meta.xlabel, meta.ylabel, hLeg, names);
         if meta.xlog, set(ax,'XScale','log'); end
         axis(ax,'tight'); yl=ylim(ax); ylim(ax, yl+[-1 1]*0.03*range(yl)+[ -eps eps ]);
-        setStatus(sprintf('%d series, %d observations (%s).%s%s', ...
-            numel(uk), numel(obs), statName, seriesWarning(numel(uk)), noteText()));
+        setStatus(sprintf('%d series, %d observations (%s).%s%s%s', ...
+            numel(uk), numel(obs), statName, seriesWarning(numel(uk)), noteText(), ...
+            captionText(obs, key, uk, leg)));
+    end
+
+    function drawFit(ax, o, col)
+        %drawFit  THE FITTED LINE A COMPANION DECLARES, over the range the series was
+        %   actually measured on.  This is what a propagation scatter was missing: a
+        %   cloud of 475 lags with no line through it says nothing about the speed
+        %   that was fitted from it.
+        %
+        %   THE INTERCEPT IS NOT IN THE FILE.  getMyographPropagation.m:151 keeps the
+        %   robust fit's slope and drops its constant, so the line is anchored at the
+        %   CENTROID of the observed pairs - which is where a least-squares line
+        %   passes through by construction.  Measured against the robust fit's own
+        %   intercept on the reference recording, that anchor is off by 1% of the
+        %   fitted lag span on the two windows that fitted and 4% on the one whose R2
+        %   is 0.06.  Nothing is refitted here: the slope drawn is the slope in the
+        %   file, and only where it sits is reconstructed.
+        %
+        %   "% of its own mean" rescales the curve and would leave the stored slope
+        %   in the old units, so the line is not drawn under it.  Dividing a lag in
+        %   seconds by its own mean is not a question anybody asks, which is why this
+        %   is a guard rather than a conversion.
+        if isempty(o) || c.baseline.Value, return; end
+        cp = fieldOr(o(1),'comp',[]);
+        if isempty(cp), return; end
+        k = find(strcmp({cp.role},'fit'),1);
+        if isempty(k), return; end
+        s = double(cp(k).value);
+        if ~isscalar(s) || ~isfinite(s), return; end
+        xs = vertcat(o.x); ys = vertcat(o.y);
+        g = isfinite(xs) & isfinite(ys);
+        if nnz(g)<2, return; end
+        xs = xs(g); ys = ys(g);
+        xr = [min(xs); max(xs)];
+        plot(ax, xr, mean(ys) + s*(xr - mean(xs)), '--', 'Color',col, ...
+            'LineWidth',1.6,'HandleVisibility','off');
+    end
+
+    function s = captionText(obs, key, uk, leg)
+        %captionText  THE SENTENCE THE PRODUCER WROTE FOR THE READER, shown as it
+        %   stands: not paraphrased, not truncated, and nothing in it recomputed.  It
+        %   already says that the lags rise with scatter, that the ordering is
+        %   unlikely by chance and that the whole vessel lags by less than one frame,
+        %   so a second warning of our own would be the same fact in worse words.
+        %
+        %   ITS HOME IS THE STATUS BAR AND NOT THE TITLE.  The title is a figure
+        %   element - exported at the chosen DPI with the figure, re-typed into the
+        %   "Title" box on every change, and the place plotQualifier says what
+        %   happened to a dimension that is not on screen.  A forty-word sentence
+        %   there would wrap over the axes of every image written.  The status bar is
+        %   already where a caveat goes, it wraps, and it is not exported.
+        %
+        %   confidenceLevel and confidenceText are ONE FACT IN TWO LENGTHS ('low',
+        %   and a sentence that opens with the word), so the longer is shown and the
+        %   shorter would only repeat it.  With several series each carrying one,
+        %   each is named by its series: three windows have three verdicts and
+        %   averaging them would be inventing a fourth.
+        s = '';
+        bits = {};
+        for m = 1:numel(uk)
+            i = firstIndex(key, uk(m));
+            txt = longestCaption(fieldOr(obs(i),'comp',[]));
+            if isempty(txt), continue; end
+            if numel(uk)>1, txt = [legendName(leg{i}) ': ' txt]; end %#ok<AGROW>
+            bits{end+1} = txt; %#ok<AGROW>
+        end
+        if isempty(bits), return; end
+        s = ['  ' strjoin(bits,'  ')];
+    end
+
+    function txt = longestCaption(cp)
+        txt = '';
+        if isempty(cp) || ~isstruct(cp), return; end
+        for i = find(strcmp({cp.role},'caption'))
+            v = cp(i).value;
+            if ~(ischar(v) || isstring(v)), continue; end
+            v = char(string(v));
+            if numel(v) > numel(txt), txt = v; end
+        end
     end
 
     function renderHarmonics(ax)
@@ -1642,6 +2004,7 @@ if nargout>0, h = fig; end
         xc  = arrayfun(@(t) t.(xName), tags, 'uni',0);
         xcats = orderedCats(xc);
         colName = meta.ylabel;
+        [lo,hi] = tagIntervals(tags);
         if ~isempty(colDims)
             cc = arrayfun(@(t) strjoin(cellfun(@(d) t.(d), colDims,'uni',0),' | '), tags, 'uni',0);
             ccats = unique(cc,'stable'); ccats = ccats(orderNumeric(ccats));
@@ -1649,7 +2012,7 @@ if nargout>0, h = fig; end
             ax.ColorOrder = cols;
             boxchart(ax, categorical(xc,xcats,'Ordinal',true), vals, ...
                 'GroupByColor', categorical(cc,ccats), 'MarkerStyle','none');
-            overlayPoints(ax, xc, cc, vals, xcats, ccats, cols, true);
+            overlayPoints(ax, xc, cc, vals, xcats, ccats, cols, true, lo, hi);
             if c.legendChk.Value
                 lg = legend(ax, cellfun(@legendDyn,ccats,'uni',0), ...
                     'Interpreter','none','Location','best'); lg.Box='off'; lg.FontSize=c.fontSize.Value;
@@ -1664,13 +2027,32 @@ if nargout>0, h = fig; end
                     'MarkerStyle','none');
                 b.BoxFaceColor = cols(k,:); b.WhiskerLineColor = cols(k,:); b.BoxFaceAlpha = 0.45;
             end
-            overlayPoints(ax, xc, xc, vals, xcats, xcats, cols, false);
+            overlayPoints(ax, xc, xc, vals, xcats, xcats, cols, false, lo, hi);
             legend(ax,'off');
         end
         finishAxes(ax, xLabelFor(xName), colName, gobjects(0), {});
         yl = ylim(ax); if diff(yl)>0, ylim(ax, yl+[-0.06 0.06]*diff(yl)); end  % a little head/foot room
-        setStatus(sprintf('%d x-category(ies), %d points.%s%s', numel(xcats), numel(vals), ...
-            seriesWarning(numel(xcats)*max(numel(colDims),1)), noteText()));
+        setStatus(sprintf('%d x-category(ies), %d points.%s%s%s', numel(xcats), numel(vals), ...
+            intervalNote(lo,hi), seriesWarning(numel(xcats)*max(numel(colDims),1)), noteText()));
+    end
+
+    function [lo,hi] = tagIntervals(tg)
+        %tagIntervals  Each point's own confidence interval, where a companion
+        %   supplied one - NaN everywhere else, which is most of the library.
+        lo = nan(numel(tg),1); hi = lo;
+        if isempty(tg) || ~isfield(tg,'lo'), return; end
+        lo = reshape(double([tg.lo]),[],1);
+        hi = reshape(double([tg.hi]),[],1);
+    end
+
+    function s = intervalNote(lo,hi)
+        %intervalNote  SAY WHERE THE BARS CAME FROM.  An error bar beside a box could
+        %   be read as a spread this tool computed; it is not, it is the interval the
+        %   producer stored for that one number, and the difference matters.
+        s = '';
+        n = nnz(isfinite(lo) & isfinite(hi));
+        if n==0, return; end
+        s = sprintf('  %d of them carry the confidence interval stored with them.', n);
     end
 
     function renderHeatMap(ax, P)
@@ -1764,6 +2146,17 @@ if nargout>0, h = fig; end
             case 'image.frame',       s = [scrubText(app.scrub, app.scrub.idx, false) '.  '];
             otherwise,                s = '';
         end
+        s = [selectionNote() s];
+    end
+
+    function s = selectionNote()
+        %selectionNote  HOW MANY SELECTIONS WENT INTO ONE PICTURE.  They combine
+        %   spatially, so the count is part of what the picture IS rather than a
+        %   caveat about it - and it replaces the old "showing the first", which was
+        %   the tool admitting it had drawn a fragment.
+        n = numel(selectionList());
+        s = '';
+        if n>1, s = sprintf('%d selections combined.  ', n); end
     end
 
     function renderVideo(ax, P)
@@ -1772,19 +2165,23 @@ if nargout>0, h = fig; end
         %   ARE FIXED OVER THE WHOLE CUBE and not over the frame: rescaling each frame
         %   to its own range makes a recording that barely changes look alive, which is
         %   the one thing a movie of a vascular field must not do.
+        %
+        %   A RECONSTRUCTED VIDEO HAS NO CUBE, so the frame is asked for rather than
+        %   indexed - see videoFrames.  Nothing else here knows the difference, which
+        %   is the point: 26 TB and 5 MB draw through the same six lines.
         if ~drawable(ax,P,'No video for this selection'), return; end
-        nF = size(P.frames,3);
+        [nF, frameAt, lims] = videoFrames(P);
+        if nF<1, title(ax,'No video for this selection'); return; end
         k  = min(max(app.scrub.idx,1),nF);
-        img = double(P.frames(:,:,k));
+        img = frameAt(k);
         m = isfinite(img);
         imagesc(ax, img, 'AlphaData', m); axis(ax,'image');
-        lims = cubeLimits(P.frames);
         if ~isempty(lims), clim(ax,lims); end
         colormap(ax, c.cmap.Value); cb=colorbar(ax); cb.Label.String = P.clab;
         finishAxes(ax, '', '', gobjects(0), {}); legend(ax,'off');
         set(ax,'XTick',[],'YTick',[]); grid(ax,'off');
-        setStatus(sprintf('%s%s, frame %d of %d.  "Export video" writes the whole sweep.%s', ...
-            prefixOf(P.title), frameText(P,k), k, nF, noteText()));
+        setStatus(sprintf('%s%s%s, frame %d of %d.  "Export video" writes the whole sweep.%s', ...
+            prefixOf(P.title), selectionNote(), frameText(P,k), k, nF, noteText()));
     end
 
     function renderDiameterMap(ax, P)
@@ -1806,53 +2203,6 @@ if nargout>0, h = fig; end
         setStatus(sprintf('%s%d position(s).%s', prefixOf(P.title), size(P.cdata,1), noteText()));
     end
 
-    function renderPerLineDiameter(ax, P)
-        %renderPerLineDiameter  EVERY LINE'S OWN DIAMETER against time, rather than
-        %   their average or their map.  The map says whether detection HELD; this says
-        %   what the individual traces DID - whether the lines move together, which is
-        %   the assumption a propagation speed is fitted under, and whether one stray
-        %   line is carrying an average the rest do not support.  Lines are coloured by
-        %   position so they can be read against the map, and the line average is drawn
-        %   over them in black.
-        if ~drawable(ax,P,'The per-line diameter is not beside this result - keep the _MYO_d.mat with it'), return; end
-        M = P.Y;
-        cm = colormap(ax, c.cmap.Value);
-        ci = round(linspace(1, size(cm,1), max(size(M,2),1)));
-        for j = 1:size(M,2)
-            plot(ax, P.x, M(:,j), '-', 'Color',[cm(ci(j),:) 0.45],'LineWidth',0.5, ...
-                'HandleVisibility','off');
-        end
-        hMean = plot(ax, P.x, mean(M,2,'omitnan'), '-','Color',[0 0 0],'LineWidth',1.8);
-        if numel(P.yvals)>1
-            clim(ax,[P.yvals(1) P.yvals(end)]); cb = colorbar(ax); cb.Label.String = 'position';
-        end
-        finishAxes(ax, P.xlab, P.ylab, hMean, {'line average'});
-        axis(ax,'tight');
-        setStatus(sprintf('%s%d line(s).%s', prefixOf(P.title), size(M,2), noteText()));
-    end
-
-    function renderWalls(ax, P)
-        %renderWalls  ONE FRAME OF THE RECORDING WITH THE DETECTED WALLS ON IT - the
-        %   "did it find the right edges" check, and the other half of what a report
-        %   page would have carried.  The walls are drawn RED when that frame was
-        %   flagged invalid, which is a wall that had left the field of view: its
-        %   diameter is a lower bound rather than a measurement, and that has to be
-        %   visible rather than inferred.
-        if isempty(P) || ~isstruct(P) || ~isfield(P,'walls') || isempty(P.walls.frame)
-            title(ax,'The recording is not beside this result - keep the video with it');
-            setStatus(noteText()); return
-        end
-        W = P.walls;
-        image(ax, W.frame); axis(ax,'image');
-        col = [0.1 0.9 0.1]; if ~W.valid, col = [0.95 0.15 0.15]; end
-        plot(ax, W.left,  W.rows, '-', 'Color', col, 'LineWidth', 1.2);
-        plot(ax, W.right, W.rows, '-', 'Color', col, 'LineWidth', 1.2);
-        finishAxes(ax,'','',gobjects(0),{}); legend(ax,'off');
-        set(ax,'XTick',[],'YTick',[]); grid(ax,'off');
-        note = ''; if ~W.valid, note = '   wall out of view'; end
-        setStatus(sprintf('%s%.1f s%s%s', prefixOf(P.title), W.time, note, noteText()));
-    end
-
     function tf = drawable(ax, P, msg)
         tf = ~isempty(P) && isstruct(P) && isfield(P,'ok') && P.ok;
         if tf, return; end
@@ -1862,102 +2212,29 @@ if nargout>0, h = fig; end
         setStatus([why noteText()]);
     end
 
-%% ============ THE VIEWS THAT READ THE RECORDING'S SOURCE ================ %%
-% Three views of a myograph recording are NOT in the results tree and so cannot be
-% in the variable index: the per-line diameters, their position-time map and the
-% detected walls all live once, in the SOURCE beside the results (a window carries
-% only the line-averaged trace).  They are folded into the same cascade by being
-% offered as variables of their own, and answered here in the payload shape every
-% other renderer already eats.
-
-    function S = sourceViews(R, pth)
-        %sourceViews  What the recording beside this result can also show.  Offered
-        %   only when the source is actually there, so a results file moved away from
-        %   its triplet simply does not offer them rather than offering and failing.
-        S = emptyVars();
-        if isempty(R) || ~strcmp(exModality(R),'myograph'), return; end
-        if ~isfile(strrep(char(pth),'_r.mat','_d.mat')), return; end
-        % THE SIGNAL IS THE TREE'S OWN FIELD, not the measure's display name.  These
-        % three views sit under the same Signal step as the diameter the tree stores,
-        % and a second key spelling the same measure differently would put every
-        % measure in that list TWICE, under one name each time.
-        sig  = exMyograph('signals', R);
-        meas = {sig(strcmp({sig.kind},'measure')).field};
-        if isempty(meas), return; end
-        nIv = exMyograph('count', R);
-        spec = {'perLine','Every line''s own diameter','Vector',{'lines.overlay'}; ...
-                'map',    'Diameter along the vessel', 'Image', {'heat.positionTime'}; ...
-                'walls',  'Detected walls',            'Image', {'image.walls'}};
-        for m = 1:numel(meas)
-            for v = 1:size(spec,1)
-                for k = 1:nIv
-                    r = emptyVars();
-                    r(1).family   = 'Diameter';
-                    r(1).signal   = meas{m};
-                    r(1).signalLabel = '';
-                    r(1).suspect  = false;
-                    r(1).varId    = ['src|' spec{v,1}];
-                    r(1).varLabel = spec{v,2};
-                    r(1).leaf     = spec{v,1};
-                    r(1).unit     = 'line';
-                    r(1).dims     = {'time'};
-                    r(1).sig      = ['src|' spec{v,1}];
-                    r(1).kinds    = spec(v,3);
-                    r(1).plots    = spec{v,4};
-                    r(1).srcView  = spec{v,1};
-                    r(1).srcInterval = k;
-                    r(1).nFiles   = 1;
-                    r(1).key      = ['Diameter||' meas{m} '||src|' spec{v,1}];
-                    S(end+1) = r; %#ok<AGROW>
-                end
-            end
-        end
-    end
-
-    function P = fetchSourceView(R, pth, d, plotId)
-        %fetchSourceView  exFetch's counterpart for the three source-backed views: the
-        %   same payload struct, filled from the recording rather than from the tree.
-        P = struct('ok',false,'note','','plot',plotId,'kind','','x',[],'Y',[],'w',[], ...
-            'names',{{}},'img',[],'cdata',[],'yvals',[],'frames',[],'fvals',[], ...
-            'xlab','','ylab','','clab','','flab','','xlog',false,'xscale','linear', ...
-            'nUnits',0,'title','','walls',[]);
-        k = d.srcInterval;
-        if strcmp(d.srcView,'walls')
-            W = exMyograph('walls', R, pth, k, d.signal);
-            P.walls = W;
-            P.ok = ~isempty(W.frame);
-            if ~P.ok, P.note = 'The recording is not beside this result - keep the video with it.'; end
-            return
-        end
-        [M,t,y,unit] = exMyograph('diametermap', R, pth, k, d.signal);
-        if isempty(M)
-            P.note = 'The per-line diameter is not beside this result - keep the _MYO_d.mat with it.';
-            return
-        end
-        P.xlab = 'time (s)'; P.nUnits = size(M,2);
-        P.x = double(t(:)); P.yvals = double(y(:));
-        switch d.srcView
-            case 'perLine'
-                [P.Y, P.ylab] = asBaseline(double(M), ['diameter (' unit ')']);
-                P.names = arrayfun(@(i) sprintf('position %d',i), y(:).', 'UniformOutput', false);
-            case 'map'
-                P.cdata = double(M).';                 % rows = position, columns = time
-                P.ylab  = 'position along the vessel';
-                P.clab  = ['diameter (' unit ')'];
-        end
-        P.ok = true;
-    end
-
-    function overlayPoints(ax, xc, cg, vals, xcats, cgcats, cols, dodge)
-        % Individual observations as jittered points, colour-matched to the boxes.
+    function overlayPoints(ax, xc, cg, vals, xcats, cgcats, cols, dodge, lo, hi)
+        % Individual observations as jittered points, colour-matched to the boxes -
+        % and, where a COMPANION supplied an interval on that one number, its error
+        % bar.  The jitter is computed once, here, so a bar and the point it belongs
+        % to cannot drift apart.
         nC = numel(cgcats); bw = 0.75/max(nC,1);
+        haveCI = nargin>=10 && ~isempty(lo);
         for j = 1:nC
             sel = strcmp(cg, cgcats{j}); if ~any(sel), continue; end
             xi  = double(categorical(xc(sel), xcats, 'Ordinal',true));
             if dodge, off = (j-(nC+1)/2)*bw; else, off = 0; end
             jit = (rand(numel(xi),1)-0.5)*bw*0.5;
-            scatter(ax, xi(:)+off+jit, vals(sel), 16, cols(j,:), 'filled', ...
+            px  = xi(:)+off+jit;
+            scatter(ax, px, vals(sel), 16, cols(j,:), 'filled', ...
                 'MarkerFaceAlpha',0.55,'MarkerEdgeColor','none','HandleVisibility','off');
+            if ~haveCI, continue; end
+            % lv / hv, not l / h: h is this file's OUTPUT variable and every function
+            % here is nested, so an h assigned in one is the figure handle returned.
+            v = vals(sel); lv = lo(sel); hv = hi(sel);
+            ok = isfinite(lv) & isfinite(hv);
+            if ~any(ok), continue; end
+            errorbar(ax, px(ok), v(ok), v(ok)-lv(ok), hv(ok)-v(ok), 'LineStyle','none', ...
+                'Color',cols(j,:),'CapSize',6,'LineWidth',1.1,'HandleVisibility','off');
         end
     end
 
@@ -2058,18 +2335,28 @@ if nargout>0, h = fig; end
     end
 
     function nm = legendDyn(val)
-        % Apply the legend pattern to a single dynamic category (box colour groups).
+        % One dynamic category (box colour groups).  It arrives already joined over
+        % the colour dimensions, so IT IS the derived name and goes through the same
+        % function as a curve's - a legend that names what separates the series must
+        % do so whichever renderer drew them.
         L = emptyLegendTag(); L.dyn = val;
         nm = legendName(L);
     end
 
     function [key,leg] = seriesKeys(obs)
         % A series (one line+band) = unique combination of the ACTIVE dimensions.
+        % The dimensions travel WITH the tag, because they are what the legend has to
+        % name: separated by animal, by type or by analysed window, the legend has to
+        % say the animal, the type or the window.
         dims=activeDims(obs);
         key=cell(1,numel(obs)); leg=cell(1,numel(obs));
         for i=1:numel(obs)
             key{i}=strjoin(cellfun(@(d) obs(i).(d), dims,'uni',0),'|');
-            L=emptyLegendTag(); L.file=obs(i).file;
+            L=emptyLegendTag(); L.file=obs(i).file; L.dims=dims;
+            % The chamber never separates a series - it IS the signal on a wire
+            % recording - but a typed pattern may still want to quote it, so it
+            % travels beside the file rather than through dims.
+            L.channel=fieldOr(obs(i),'channel','');
             for d=1:numel(dims), L.(dims{d})=obs(i).(dims{d}); end
             leg{i}=L;
         end
@@ -2106,6 +2393,13 @@ if nargout>0, h = fig; end
         switch currentPlot()
             case 'image.timeAverage',  s = ', mean over time';
             case 'image.fromSegments', s = ', painted from the segments';
+            case 'video.fromSegments'
+                s = ', painted from the segments';
+                if ~isempty(app.scrub.name)
+                    k = app.scrub.idx;
+                    if ~isempty(app.titleFrame), k = app.titleFrame; end
+                    s = [s ', ' scrubText(app.scrub, k, false)];
+                end
             case {'image.frame','video'}
                 if ~isempty(app.scrub.name)
                     k = app.scrub.idx;
@@ -2124,8 +2418,12 @@ if nargout>0, h = fig; end
     end
 
     function s = seriesTitle(entry, iv, row, sel)
-        %seriesTitle  What a single-recording view is showing, for the status bar.
-        bits = {shortName(entry.path), iv, signalName(row), prettySel(sel)};
+        %seriesTitle  What a single-recording view is showing, for the status bar.  A
+        %   picture may have been asked for SEVERAL selections at once, and it names
+        %   all of them: the alternative is a title that describes a third of the map.
+        if ischar(sel), sel = {sel}; end
+        selTxt = strjoin(cellfun(@prettySel, sel, 'uni',0), ', ');
+        bits = {shortName(entry.path), iv, signalName(row), selTxt};
         bits = bits(~cellfun(@isempty,bits));
         s = [strjoin(bits,' - ') ':  '];
     end
@@ -2135,15 +2433,44 @@ if nargout>0, h = fig; end
     end
 
     function nm = legendName(tagLike)
-        pat = c.legendF.Value; if isempty(pat), pat='%s%g%r'; end
+        %legendName  THE LEGEND SAYS WHAT SEPARATES THE SERIES.  The default text is
+        %   DERIVED from the dimensions the comparison was actually split by - the
+        %   same activeDims that decided there were several series at all - so a
+        %   comparison over analysed windows, animals or recording types is named by
+        %   the window, the animal or the type.  The fixed pattern it used to expand
+        %   named only selection, group and recording index, and every other axis came
+        %   out blank.
+        %
+        %   THE PATTERN IS AN OVERRIDE, not the default: typed into "Legend fmt" it
+        %   wins, and if it expands to nothing the derived name is still what is
+        %   drawn.  An empty legend entry is never the best answer available.
+        derived = derivedLegend(tagLike);
+        pat = c.legendF.Value;
+        if isempty(pat) || strcmp(pat, defaultLegendPattern()), nm = derived; return; end
+        nm = expandLegend(pat, tagLike);
+        if isempty(nm), nm = derived; end
+    end
+
+    function nm = derivedLegend(tagLike)
+        %derivedLegend  Name a series by the tag fields that distinguish it.  A box
+        %   colour group arrives already joined and is its own name.
         if isfield(tagLike,'dyn') && ~isempty(tagLike.dyn)
-            % dynamic single-dimension legend (box colour groups)
-            nm = pat;
-            for tk = {'%s','%g','%r','%a','%t','%i','%f','%v'}, nm = strrep(nm,tk{1},''); end
-            nm = strtrim([strtrim(nm) ' ' tagLike.dyn]);
-            if isempty(strtrim(nm)), nm=tagLike.dyn; end
-            return;
+            nm = charOf(tagLike.dyn); return
         end
+        dims = {};
+        if isfield(tagLike,'dims') && ~isempty(tagLike.dims), dims = tagLike.dims; end
+        bits = {};
+        for d = 1:numel(dims)
+            if ~isfield(tagLike,dims{d}), continue; end
+            bits{end+1} = legendWord(dims{d}, pad0(tagLike.(dims{d}))); %#ok<AGROW>
+        end
+        bits = bits(~cellfun(@isempty,bits));
+        if isempty(bits), nm = pad0(tagLike.sel); else, nm = strjoin(bits,' | '); end
+    end
+
+    function nm = expandLegend(pat, tagLike)
+        %expandLegend  The user's pattern, with every token replaced.  %v falls back
+        %   to the variable the plot is of when the tag does not carry one.
         nm = pat;
         nm = strrep(nm,'%s', pad0(tagLike.sel));
         nm = strrep(nm,'%g', pad0(tagLike.group));
@@ -2151,6 +2478,7 @@ if nargout>0, h = fig; end
         nm = strrep(nm,'%a', pad0(tagLike.animal));
         nm = strrep(nm,'%t', pad0(tagLike.type));
         nm = strrep(nm,'%i', pad0(tagLike.interval));
+        nm = strrep(nm,'%c', pad0(fieldOr(tagLike,'channel','')));
         nm = strrep(nm,'%f', pad0(tagLike.file));
         nm = strrep(nm,'%n', pad0(tagLike.signal));
         if isfield(tagLike,'var') && ~isempty(tagLike.var)
@@ -2158,41 +2486,175 @@ if nargout>0, h = fig; end
         else
             nm = strrep(nm,'%v', currentVarLabel());
         end
+        % A box colour group has no tag fields of its own - the pattern's tokens have
+        % just expanded empty - so its own text is what the pattern is decorating.
+        if isfield(tagLike,'dyn') && ~isempty(tagLike.dyn)
+            nm = [strtrim(nm) ' ' charOf(tagLike.dyn)];
+        end
         nm = strtrim(regexprep(nm,'\s+',' '));
-        if isempty(nm), nm = tagLike.sel; end
     end
 
-%% ==================== LOADING (cache + lazy HDF5) ======================= %%
+%% ==================== LOADING (cache + the kind's memory policy) ======== %%
     function R = tryLoad(path)
         try, R = loadResults(path); catch, R = []; end
     end
 
     function R = loadResults(path)
+        %loadResults  THE FILE IS LOADED, WHATEVER ITS SIZE (D7).  A results file over
+        %   a size limit used to arrive as a handle whose leaves were read one HDF5
+        %   slab at a time, and everything beside a leaf - the metrics table above
+        %   all - could not be read at all, so a 3.63 GB recording offered no vessel
+        %   types, no labels and no weights.  There is no partial route to a table.
+        %   Loading it costs 4.8 s and 3.5 GB, and that is the trade: plotting what
+        %   the file really holds beats conserving the memory.  What memory IS bounded
+        %   by is the KIND - see kindMemoryPolicy.
         if app.cache.isKey(path)
-            app.cacheOrder = [path, setdiff(app.cacheOrder,path,'stable')];
-            R = app.cache(path); return;
+            R = app.cache(path);
+            if ~(wholeFileKind() && isPrunedPath(path))
+                app.cacheOrder = [path, setdiff(app.cacheOrder,path,'stable')];
+                return
+            end
+            % A pruned copy cannot answer a picture, so this one file is read again.
+            forgetFile(path);
         end
-        if isLazyFile(path)
-            R = struct('x_lazy_',true,'x_path_',path);  % handle; fields read on demand
-        else
-            S = load(path,'results');
-            if ~isfield(S,'results'), error('File has no "results" variable: %s',path); end
-            R = S.results;
-        end
+        S = load(path,'results');
+        if ~isfield(S,'results'), error('File has no "results" variable: %s',path); end
+        R = S.results;
         app.cache(path) = R;
+        app.bytes(path) = structBytes(R);
         app.cacheOrder = [path, app.cacheOrder];
         while numel(app.cacheOrder) > app.cacheLimit
             drop = app.cacheOrder{end}; app.cacheOrder(end)=[];
-            if app.cache.isKey(drop), app.cache.remove(drop); end
-            % THE INDEX GOES WITH THE FILE.  A descriptor array outliving the struct
-            % it was scanned from is how a menu comes to offer a variable that the
-            % re-read file no longer has.
-            if app.index.isKey(drop), app.index.remove(drop); end
+            forgetFile(drop);
         end
     end
 
-    function tf = isLazyFile(path)
-        d = dir(path); tf = ~isempty(d) && d(1).bytes > app.sizeLimitGB*1e9;
+%% ==================== WHAT THE KIND COSTS IN MEMORY ===================== %%
+    function tf = wholeFileKind()
+        %wholeFileKind  Is the current Kind one that needs a whole recording?  A
+        %   picture reaches per-pixel cubes and maps; a number or a curve provably
+        %   cannot (exPlotRules gives a pixel-unit leaf only the image, heat and video
+        %   plots), which is what makes it safe to drop them.
+        tf = any(strcmp(currentKind(), {'Image','Video'}));
+    end
+
+    function tf = forceSingleFile()
+        %forceSingleFile  IMAGE AND VIDEO ARE OF ONE RECORDING.  Several files chosen
+        %   with a picture asked for is an impossible combination, and the cascade's
+        %   habit for one of those is to drop the conflicting choice and explain it,
+        %   never to refuse the click (the D2 signature rule does the same).  Which
+        %   file survived is said in the status bar, because a selection that changed
+        %   itself without saying so is the worse failure.
+        %
+        %   Going back to Scalar or Vector restores multi-select but NOT the old
+        %   selection: the tool does not remember a choice on the user's behalf and
+        %   then reinstate it under a different question.
+        % THE SELECTION IS READ BEFORE THE PROPERTY IS FLIPPED.  Setting Multiselect
+        % to 'off' TRUNCATES Value itself, so asking afterwards which files were
+        % selected always answers one and the drop goes unexplained - the tool would
+        % do the right thing silently, which is the failure this is written against.
+        tf = false;
+        idx = selectedFileIdx();
+        multi = ~wholeFileKind();
+        c.fileList.Multiselect = onOff(multi);
+        if multi || numel(idx)<2, return; end
+        keep = idx(1);
+        c.fileList.Value = keep;
+        app.hint = sprintf(['A picture is of one recording, so only %s is shown.  ' ...
+            'Pick another in the file list, or choose Scalar or Vector to compare ' ...
+            'several.'], shortName(app.files(keep).path));
+        tf = true;
+    end
+
+    function kindMemoryPolicy()
+        %kindMemoryPolicy  HOW MUCH OF WHAT IS KEPT, decided by the Kind and by
+        %   nothing else.  Image and Video hold ONE recording, entire.  Scalar and
+        %   Vector hold as many as are selected, each stripped of the per-pixel leaves
+        %   no plot of theirs can reach - the cubes and the per-pixel maps go, the
+        %   segment maps sMap and dvsMap STAY, because a per-segment selection is
+        %   painted through them and read through getNested.
+        %
+        %   The index was built from the whole struct, before any of this, so the
+        %   menus still offer everything the file holds; a pruned leaf that is asked
+        %   for anyway - which needs the Kind to have changed under the cache - makes
+        %   loadResults read that one file again.
+        if wholeFileKind()
+            app.cacheLimit = 1;
+            trimCache();
+            return
+        end
+        app.cacheLimit = 6;
+        for i = selectedFileIdx(), prunePixelLeaves(app.files(i).path); end
+    end
+
+    function trimCache()
+        while numel(app.cacheOrder) > app.cacheLimit
+            forgetFile(app.cacheOrder{end});
+        end
+    end
+
+    function tf = isPrunedPath(path)
+        tf = any(strcmp(app.pruned, char(path)));
+    end
+
+    function prunePixelLeaves(path)
+        %prunePixelLeaves  Drop this file's per-pixel leaves from the resident copy.
+        %   Driven off the file's OWN descriptors, so nothing has to keep a list of
+        %   leaf names in step with the producers.
+        path = char(path);
+        if isPrunedPath(path) || ~app.cache.isKey(path) || ~app.index.isKey(path), return; end
+        R = app.cache(path);
+        if ~isstruct(R), return; end
+        D = app.index(path).D;
+        for k = 1:numel(D)
+            if ~strcmp(D(k).unit,'pixel'), continue; end
+            % THE SEGMENT MAPS ARE PER-PIXEL AND MUST SURVIVE.  A per-segment
+            % selection is resolved through sMap, and a painted map is drawn into it.
+            if any(strcmp(D(k).path, {'sMap','dvsMap'})), continue; end
+            if ~onlyPictures(D(k)), continue; end
+            R = dropLeafAt(R, D(k).path);
+        end
+        app.cache(path) = R;
+        app.bytes(path) = structBytes(R);
+        app.pruned{end+1} = path;
+    end
+
+    function tf = onlyPictures(d)
+        %onlyPictures  Is every plot this leaf admits one that a picture Kind holds?
+        %
+        %   THIS IS ASKED, NOT ASSUMED.  A per-pixel result is a picture and only a
+        %   picture - exPlotRules says so for every pixel key - and that is exactly
+        %   what makes dropping one safe while a curve or a number is on screen.  But
+        %   the safety is a property of the RULE TABLE, not of the unit, so it is read
+        %   from the table: the day a pixel leaf is given a curve again, it stops
+        %   being pruned rather than silently emptying that curve.
+        P = exPlotRules(d);
+        tf = ~isempty(P) && all(cellfun(@(p) any(strcmp(kindOfPlot(p),{'Image','Video'})), P));
+    end
+
+    function s = residentNote()
+        %residentNote  WHAT THIS IS COSTING, in the status bar.  A user who has just
+        %   told the tool to load a 3.63 GB recording is entitled to see that it did.
+        n = numel(app.cacheOrder);
+        if n==0, s = ''; return; end
+        b = 0;
+        for i = 1:n
+            k = app.cacheOrder{i};
+            if app.bytes.isKey(k), b = b + app.bytes(k); end
+        end
+        s = sprintf('  %.2f GB in memory (%d file(s)).', b/1e9, n);
+    end
+
+    function forgetFile(path)
+        %forgetFile  Drop one file's resident copy and everything derived from it.
+        %   THE INDEX GOES WITH THE FILE.  A descriptor array outliving the struct it
+        %   was scanned from is how a menu comes to offer a variable that the re-read
+        %   file no longer has.
+        if app.cache.isKey(path), app.cache.remove(path); end
+        if app.index.isKey(path), app.index.remove(path); end
+        if app.bytes.isKey(path), app.bytes.remove(path); end
+        app.cacheOrder = app.cacheOrder(~strcmp(app.cacheOrder, path));
+        app.pruned     = app.pruned(~strcmp(app.pruned, path));
     end
 
 %% ==================== PROGRAMMATIC API (for testing) =================== %%
@@ -2203,9 +2665,13 @@ if nargout>0, h = fig; end
         app.mode='folder'; app.sessionPath='';
         if ~isempty(paths), app.root = fileparts(paths{1}); end
         e = emptyEntries();
+        nRefused = 0;
         for i=1:numel(paths)
             [~,nm,ex]=fileparts(paths{i});
             if ~isempty(includePat) && isempty(regexp([nm ex],includePat,'once')), continue; end
+            % THE _r RULE HOLDS ON EVERY ROUTE IN, this one included: a caller handing
+            % over a _d.mat is exactly the mistake the rule exists to stop.
+            if ~isResultsFile(paths{i}), nRefused = nRefused+1; continue; end
             e(end+1) = makeEntryStruct(paths{i}, groupPat, recPat); %#ok<AGROW>
         end
         releaseModality();
@@ -2213,7 +2679,8 @@ if nargout>0, h = fig; end
         c.includeF.Value=includePat; c.groupF.Value=groupPat; c.recF.Value=recPat;
         setPatternFields('on');
         applyFilters(); refreshFileList(); refreshIndex();
-        setStatus(sprintf('%d file(s) loaded.%s', numel(app.files), filterNote()));
+        setStatus(sprintf('%d file(s) loaded.%s%s%s', numel(app.files), filterNote(), ...
+            refusedNote(nRefused), residentNote()));
     end
 
     function createGroupProgrammatic(name, idx)
@@ -2252,7 +2719,7 @@ if nargout>0, h = fig; end
                 case 'Interval'
                     if ~ismember(val,c.interval.Items), c.interval.Items=[c.interval.Items {char(val)}]; end
                     c.interval.Value=val;
-                case 'Units',         c.units.Value=val;
+                case 'Units',         c.units.Value=val; onUnits();
                 case 'Baseline',      c.baseline.Value=logical(val);
                 case 'XAxis'
                     if ~ismember(val,c.xaxis.Items), c.xaxis.Items=[c.xaxis.Items {char(val)}]; end
@@ -2277,13 +2744,18 @@ if nargout>0, h = fig; end
     function setPick(ctl, val)
         %setPick  Choose an entry of a cascade step by its KEY or by the text shown -
         %   whichever the caller has to hand - so a test can name a plot id and a user
-        %   can read a phrase.
+        %   can read a phrase.  The Variable step shows its technical name after the
+        %   phrase (D8), so its PHRASE is accepted too: a caller naming the quantity
+        %   should not have to know which leaf of which tree answered it.
         want = val; if ischar(want)||isstring(want), want = {char(want)}; end
         data = ctl.ItemsData; if isempty(data), data = ctl.Items; end
         pick = {};
         for i = 1:numel(want)
             j = find(strcmp(data, want{i}),1);
             if isempty(j), j = find(strcmp(ctl.Items, want{i}),1); end
+            if isempty(j) && isequal(ctl,c.variable)
+                j = find(strcmp(app.varPlain, want{i}),1);
+            end
             if isempty(j)
                 error('guiExplore:setState','%s is not on offer here.', char(want{i}));
             end
@@ -2326,9 +2798,14 @@ if nargout>0, h = fig; end
     function exportVideoTo(filename, fps)
         %exportVideoTo  THE WHOLE SWEEP, one frame per position along the scrubbed
         %   dimension, written through VideoWriter.  The colour limits are computed
-        %   ONCE over the entire cube - a per-frame rescale would make a flat
+        %   ONCE over the whole sweep - a per-frame rescale would make a flat
         %   recording look alive - and each frame carries its own coordinate in the
         %   title, so a still lifted out of the video still says where it came from.
+        %
+        %   A RECONSTRUCTED VIDEO IS PAINTED AS IT IS WRITTEN.  There is no cube to
+        %   slice - the one it would make is 26 TB - so each frame is asked for in
+        %   turn and thrown away after it is encoded.  videoFrames is where the two
+        %   kinds of video stop being different.
         %
         %   VIDEOWRITER APPENDS ITS PROFILE'S EXTENSION.  Handed 'x.avi.partial' it
         %   writes 'x.avi.partial.avi', which has cost this library time before, so it
@@ -2336,11 +2813,16 @@ if nargout>0, h = fig; end
         %   result is moved to the name the caller asked for.
         if nargin<2||isempty(fps), fps = 8; end
         P = onePayload();
-        if isempty(P) || ~isstruct(P) || ~isfield(P,'frames') || isempty(P.frames)
+        if isempty(P) || ~isstruct(P)
             error('guiExplore:noVideo','There is nothing to write: choose a video plot first.');
         end
-        V = P.frames; nF = size(V,3);
-        lims = cubeLimits(V);
+        % ONE FRAME AT A TIME, whichever kind of video this is.  A per-pixel cube is
+        % already in memory; a reconstructed one is painted as it is written, which is
+        % what lets a 2448-sample recording be exported at all.
+        [nF, frameAt, lims] = videoFrames(P);
+        if nF<1
+            error('guiExplore:noVideo','There is nothing to write: choose a video plot first.');
+        end
         prof = videoProfile(filename);
         tmpName = [tempname videoExtension(prof)];
         w = VideoWriter(tmpName, prof);
@@ -2357,7 +2839,7 @@ if nargout>0, h = fig; end
         try
             for k = 1:nF
                 cla(axe,'reset');
-                img = double(V(:,:,k));
+                img = frameAt(k);
                 imagesc(axe, img, 'AlphaData', isfinite(img)); axis(axe,'image');
                 if ~isempty(lims), clim(axe,lims); end
                 colormap(axe, c.cmap.Value);
@@ -2487,7 +2969,8 @@ end
 function t = tipInclude()
 % Hover helper for the Include field.
 t = sprintf(['Regular expression matched against each file NAME (not the folder).\n' ...
-    'Only files whose name matches are kept.  Examples:\n' ...
+    'It narrows the results files; it cannot widen them, because this tool\n' ...
+    'plots results and only ever opens a *_r.mat.  Examples:\n' ...
     '   _r\\.mat$          all results files (default)\n' ...
     '   _c_BFI_r\\.mat$    cardiac BFI results only\n' ...
     '   PSY0[678]         only animals PSY06 / 07 / 08\n' ...
@@ -2525,17 +3008,68 @@ lb=uilabel(g,'Text',name); lb.Layout.Row=row; lb.Layout.Column=1;
 sp=uispinner(g,'Value',val,'Limits',[50 1200],'Step',50); sp.Layout.Row=row; sp.Layout.Column=2;
 end
 
-function entries = buildFileEntries(root, includePat, groupPat, recPat)
-% Recursively list *.mat under root, keep those whose name matches includePat,
-% then tag each with an experimental group and a recording index via regexp.
+function b = structBytes(R) %#ok<INUSD> - R is read by name, through whos
+%structBytes  How much memory one loaded results tree is taking, as MATLAB reports
+%   it.  Asked of the argument rather than computed from the descriptors, because a
+%   leaf stored as single or int32 is not the size its element count suggests.
+s = whos('R');
+b = s.bytes;
+end
+
+function R = dropLeafAt(R, dotted)
+%dropLeafAt  Empty ONE leaf of a results tree, addressed the way a descriptor path
+%   addresses it - 'intervals(2).x' takes element 2, and a component is an index only
+%   when it is name(<digits>).  The field is emptied rather than removed so the shape
+%   of the tree is unchanged and only the numbers go; anything that reads it gets the
+%   same answer it would give for a branch the recording never had.
+c = strsplit(char(dotted),'.');
+R = dropIn(R, c);
+end
+
+function v = dropIn(v, c)
+t = regexp(c{1},'^(.+)\((\d+)\)$','tokens','once');
+if isempty(t), nm = c{1}; idx = []; else, nm = t{1}; idx = str2double(t{2}); end
+if ~isstruct(v) || ~isfield(v,nm), return; end
+if isscalar(c)
+    if isempty(idx), [v.(nm)] = deal([]); else, v(idx).(nm) = []; end
+    return
+end
+if isempty(idx)
+    if ~isscalar(v), return; end       % an unindexed struct array is not addressable
+    v.(nm) = dropIn(v.(nm), c(2:end));
+else
+    if idx>numel(v.(nm)), return; end
+    inner = v.(nm);
+    inner(idx) = dropIn(inner(idx), c(2:end));
+    v.(nm) = inner;
+end
+end
+
+function [entries, nRefused] = buildFileEntries(root, includePat, groupPat, recPat)
+% Recursively list *.mat under root, keep those whose name matches includePat AND is
+% an _r.mat, then tag each with an experimental group and a recording index via
+% regexp.  nRefused counts the files the Include pattern accepted and the _r rule did
+% not.
 if isempty(includePat), includePat='_r\.mat$'; end
 d = dir(fullfile(root,'**','*.mat')); d = d(~[d.isdir]);
 entries = emptyEntries();
+nRefused = 0;
 for i=1:numel(d)
     if isempty(regexp(d(i).name, includePat, 'once')), continue; end
+    if ~isResultsFile(d(i).name), nRefused = nRefused+1; continue; end
     entries(end+1) = makeEntryStruct(fullfile(d(i).folder,d(i).name), groupPat, recPat); %#ok<AGROW>
 end
 entries = sortEntries(entries);
+end
+
+function tf = isResultsFile(path)
+%isResultsFile  THE _r RULE.  This is a RESULTS explorer, and _r.mat is the whole of
+%   what it reads (D7) - so being an _r.mat is a rule about the file and not a
+%   default the Include box happens to start with.  The box is a pattern the user can
+%   change, and the cost of getting it wrong is not a nuisance: a _d.mat in the
+%   reference set is 1.0 to 13.3 GB, and the tool would try to load one.
+[~,nm,ex] = fileparts(char(path));
+tf = strcmpi(ex,'.mat') && endsWith(nm,'_r');
 end
 
 function e = emptyEntries()
@@ -2557,11 +3091,11 @@ end
 
 function v = emptyVars()
 %emptyVars  The 0x0 shape of a CASCADE ROW - one (family, signal, variable) the
-%   loaded files offer.  Declared once, because the rows built from the index and the
-%   rows built from the recording's source have to concatenate.
+%   loaded files offer.  Declared once, because one row is merged from as many files
+%   as have that variable.
 v = struct('key',{},'family',{},'signal',{},'signalLabel',{},'varId',{}, ...
-    'varLabel',{},'leaf',{},'unit',{},'dims',{},'sig',{},'kinds',{},'plots',{}, ...
-    'suspect',{},'srcView',{},'srcInterval',{},'nFiles',{});
+    'varLabel',{},'leaf',{},'path',{},'unit',{},'dims',{},'sig',{},'kinds',{}, ...
+    'plots',{},'suspect',{},'nFiles',{});
 end
 
 function v = sortVars(v)
@@ -2578,13 +3112,22 @@ v = v(ord);
 end
 
 function o = emptyObs()
+%emptyObs  One curve, with everything that could separate it from another.  .channel
+%   is a NAME and not a stratification axis - a wire chamber is already the signal,
+%   and making it an axis too is the double separation the interval axis was just
+%   rescued from - so it is here for the legend to quote and for nothing else.
+%   .comp carries whatever exFetch said rides with this leaf: the fitted line, the
+%   caption.  A renderer reads it; nothing here interprets it.
 o = struct('x',{},'y',{},'sel',{},'group',{},'rec',{},'animal',{},'type',{}, ...
-    'interval',{},'file',{},'var',{},'signal',{});
+    'interval',{},'channel',{},'file',{},'var',{},'signal',{},'comp',{});
 end
 
 function t = emptyTags()
+%emptyTags  The same, for a plot whose payload is one number rather than a curve.
+%   .lo/.hi are that number's own interval when a companion supplied one and NaN
+%   when nothing did - an error bar drawn from a companion, never from a guess.
 t = struct('sel',{},'group',{},'rec',{},'animal',{},'type',{},'interval',{}, ...
-    'file',{},'var',{},'signal',{});
+    'channel',{},'file',{},'var',{},'signal',{},'lo',{},'hi',{});
 end
 
 function u = uniqueStable(cs)
@@ -2669,8 +3212,11 @@ if endsWith(pth,'_r.mat')
     if isfile(pth), rp = {pth}; end
     return
 end
-if endsWith(pth,'_d.mat') && isfile(strrep(pth,'_d.mat','_r.mat'))
-    rp = {strrep(pth,'_d.mat','_r.mat')};
+% a session written before the library referred to a product by its RESULTS member
+% can still list the _d one; it names the same recording, so it resolves rather than
+% being turned away
+if endsWith(pth,'_d.mat') && isfile(getProductPath(pth,'r'))
+    rp = {getProductPath(pth,'r')};
     return
 end
 m = wbFileModel(pth);
@@ -2686,9 +3232,10 @@ end
 
 %% ==================== THE PLOTS, AS A READER SEES THEM ================== %%
 function s = plotLabel(plotId)
-%plotLabel  The plot ids of exPlotRules, spelled for a biologist.  Two of them are
-%   this tool's own - the per-line overlay and the detected walls read the
-%   recording's SOURCE rather than its results, so they are not in the rule table.
+%plotLabel  The plot ids of exPlotRules, spelled for a biologist.  There is ONE id
+%   namespace and it is exPlotRules': this tool had two of its own while the per-line
+%   diameter had to be read out of the recording, and both went when it became a
+%   result that the rule table's line x time row already covers.
 switch char(plotId)
     case 'box',                s = 'Box plot';
     case 'bar',                s = 'Bar';
@@ -2706,20 +3253,15 @@ switch char(plotId)
     case 'heat.fpct',          s = 'Percentile against frequency';
     case 'heat.positionTime',  s = 'Position against time';
     case 'video',              s = 'Video';
-    case 'lines.overlay',      s = 'Every line';
-    case 'image.walls',        s = 'Detected walls';
+    case 'video.fromSegments', s = 'Video, painted from the segments';
     otherwise,                 s = char(plotId);
 end
 end
 
 function k = kindOfPlot(plotId)
-%kindOfPlot  Which kind a plot appears under.  Delegated to exPlotRules for everything
-%   it knows about, so the two answers cannot drift apart.
-switch char(plotId)
-    case 'lines.overlay', k = 'Vector';
-    case 'image.walls',   k = 'Image';
-    otherwise,            k = exPlotRules('kindof', plotId);
-end
+%kindOfPlot  Which kind a plot appears under.  Asked of exPlotRules, which is the
+%   only thing that knows, so the two answers cannot drift apart.
+k = exPlotRules('kindof', plotId);
 end
 
 function s = seriesLabel(names, i)
@@ -2764,6 +3306,37 @@ if isempty(lab), lab = 'frame'; end
 if isempty(v), s = lab; return; end
 s = sprintf('%s = %s', lab, num2str(double(v),'%.4g'));
 if ~isempty(unit), s = [s ' ' unit]; end
+end
+
+function [nF, frameAt, lims] = videoFrames(P)
+%videoFrames  HOW TO GET FRAME k, whichever kind of video this is - and the one
+%   colour scale every frame shares.  A per-pixel cube is in memory already, so a
+%   frame is a slice of it; a RECONSTRUCTED video has no cube by design, because the
+%   one it would make is 26 TB, so a frame is painted when it is asked for.  The
+%   limits of the reconstructed kind are taken over the per-unit matrix, which holds
+%   exactly the values the frames will show and nothing else.
+nF = 0; frameAt = @(k) []; lims = [];
+if ~isstruct(P), return; end
+if isfield(P,'paint') && ~isempty(P.paint)
+    nF = size(P.paint.S,2);
+    frameAt = @(k) exFetch('frame', P, k);
+    lims = cubeLimits(P.paint.S);
+elseif isfield(P,'frames') && ~isempty(P.frames)
+    nF = size(P.frames,3);
+    frameAt = @(k) double(P.frames(:,:,k));
+    lims = cubeLimits(P.frames);
+end
+end
+
+function tf = isVideoPlot(plotId)
+%isVideoPlot  The two ids the slider's video button and the video export answer to.
+tf = any(strcmp(char(plotId), {'video','video.fromSegments'}));
+end
+
+function tf = isPaintedPlot(plotId)
+%isPaintedPlot  The two ids 'Units are: Reconstructed map' means - the map and the
+%   video of it.  One question, two answers, decided by what the leaf is.
+tf = any(strcmp(char(plotId), {'image.fromSegments','video.fromSegments'}));
 end
 
 function lims = cubeLimits(V)
@@ -2870,9 +3443,26 @@ end
 end
 
 function L = emptyLegendTag()
-%emptyLegendTag  The blank legend record: one field per token legendName expands.
-L = struct('sel','','group','','rec','','animal','','type','','interval','','file','', ...
-    'var','','signal','');
+%emptyLegendTag  The blank legend record: one field per token legendName expands,
+%   plus the DIMENSIONS that separated this series, which is what the default legend
+%   text is derived from.
+L = struct('sel','','group','','rec','','animal','','type','','interval','', ...
+    'channel','','file','','var','','signal','','dims',{{}});
+end
+
+function p = defaultLegendPattern()
+%defaultLegendPattern  What the "Legend fmt" box holds until someone types in it.
+%   Matching it is what tells legendName that no override was asked for.
+p = '%s%g%r';
+end
+
+function w = legendWord(dim, v)
+%legendWord  One separating dimension's value, as a legend has to read it.  A
+%   RECORDING INDEX ON ITS OWN IS A BARE NUMBER, and '1' beside '2' in a legend says
+%   nothing about what they are; the group, the animal, the type and the analysed
+%   window all name themselves.
+w = v;
+if strcmp(dim,'rec') && ~isempty(v), w = ['recording ' v]; end
 end
 
 function s = labelOr(v, dflt)
@@ -3040,6 +3630,13 @@ else, s=regexprep(sel,'\s*\((lumen|DVS)\)','');
 end
 end
 function s = pad0(x), if isempty(x), s=''; else, s=char(string(x)); end, end
+
+function v = fieldOr(st, f, dflt)
+%fieldOr  One field of a struct that may not have it - a legend tag built before a
+%   token existed still expands, as empty, rather than throwing mid-render.
+v = dflt;
+if isstruct(st) && isfield(st,f), v = st.(f); end
+end
 
 function [sess, vis] = parseArgs(args)
 % guiExplore(sessionPath) / guiExplore('Visible',v) / both.  A LEADING char that is

@@ -86,7 +86,7 @@
 %    session - struct with fields:
 %       schema        double, the layout version (set by 'save').
 %       root          char, the scanned root folder ('' if none).
-%       glob          char, the scan glob ('*.rls', '*_K_d.mat', ...).
+%       glob          char, the scan glob ('*.rls', '*_K_r.mat', ...).
 %       patterns      struct of regexps: animal/type/index/expGroup/ref.
 %       paths         cellstr, the curated working set in table order.
 %       files         1xN struct array, ONE ENTRY PER FILE, parallel to .paths:

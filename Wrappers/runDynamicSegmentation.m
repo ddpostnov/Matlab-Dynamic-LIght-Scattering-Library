@@ -2,7 +2,7 @@
 %
 %   runDynamicSegmentation(s,fNames) is the optional heavy dynamic-segmentation step,
 %   lifted verbatim from the old runSegmentation `attmemptDS` loop.  For every
-%   *_K_d.mat / *_I_d.mat file it re-derives the labelled centre-lines from the static
+%   *_K_r.mat / *_I_r.mat file it re-derives the labelled centre-lines from the static
 %   segmentation, fits each straight-enough vessel with a 3-degree polynomial, walks a
 %   perpendicular intensity profile frame by frame to estimate the lumen edges, keeps
 %   only segments that pass the geometry / overlap quality gates, and writes their
@@ -22,8 +22,8 @@
 %                call): correctNodes, simR, difR, sMinL, prchNSize.
 %              Dynamic segmentation: sMinL, sMinP2R2, sMaxLBI, sMaxCLR, sMaxKK, sMaxP2D,
 %                pInterpF, gSizeN, minOverlapMask, minOverlapSelf.
-%     fNames   cell array of *_K_d.mat / *_I_d.mat paths already processed by
-%              runSegmentation (each with matching *_s.mat / *_r.mat siblings).
+%     fNames   cell array of *_K_r.mat / *_I_r.mat paths already processed by
+%              runSegmentation (each with matching *_d.mat / *_s.mat siblings).
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf.
 %
@@ -67,8 +67,10 @@
 
 function runDynamicSegmentation(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_r.mat')|| contains(x,'_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_K_r.mat" or "_I_r.mat".  ' ...
+        'Every step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_K_r.mat'').']);
 end
 % Resolved here, not only in the core, so the choice is RECORDED in the saved
 % settings like every other tunable.  getSegmentationLabels reads it as a worker
@@ -88,9 +90,9 @@ for fidx=1:1:numel(fNames)
     s.fName=fNames{fidx};
     reportFile(rep,fidx,s.fName);
     clearvars results source settings
-    load(s.fName,'source')
-    load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-    load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+    load(getProductPath(s.fName,'d'),'source')
+    load(getProductPath(s.fName,'s'),'settings');
+    load(s.fName,'results');
 
     % --- re-derive the labelling transients from the persisted seam (option a) ---
     edgeSize = settings.runSegmentation.edgeSize;
@@ -207,9 +209,9 @@ for fidx=1:1:numel(fNames)
                 dataROI=single(source.data(limY(1):limY(2),limX(1):limX(2),:));
                 compVal=max(dataROI(:));
                 maskROI(maskROI==0)=NaN;
-                if contains(s.fName,'_K_d.mat')
+                if contains(s.fName,'_K_r.mat')
                     dataROI=compVal-dataROI;
-                elseif contains(s.fName,'_I_d.mat')
+                elseif contains(s.fName,'_I_r.mat')
                     dataROI=dataROI-min(dataROI(dataROI(:)>0));
                 end
                 dataROI=dataROI.*maskROI;
@@ -335,9 +337,9 @@ for fidx=1:1:numel(fNames)
                     dvsMetrics(counter,:)={lineIdx,sL,sCLR,sR2,test1,test2};
                     dvsDiameter(:,counter)=(idxR-idxL)* abs(sind(theta))./s.pInterpF;
                     for i=1:1:size(dataProfile,2)
-                        if contains(s.fName,'_K_d.mat')
+                        if contains(s.fName,'_K_r.mat')
                             dvsData(i,counter)=compVal-mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan');
-                        elseif contains(s.fName,'_I_d.mat')
+                        elseif contains(s.fName,'_I_r.mat')
                             dvsData(i,counter)=mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan')-min(dataROI(dataROI(:)>0));
                         end
                     end
@@ -358,7 +360,7 @@ for fidx=1:1:numel(fNames)
     % --- segments preview: re-emit the page with the accepted dynamic segments overlaid ---
     % (overwrites the static one runSegmentation wrote, matching the old attmemptDS
     %  artifact) using the merged cMask (recomputed above) and the persisted results.sMap.
-    isK=contains(s.fName,'_K_d.mat');
+    isK=contains(s.fName,'_K_r.mat');
     fh=reportFigure(rep,'segments');
     showSegmentsPreview(fh,source.data,cMask,results.sMap,isK,dvsMap);
     reportSave(rep,fh,'segments',s.fName);
@@ -366,8 +368,8 @@ for fidx=1:1:numel(fNames)
     %Save the data
     settings.runDynamicSegmentation=reportSettings(s);
     reportWriting(rep);
-    save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
-    save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+    save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
+    save(s.fName,'results','-v7.3','-nocompression');
     reportSaved(rep);
      end
 end

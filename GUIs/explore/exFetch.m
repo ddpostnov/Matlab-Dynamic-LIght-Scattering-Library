@@ -27,6 +27,16 @@
 %   vasculature.  Every entry the contents-driven list can produce is named in that
 %   switch, the four category ones included.
 %
+%   A SELECTION MAY BE SEVERAL (H).  opts.select takes a list, and the row masks are
+%   ORed.  For a curve that would be wrong - several selections compete for one axes
+%   and each is drawn as its own series - but a PICTURE combines them spatially:
+%   arteries, veins and parenchyma together are the whole map, and painting only the
+%   first draws a fragment and calls it the map.  The union makes the otherwise-arm
+%   more dangerous, not less, because an unnamed selection ORed into the mask would
+%   quietly add every vessel to a picture that would still look plausible - so
+%   exFetch('named',sel) exposes the question "does the switch name this one?" and
+%   testExplorePlan asks it of every entry the Where list can produce.
+%
 %   getNested IS LIFTED AND GENERALISED, in two ways a descriptor path needs and a
 %   guiExplore path never did: a component of the form name(<digits>) takes that
 %   element of a struct array, so intervals(2).diameter.outer resolves; and a final
@@ -39,8 +49,18 @@
 %   column), never by ones - a 4000-pixel artery and a 40-pixel capillary do not
 %   contribute equally to "the mean over arteries".  The one place ones is correct
 %   is pixels, which are equal by construction, and the one place it is unavoidable
-%   is a file too big to load, whose metrics table is opaque to HDF5 - and there the
-%   payload says so in .note rather than pretending.
+%   is a recording that carries no metrics table at all - and there the payload says
+%   so in .note rather than pretending.
+%
+%   WHICH IS WHY A PIXEL AND A SEGMENT DO NOT GET THE SAME UNIT RECORD.  A segment is
+%   a named thing - it has a label, a type, an area and a row in a metrics table, and
+%   a reader has to see which one a point belongs to - while a pixel is a position in
+%   an image that no renderer ever names and that weighs exactly what every other
+%   pixel weighs; so the record for a pixel leaf carries the selection and nothing
+%   else, and its names, weights and ids are built only if some plot actually asks
+%   for them.  On the reference maps that is the difference between 1 340 416
+%   sprintf calls per render and none: the whole image is .all rather than a subscript
+%   vector of every index, and both the leaf copy and the NaN canvas go with it.
 %
 %   image.fromSegments IS THE INVERSE OF A ROW SELECTION and belongs here rather
 %   than in a renderer.  Each selected unit's own number is painted into results.sMap
@@ -49,21 +69,53 @@
 %   NaN so it renders transparent.  It is the only way a per-segment scalar reaches
 %   an image, and the only reason a segment index never has to become a coordinate.
 %
-%   A FILE TOO BIG TO LOAD IS READ IN SLABS.  When results is the lazy handle
-%   struct('x_lazy_',true,'x_path_',p) the leaf is fetched with h5read, and the
-%   indices the chosen plot fixes are pushed down into start/count so a slice of a
-%   [65 x 70 x 289] spectrum reads 65 x 70 numbers and not five million.  MATLAB's
-%   HDF5 layer preserves MATLAB orientation, so no permute is involved; the returned
-%   size is checked against the requested count, and a read that does not match is
-%   discarded rather than trusted.  A lazy file has no readable metrics table - a
-%   table is an opaque compound to h5info - so unit selection falls back to every
-%   unit with equal weights, and .note says which.
+%   AND video.fromSegments IS THAT SAME OPERATION ONCE PER SAMPLE (D9) - the video an
+%   LSCI recording actually has, against a mask stack, which is what Kind = Video used
+%   to offer.  Two things decide how it is built:
+%
+%     THE CUBE IS NEVER MATERIALISED.  2448 x 1496 x 896 doubles is 26 TB, so the
+%     payload carries .paint - the [nUnit x nFrame] matrix and the look-up table that
+%     is the SAME for every frame - and exFetch('frame',payload,k) paints frame k on
+%     demand.  The renderer paints the frame the slider is on; the export paints one
+%     frame at a time as it writes.  Neither ever holds more than two pictures.
+%
+%     A LONG RECORDING IS WALKED AT A STRIDE.  gsData is 61 208 samples, and a slider
+%     with 61 208 positions is a defect however correct each frame is, so the slider
+%     is capped at scrubCap() evenly spaced positions.  Each is a REAL sample - not an
+%     average of a window - labelled in seconds off the leaf's own time base, and the
+%     stride is applied on the way IN, as a subscript into the leaf, so the 725 MB
+%     that gsData would otherwise become is never built.  scrubSpecFor and the payload
+%     call the same scrubPositions, so the slider and the picture cannot disagree.
+%
+%   THE PER-PIXEL PULSE CYCLE IS NOT RECONSTRUCTED AND IS NOT INVENTED.  pulsatility.
+%   ppx.timeVectors is a runPulsatility output that the run behind the reference set
+%   did not write; the ppx group there holds scalars only.  If a per-pixel pulse cycle
+%   is wanted that is a wrapper decision, not an explorer one.
+%
+%   THE TREE IS ALWAYS LOADED (D7).  A file past a size limit used to arrive as a
+%   handle whose leaves were read in HDF5 slabs, and the price was that everything
+%   BESIDE the leaf - the metrics table above all - could not be read at all: a
+%   table is an opaque compound to HDF5, so a 3.63 GB recording offered no vessel
+%   types, no labels and no weights, and said every unit counted equally.  There is
+%   no partial route to a table, so the file is loaded instead and the slab reader
+%   is gone.  Everything here now asks a struct, once.
+%
+%   A LEAF'S COMPANIONS COME BACK WITH IT.  exSchema declares that some leaves ride
+%   with others in a named role - speedCI is an INTERVAL on speed, slope is the FIT
+%   of lagByRow, confidenceText is its CAPTION - and those are resolved here, into
+%   .companions, rather than by a renderer reaching into a results tree for them.
+%   The payload already has .note for a caveat, and a companion is not a caveat: it
+%   is part of the answer, so it gets a place of its own.  A companion the file does
+%   not carry simply does not come back - a window whose propagation failed carries
+%   no confidence sentence, and borrowing another window's would be worse than
+%   drawing none.  NOTHING IS RECOMPUTED: a caption is a finished sentence the
+%   producer wrote and is passed through as it stands.
 %
 %   THE SLIDER'S AXIS IS ANSWERED HERE TOO.  exFetch('scrub',...) reports which
 %   dimension a scrubbed plot leaves for a slider, its label, its coordinate values
 %   and its length.  The window could not work that last one out for itself: the
 %   length of a dimension is a fact about the leaf and the axis registry together,
-%   and size(...,3) on a lazy file is a question nobody has read the answer to.
+%   and size(...,3) alone does not say which coordinate that dimension is.
 %
 %   Syntax:
 %      payload = exFetch(results, d, plotId)
@@ -71,15 +123,19 @@
 %      items   = exFetch('where', results, d)
 %      spec    = exFetch('scrub', results, d, plotId, opts)
 %      key     = exFetch('slicekey', dimName)
+%      img     = exFetch('frame', payload, k)
+%      tf      = exFetch('named', selection)
 %
 %   INPUTS
-%     results  the RESULTS member of a triplet, loaded; or the lazy handle
-%              struct('x_lazy_',true,'x_path_',<file>).
+%     results  the RESULTS member of a triplet, loaded.
 %     d        one descriptor from exScan.
 %     plotId   one of the ids exPlotRules('ids') lists.
+%     payload  a payload this function returned, for the 'frame' action.
+%     k        which position along the scrub axis, for the 'frame' action.
 %     opts     struct, every field optional:
 %                .select    the Where entry, e.g. 'Arteries (lumen)', 'Label: MCA',
-%                           '(whole image)', 'Outer wall'.  Default: everything.
+%                           '(whole image)', 'Outer wall' - or a CELLSTR of several,
+%                           whose row masks are ORed.  Default: everything.
 %                .units     'pooled' | 'points' | 'curves'.  Default: whatever the
 %                           plot asks for - points for a box, pooled for the rest.
 %                .rows      [lo hi] range of positions along a vessel, for line units
@@ -90,8 +146,9 @@
 %                .slice     struct with any of .f .pct .harmonic .frame - the index
 %                           along a dimension the plot does not draw.  Default 1.
 %                .path      the _r.mat this tree came from, so the percentile LEVELS
-%                           can be read from the sibling _s.mat.  Taken from the
-%                           handle when the file is lazy.
+%                           can be read from the sibling _s.mat.  That one sibling
+%                           read is the only file this tool opens beside the _r -
+%                           see the exAxes header for why it is not slicing.
 %                .scrub     which dimension a scrubbed plot walks, when the leaf
 %                           offers more than one and the user has chosen.  Ignored
 %                           when the leaf does not have it, so a stale choice cannot
@@ -110,15 +167,33 @@
 %                .cdata   [ny x nx] a heatmap - rows are y, columns are x
 %                .yvals   [ny x 1] the y coordinates of a heatmap
 %                .frames  [Y x X x nFrame] a video cube
+%                .paint   the kit a RECONSTRUCTED video is painted from, in place of
+%                         a cube: .kit (the map's look-up, the same every frame) and
+%                         .S [nUnit x nFrame].  Empty for every other plot.  Ask
+%                         exFetch('frame',payload,k) rather than reading it
 %                .fvals   [nFrame x 1] where each frame sits on the scrub axis
 %                .xlab .ylab .clab .flab   the axis titles
 %                .xlog    true when x is logarithmic
 %                .xscale  'linear' | 'log' | 'ordinal' | 'categorical'
 %                .nUnits  how many units survived the selection
+%                .companions  struct array .leaf .role .value .label .unit - the
+%                         leaves that ride WITH this one rather than being drawn as
+%                         variables of their own.  .role is what a renderer switches
+%                         on: 'interval' (a [lo hi] pair -> an error bar), 'fit' (a
+%                         slope -> the line through the scatter), 'caption' (a
+%                         finished sentence -> shown beside the plot).  Empty when
+%                         the leaf has none or the file does not carry them.  The
+%                         fifth role, 'pooled', never appears here: a pooled form is
+%                         what opts.units already produces from the host itself
 %     spec     struct: .name .label .values .n .choices - the dimension a slider
-%              walks for this plot, empty .name when the plot has none
+%              walks for this plot, empty .name when the plot has none.  For a
+%              reconstructed video .n is the number of SLIDER positions, which is
+%              fewer than the samples on a long recording, and .values are those
+%              samples' own coordinates
 %     key      the opts.slice field name for one dimension: 'f' | 'pct' |
 %              'harmonic' | 'frame'
+%     img      [Y x X] one frame of a reconstructed video, NaN where transparent
+%     tf       true when selectRows NAMES that selection rather than falling back
 %
 %   EXAMPLE
 %      S = load('LSCI_20240809_1ADCF08BP_c_BFI_r.mat');
@@ -135,7 +210,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 03-August-2026
 
 %------------- BEGIN CODE --------------
 function out = exFetch(varargin)
@@ -146,6 +221,8 @@ if ischar(a1) || isstring(a1)
         case 'where',    out = whereList(varargin{2:end});
         case 'scrub',    out = scrubSpecFor(varargin{2:end});
         case 'slicekey', out = sliceKey(varargin{2});
+        case 'frame',    out = frameOf(varargin{2:end});
+        case 'named',    out = isNamedSelection(varargin{2});
         otherwise
             error('exFetch:action','Unknown action ''%s''.', char(a1));
     end
@@ -161,12 +238,12 @@ end
 function P = fetchOne(R, d, plotId, opts)
 plotId = char(plotId);
 P = blankPayload(plotId);
-opts = fillOpts(opts, R);
+opts = fillOpts(opts);
 
 % ---- 0. the guards -------------------------------------------------------------
 if ~isempty(d.pairedWith)
-    P.note = sprintf('%s is an error bar on %s, not a variable of its own.', ...
-        d.leaf, d.pairedWith); return
+    P.note = sprintf('%s is the %s of %s and is drawn with it, not on its own.', ...
+        riderName(d), roleNoun(d), d.pairedWith); return
 end
 if ~any(strcmp(exPlotRules(d), plotId))
     P.note = sprintf('%s cannot be drawn as %s.', d.leaf, plotId); return
@@ -185,6 +262,12 @@ P.clab   = ax.c.label;
 P.xlog   = ax.x.log;
 P.xscale = ax.x.scale;
 
+% ---- 0b. what rides with this leaf ----------------------------------------------
+% Resolved before the numbers, because a companion is a fact about the DESCRIPTOR
+% and the tree, not about the plot: the same interval belongs to a speed whether it
+% is drawn as a box or as a bar.
+P.companions = companionsFor(R, d);
+
 % ---- 1. the leaf, sliced on the way in when the file is lazy --------------------
 sl = sliceIndices(d, ax, opts, A);
 [V, why] = readLeaf(R, d, sl);
@@ -200,11 +283,14 @@ M = canonical(V, d);                       % [nUnit x n1 x n2], sliced dims sing
 % ---- 2. the units ---------------------------------------------------------------
 U = unitsFor(R, d, opts, size(M,1));
 P.note = U.note;
-if isempty(U.idx)
+if U.n==0
     P.note = trim([U.note ' Nothing is selected here.']); return
 end
-M = M(U.idx,:,:);
-P.nUnits = numel(U.idx);
+% A selection of everything has no subscript vector, so there is nothing to index
+% by: M(1:end,:,:) is a copy of M made to reproduce M, and on a 1496x896 map that
+% copy is the second largest thing this function does.
+if ~U.all, M = M(U.idx,:,:); end
+P.nUnits = U.n;
 
 % ---- 3. reduce over units, and 4. over the dims this plot does not draw ---------
 red = reduceMode(opts.units, ax);
@@ -220,6 +306,7 @@ switch plotId
     case {'heat.ft','heat.fpct'},      P = heatPayload(P, M, U, d, ax);
     case 'heat.positionTime',          P = kymoPayload(P, M, U, d, ax);
     case 'video',                      P = videoPayload(P, M, U, d, ax);
+    case 'video.fromSegments',         P = paintVideoPayload(P, M, U, R, d, ax, A);
     otherwise
         P.note = sprintf('No fetch is defined for %s.', plotId); return
 end
@@ -229,7 +316,10 @@ P.ok = hasContent(P);
 end
 
 function tf = hasContent(P)
-tf = ~isempty(P.Y) || ~isempty(P.img) || ~isempty(P.cdata) || ~isempty(P.frames);
+% .paint counts: a reconstructed video has no cube by design, and a payload that can
+% draw every frame of one is not empty just because it is not holding 26 TB.
+tf = ~isempty(P.Y) || ~isempty(P.img) || ~isempty(P.cdata) || ~isempty(P.frames) ...
+     || ~isempty(P.paint);
 end
 
 % ================================================================== THE SCRUB AXIS
@@ -244,16 +334,22 @@ function s = scrubSpecFor(R, d, plotId, opts)
 %   are consulted.
 s = struct('name','','label','','values',[],'n',0,'choices',{{}},'choiceLabels',{{}});
 if nargin<4, opts = struct(); end
-opts = fillOpts(opts, R);
+opts = fillOpts(opts);
 A  = exAxes(R, scopeOf(d.path), opts.path);
 ax = exPlotRules('axes', d, plotId, A, opts.scrub);
 if isempty(ax.scrub.name), return; end
 n = axisLength(A, ax.scrub.name, d);
 if ~isfinite(n) || n<1, n = 0; end
+% A PLOT MAY WALK ITS AXIS AT A STRIDE.  The positions are computed by the same
+% function the payload uses, so a slider position and the frame it paints cannot
+% describe different samples - and the VALUES are the recording's own coordinates at
+% those positions, never a renumbering of them.
+pos = scrubPositions(n, plotId);
+v   = axisValues(ax.scrub, n);
 s.name    = ax.scrub.name;
 s.label   = ax.scrub.label;
-s.n       = n;
-s.values  = axisValues(ax.scrub, n);
+s.n       = numel(pos);
+s.values  = v(pos);
 s.choices = ax.scrubChoices;
 % The candidates are named by asking the rules for each of them in turn, so the words
 % beside a choice are the words on the axis if it is taken.
@@ -270,14 +366,15 @@ function P = scalarPayload(P, M, U, red)
 %scalarPayload  One number per unit, or one number for the lot.  A box wants the
 %   distribution, a bar wants the pooled value - which is why the two ids exist.
 v = double(M(:,1,1));
+w = unitWeights(U);
 if strcmp(red,'pooled')
-    P.Y = wmean(v, U.w, 1);
-    P.w = sum(U.w(:));
+    P.Y = wmean(v, w, 1);
+    P.w = sum(w);
     P.names = {''};
 else
     P.Y = v(:);
-    P.w = U.w(:);
-    P.names = U.names;
+    P.w = w;
+    P.names = unitNames(U);
 end
 end
 
@@ -289,24 +386,25 @@ function P = curvePayload(P, M, U, red, d, ax)
 M = reduceDims(M, d, ax);
 k = dimPos(d, ax.x.name);
 if k==0, k = 1; end                                   % the unit is the x (a line)
+w = unitWeights(U);
 if isempty(ax.x.name) || strcmp(ax.unitAxis,'line')
     Y = double(M(:,1,1));                             % one value per position
     P.Y = Y(:);
     P.x = axisValues(ax.x, numel(Y));
-    P.w = U.w(:);
+    P.w = w;
     P.names = {''};
     return
 end
 Y = squeezeTo2D(M, k);                                % [nUnit x nx]
 n = size(Y,2);
 if strcmp(red,'pooled')
-    P.Y = reshape(wmean(Y, U.w, 1), n, 1);
-    P.w = sum(U.w(:));
+    P.Y = reshape(wmean(Y, w, 1), n, 1);
+    P.w = sum(w);
     P.names = {''};
 else
     P.Y = Y.';                                        % [nx x nUnit]
-    P.w = U.w(:);
-    P.names = U.names;
+    P.w = w;
+    P.names = unitNames(U);
 end
 P.x = axisValues(ax.x, n);
 end
@@ -318,21 +416,22 @@ function P = familyPayload(P, M, U, d, ax)
 %   which is only meaningful because a position along a vessel is an ordering.
 M = reduceDims(M, d, ax);
 kx = dimPos(d, ax.x.name);
+w  = unitWeights(U);
 if isempty(ax.family.name) || strcmp(ax.family.name,'line') || dimPos(d,ax.family.name)==0
     Y = squeezeTo2D(M, kx);                           % [nUnit x nx]
     P.Y = Y.';
     P.x = axisValues(ax.x, size(Y,2));
-    P.w = U.w(:);
-    P.names = U.names;
+    P.w = w;
+    P.names = unitNames(U);
     return
 end
 kf = dimPos(d, ax.family.name);
-Yu = wmean(M, U.w, 1);                                % [1 x n1 x n2] pooled
+Yu = wmean(M, w, 1);                                  % [1 x n1 x n2] pooled
 Y  = permute(Yu, [kx+1, kf+1, 1]);                    % [nx x nFam]
 Y  = reshape(Y, size(Y,1), size(Y,2));
 P.Y = double(Y);
 P.x = axisValues(ax.x, size(Y,1));
-P.w = sum(U.w(:));
+P.w = sum(w);
 fv  = axisValues(ax.family, size(Y,2));
 P.names = arrayfun(@(z) sprintf('%g%%', z), fv(:).', 'UniformOutput', false);
 end
@@ -340,54 +439,146 @@ end
 % =====================================================================
 function P = imagePayload(P, M, U, d)
 %imagePayload  A picture.  Every pixel outside the selection is NaN, which is what
-%   the renderer turns into transparency rather than into a hole of zeros.
+%   the renderer turns into transparency rather than into a hole of zeros.  When the
+%   selection IS the whole image there is no outside, so the values are the picture
+%   and neither the canvas nor the scatter has to be built.
 sz = imageSize(d);
 if isempty(sz), P.note = trim([P.note ' This recording declares no image size.']); return; end
-img = nan(sz);
 v = double(M(:,1,1));
-img(U.idx) = v;
+if U.all && numel(v)==prod(sz)
+    P.img = reshape(v, sz);
+    return
+end
+img = nan(sz);
+img(unitIdx(U)) = v;
 P.img = img;
 end
 
 % =====================================================================
 function P = paintPayload(P, M, U, R, d)
 %paintPayload  image.fromSegments: each selected unit's own number, painted back
-%   into the map by its idx.  The lookup is by index rather than by a comparison per
-%   segment - 1480 segments against 300000 pixels is not a loop worth writing.
+%   into the map by its idx.
+[K, why] = paintKit(R, U, d);
+if isempty(K), P.note = trim([P.note ' ' why]); return; end
+P.img = paintFrame(K, M(:,1,1));
+end
+
+% =====================================================================
+function P = paintVideoPayload(P, M, U, R, d, ax, A)
+%paintVideoPayload  video.fromSegments: the same painting, once per sample - and NOT
+%   into a cube.  [nUnit x nFrame] and one look-up table is all a renderer needs to
+%   make any frame, which is the difference between 5 MB and 26 TB; the frame itself
+%   comes from exFetch('frame',...) when something actually asks to see it.
+k = dimPos(d, ax.scrub.name);
+if k==0, P.note = trim([P.note ' There is nothing to scrub along.']); return; end
+[K, why] = paintKit(R, U, d);
+if isempty(K), P.note = trim([P.note ' ' why]); return; end
+S = squeezeTo2D(M, k);                                % [nUnit x nFrame], decimated
+if isempty(S) || size(S,2)<1
+    P.note = trim([P.note ' This leaf has no samples to walk.']); return
+end
+% The leaf arrived already cut to the slider's positions - sliceIndices puts the
+% stride in as a subscript - so the coordinates are read at those same positions,
+% off the FULL axis.  A length nothing could measure falls back to the frames the
+% leaf turned out to have, rather than asking the registry for 1:Inf.
+nF  = size(S,2);
+n   = axisLength(A, ax.scrub.name, d);
+P.fvals = axisValues(ax.scrub, nF);
+if isfinite(n) && n>=nF
+    pos = scrubPositions(n, ax.plot);
+    v   = axisValues(ax.scrub, n);        % exactly n long, so pos indexes it safely
+    if numel(pos)>=nF, P.fvals = v(pos(1:nF)); end
+end
+P.paint = struct('kit',K, 'S',double(S));
+P.flab  = ax.scrub.label;
+end
+
+% =====================================================================
+function [K, why] = paintKit(R, U, d)
+%paintKit  EVERYTHING ABOUT PAINTING THAT DOES NOT CHANGE FROM FRAME TO FRAME: which
+%   map, which pixels of it address a selected unit, and where in the look-up table
+%   each unit writes.  Built once and reused, which is the whole reason a
+%   reconstructed video costs a frame rather than a cube.  The look-up is by index
+%   rather than by a comparison per segment - 1480 segments against 300000 pixels is
+%   not a loop worth writing.
+K = []; why = '';
 mapName = 'sMap';
 if strcmp(d.unit,'dvs'), mapName = 'dvsMap'; end
 map = getNested(R, mapName);
 if isempty(map) || ~isnumeric(map)
-    P.note = trim([P.note ' This recording has no ' mapName ' to paint into.']); return
+    why = ['This recording has no ' mapName ' to paint into.']; return
 end
-ids = U.ids(:);
-v   = double(M(:,1,1));
+ids = unitIds(U);
 if isempty(ids) || ~all(isfinite(ids))
-    P.note = trim([P.note ' The units of this recording carry no index to paint by.']);
-    return
+    why = 'The units of this recording carry no index to paint by.'; return
 end
+m   = double(map);
 top = max(ids);
-lut = nan(top+1,1);
-lut(round(ids)+1) = v;
-m = double(map);
-ok = isfinite(m) & m==round(m) & m>=0 & m<=top;
-img = nan(size(m));
-img(ok) = lut(m(ok)+1);
-P.img = img;
+ok  = isfinite(m) & m==round(m) & m>=0 & m<=top;
+K = struct('sz',size(m), 'ok',ok, 'code',m(ok)+1, 'slot',round(ids(:))+1, 'top',top);
+end
+
+function img = paintFrame(K, v)
+%paintFrame  One number per unit into one picture.  Every pixel that belongs to no
+%   selected unit - or to one whose value is not finite - is left NaN, so it renders
+%   transparent rather than as a hole of zeros.
+lut = nan(K.top+1,1);
+lut(K.slot) = double(v(:));
+img = nan(K.sz);
+img(K.ok) = lut(K.code);
+end
+
+function img = frameOf(P, k)
+%frameOf  ONE FRAME OF A RECONSTRUCTED VIDEO, painted when it is asked for.  The
+%   renderer asks for the frame under the slider and the export asks for each in
+%   turn, so neither ever holds more than two pictures at a time.
+img = [];
+if ~isstruct(P) || ~isfield(P,'paint') || isempty(P.paint), return; end
+k = round(double(k));
+n = size(P.paint.S,2);
+if ~isfinite(k) || k<1, k = 1; end
+if k>n, k = n; end
+img = paintFrame(P.paint.kit, P.paint.S(:,k));
+end
+
+% =====================================================================
+function n = scrubCap(plotId)
+%scrubCap  HOW MANY SLIDER POSITIONS A PLOT MAY OFFER.  A cube that is already in
+%   memory is walked whole - its length is bounded by the fact that it fits.  A
+%   RECONSTRUCTED video is not: gsData is 61 208 samples, and dragging a slider
+%   through 61 208 positions is a defect however correct each frame is, so it is
+%   walked at a stride.  400 is a slider a hand can land on and a video of about
+%   fifty seconds at the default frame rate.
+switch char(plotId)
+    case 'video.fromSegments', n = 400;
+    otherwise,                 n = Inf;
+end
+end
+
+function pos = scrubPositions(nTotal, plotId)
+%scrubPositions  Which samples the slider stops on.  Evenly spaced REAL samples -
+%   nothing is averaged into a frame and no frame is between two samples - so the
+%   coordinate under the slider is a time the recording actually has.
+nTotal = floor(double(nTotal));
+if ~isfinite(nTotal) || nTotal<1, pos = zeros(0,1); return; end
+cap = scrubCap(plotId);
+if ~isfinite(cap) || nTotal<=cap, pos = (1:nTotal).'; return; end
+pos = (1:ceil(nTotal/cap):nTotal).';
 end
 
 % =====================================================================
 function P = heatPayload(P, M, U, d, ax)
 %heatPayload  Rows are the y axis, columns the x - frequency up the side and time or
 %   percentile along the bottom, which is the orientation guiExplore already draws.
-Yu = wmean(M, U.w, 1);
 kx = dimPos(d, ax.x.name); ky = dimPos(d, ax.y.name);
 if kx==0 || ky==0, P.note = trim([P.note ' This leaf has no two axes to spread out.']); return; end
+w  = unitWeights(U);
+Yu = wmean(M, w, 1);
 C = permute(Yu, [ky+1, kx+1, 1]);
 P.cdata = double(reshape(C, size(C,1), size(C,2)));
 P.x     = axisValues(ax.x, size(P.cdata,2));
 P.yvals = axisValues(ax.y, size(P.cdata,1));
-P.w     = sum(U.w(:));
+P.w     = sum(w);
 end
 
 % =====================================================================
@@ -401,23 +592,30 @@ P.cdata = double(C);
 P.x     = axisValues(ax.x, size(C,2));
 P.yvals = (1:size(C,1)).';
 if ~isempty(ax.y.values), P.yvals = clipTo(ax.y.values, size(C,1)); end
-P.w     = U.w(:);
+P.w     = unitWeights(U);
 end
 
 % =====================================================================
 function P = videoPayload(P, M, U, d, ax)
-%videoPayload  A cube whose third dimension is the one the slider walks.
+%videoPayload  A cube whose third dimension is the one the slider walks.  A whole
+%   image needs no canvas and no scatter per frame: the values already ARE the cube,
+%   in the order the frames want them.
 sz = imageSize(d);
 if isempty(sz), P.note = trim([P.note ' This recording declares no image size.']); return; end
 k = dimPos(d, ax.scrub.name);
 if k==0, P.note = trim([P.note ' There is nothing to scrub along.']); return; end
 S = squeezeTo2D(M, k);                                % [nUnit x nFrame]
 nF = size(S,2);
-V = nan([sz nF]);
-for j = 1:nF
-    fr = nan(sz);
-    fr(U.idx) = S(:,j);
-    V(:,:,j) = fr;
+if U.all && size(S,1)==prod(sz)
+    V = reshape(S, [sz nF]);
+else
+    idx = unitIdx(U);
+    V = nan([sz nF]);
+    for j = 1:nF
+        fr = nan(sz);
+        fr(idx) = S(:,j);
+        V(:,:,j) = fr;
+    end
 end
 P.frames = V;
 P.fvals  = axisValues(ax.scrub, nF);
@@ -439,26 +637,93 @@ P.xlab = ax.x.label;
 P.ok = true;
 end
 
+% ============================================================== THE COMPANIONS
+
+function K = companionsFor(R, d)
+%companionsFor  THE LEAVES THAT RIDE WITH THIS ONE, resolved out of the tree so no
+%   renderer has to.  exSchema names them - which leaf, on which host, in what role
+%   - and the host's own path supplies the container they are siblings in, so the
+%   lookup is the host path with its last component swapped.
+%
+%   A COMPANION THE FILE DOES NOT CARRY IS SIMPLY ABSENT.  Nothing is padded and
+%   nothing is invented: a window whose propagation never fitted has no slope and no
+%   sentence, and the plot then shows what it always showed.
+K = emptyCompanions();
+if ~isstruct(d) || ~isfield(d,'leaf') || isempty(d.leaf) || isempty(d.family), return; end
+spec = exSchema('companions', d.family, d.leaf);
+if isempty(spec), return; end
+base = regexprep(char(d.path), '[^.]+$', '');      % '...propagation.outer.'
+for i = 1:numel(spec)
+    pth = [base spec(i).leaf];
+    v = getNested(R, pth);
+    if isempty(v), continue; end
+    lab = spec(i).leaf; un = '';
+    r = exSchema('match', pth);
+    if ~isempty(r), lab = r.label; un = r.yUnit; end
+    K(end+1) = struct('leaf',spec(i).leaf, 'role',spec(i).role, 'value',v, ...
+                      'label',lab, 'unit',un); %#ok<AGROW>
+end
+end
+
+function K = emptyCompanions()
+K = struct('leaf',{},'role',{},'value',{},'label',{},'unit',{});
+end
+
+function s = roleNoun(d)
+%roleNoun  A rider's role, in the words the message it appears in needs.
+r = ''; if isstruct(d) && isfield(d,'pairRole'), r = char(d.pairRole); end
+switch r
+    case 'interval', s = 'confidence interval';
+    case 'fit',      s = 'fitted line';
+    case 'caption',  s = 'caption';
+    case 'pooled',   s = 'pooled form';
+    otherwise,       s = 'companion';
+end
+end
+
+function s = riderName(d)
+%riderName  What to call a rider in that message.  A WHOLE CONTAINER MAY RIDE, and
+%   then there is no leaf name to use - the myograph diameter's measure is the signal
+%   token of its path - so the phrase the reader already saw stands in for it.
+s = '';
+if isstruct(d) && isfield(d,'leaf'), s = char(d.leaf); end
+if isempty(s) && isstruct(d) && isfield(d,'label'), s = char(d.label); end
+if isempty(s), s = 'This leaf'; end
+end
+
 % ================================================================== THE UNITS
 
 function U = unitsFor(R, d, opts, nTotal)
 %unitsFor  Which items of the leaf the user asked for, what they weigh, and what
 %   they are called.  Four kinds of unit and one of them - the pixel - is selected
 %   by geometry rather than by a table row.
+%
+%   ONLY .n AND .all ARE ALWAYS TRUE OF THE RECORD; everything else is an override.
+%   .all says the selection is every unit of the leaf, which is the common case and
+%   the one that used to be the expensive one: on a 1496x896 map, "all of them"
+%   spelled out as a subscript vector, a weight of one per pixel and a name per pixel
+%   is three arrays of 1.34 million elements built to say nothing.  So an arm that
+%   selects a SUBSET writes .idx and turns .all off, an arm that has real weights or
+%   real names writes those, and what is not written is derived on demand by
+%   unitIdx / unitWeights / unitNames / unitIds - which is why a pixel leaf, whose
+%   renderers are pictures and never show a unit name, pays for none of it.
+%
 % Built field by field, not through struct(): a cell passed to struct() makes a
 % struct ARRAY of that cell's size, which is how one line here would quietly turn
 % one unit list into nUnits of them.
-U = struct('idx',[], 'w',[], 'names',{{}}, 'ids',[], 'note','');
-U.idx   = (1:nTotal)';
-U.w     = ones(nTotal,1);
-U.ids   = (1:nTotal)';
-U.names = defaultNames(d.unit, nTotal);
+U = struct('unit','', 'idx',[], 'w',[], 'names',{{}}, 'ids',[], 'note','', ...
+           'n',0, 'all',true);
+U.unit = char(d.unit);
+U.n    = double(nTotal);
 
 switch d.unit
     case {'seg','dvs'}
         T = metricsFor(R, d.unit);
         if isempty(T)
-            U.note = 'The metrics table could not be read here, so every unit counts equally.';
+            % The only remaining reason to be here is that the recording carries no
+            % metrics table.  It used to be reached far more often, by any file over
+            % a size limit, and the sentence blamed the reading rather than the file.
+            U.note = 'This recording carries no metrics table, so every unit counts equally.';
             return
         end
         if height(T) ~= nTotal
@@ -469,33 +734,62 @@ switch d.unit
         rows = selectRows(T, opts.select, tableDomain(T));
         w    = weightCol(T);
         U.idx   = find(rows);
+        U.n     = numel(U.idx);
+        U.all   = false;
         U.w     = w(rows);
         U.ids   = idColumn(T, rows);
         U.names = rowNames(T, rows);
 
     case 'pixel'
-        [keep, note] = pixelMask(R, opts, nTotal);
-        U.idx   = find(keep);
-        U.w     = ones(numel(U.idx),1);
-        U.ids   = U.idx;
-        U.names = defaultNames('pixel', numel(U.idx));
-        U.note  = note;
+        % A PIXEL IS NOT A TABLE ROW.  Nothing here but the selection: no name,
+        % because no picture shows one; no weight, because pixels are equal by
+        % construction; and no second construction of either.
+        [keep, U.note] = pixelMask(R, opts, nTotal);
+        if ~isempty(keep)
+            U.idx = find(keep);
+            U.n   = numel(U.idx);
+            U.all = false;
+        end
 
     case 'line'
-        keep = true(nTotal,1);
         if numel(opts.rows)==2
             lo = max(1, floor(opts.rows(1))); hi = min(nTotal, ceil(opts.rows(2)));
-            keep = false(nTotal,1);
-            if hi>=lo, keep(lo:hi) = true; end
+            if hi>=lo, U.idx = (lo:hi)'; else, U.idx = zeros(0,1); end
+            U.n     = numel(U.idx);
+            U.all   = false;
+            U.names = arrayfun(@(i) sprintf('position %d',i), U.idx(:).', 'UniformOutput', false);
         end
-        U.idx = find(keep);
-        U.w   = ones(numel(U.idx),1);
-        U.ids = U.idx;
-        U.names = arrayfun(@(i) sprintf('position %d',i), U.idx(:).', 'UniformOutput', false);
 end
-if isempty(U.names) || numel(U.names)~=numel(U.idx)
-    U.names = defaultNames(d.unit, numel(U.idx));
+% A names list an arm built for a different count is worse than none: dropping it
+% lets unitNames rebuild the defaults, and only if a plot ever asks for them.
+if ~isempty(U.names) && numel(U.names)~=U.n, U.names = {}; end
 end
+
+% =====================================================================
+function idx = unitIdx(U)
+%unitIdx  The subscripts of the selected units, spelled out.  Only a caller that
+%   genuinely has to scatter values into a canvas needs this; everything else asks
+%   .all first and skips the indexing altogether.
+if U.all, idx = (1:U.n)'; else, idx = U.idx(:); end
+end
+
+function w = unitWeights(U)
+%unitWeights  What each selected unit weighs.  Ones unless a metrics table said
+%   otherwise - and materialised HERE rather than in the record, so a picture, which
+%   weights nothing, never builds a million of them.
+if isempty(U.w), w = ones(U.n,1); else, w = U.w(:); end
+end
+
+function nm = unitNames(U)
+%unitNames  What each selected unit is called, built on demand.  A box and a set of
+%   curves need these; an image and a video have nowhere to put them.
+if isempty(U.names), nm = defaultNames(U.unit, U.n); else, nm = U.names; end
+end
+
+function ids = unitIds(U)
+%unitIds  The index each unit is known by in the map it was segmented from, which is
+%   its row position when the recording carries no id column.
+if isempty(U.ids), ids = unitIdx(U); else, ids = U.ids(:); end
 end
 
 % =====================================================================
@@ -503,10 +797,26 @@ function [keep, note] = pixelMask(R, opts, nTotal)
 %pixelMask  The whole image, or the pixels of the segments a vessel selection picks.
 %   For pixels the selection IS the reduction - there is no separate pooling step -
 %   so this is where "Arteries (lumen)" turns into a region of the map.
+%
+%   AN EMPTY MASK MEANS EVERY PIXEL, and it is returned instead of true(nTotal,1)
+%   because the whole image is the case this tool spends its time in: a mask of all
+%   trues only ever becomes find(...), which is 1.34 million subscripts saying "all
+%   of them" and then a copy of the leaf to reproduce the leaf.  An empty mask is not
+%   the same answer as an all-FALSE one - that second one means the selection matched
+%   nothing, and it still comes back as a mask so the caller can say so.
+%
+%   The per-pixel test below is the one that IS worth its cost: comparing every pixel
+%   of the map against the selected segment ids is what "Arteries (lumen)" means, and
+%   there is no cheaper way to ask it.
+%
+%   SEVERAL SELECTIONS ARE ONE REGION.  The masks combine spatially, so the union is
+%   what "arteries and veins" means on a picture - and it is had for free, because
+%   selectRows is where the OR lives.  One of them naming the whole image swallows
+%   the rest, which is the same answer by a shorter road.
 note = '';
-keep = true(nTotal,1);
-sel  = opts.select;
-if isempty(sel) || strcmpi(sel,'(whole image)') || strcmpi(sel,'all'), return; end
+keep = [];
+sel  = asSelections(opts.select);
+if all(cellfun(@isBlankSel, sel)) || any(cellfun(@isEverythingSel, sel)), return; end
 
 map = getNested(R,'sMap');
 T   = metricsFor(R,'seg');
@@ -605,15 +915,31 @@ if ismember('category',T.Properties.VariableNames), dom='seg'; else, dom='dvs'; 
 end
 
 function rows = selectRows(T, sel, dom)
-%selectRows  A named selection to a logical row mask into a metrics table.
+%selectRows  A named selection - or SEVERAL - to a logical row mask into a metrics
+%   table.  Several are ORed: a picture takes every entry at once, because arteries
+%   and veins combine spatially rather than competing for one axes.
 %
 %   THE OTHERWISE-ARM FALLS BACK TO "ALL LUMEN", and that is the reason every
 %   selection this file offers has to be named here.  A category entry that reached
 %   the fallback would turn a request for the outer wall into a request for every
-%   vessel: a plot of the wrong tissue, drawn without a word of complaint.  The
-%   category arm below was a wrapper around this function until the redesign
-%   retired guiExplore's copy; it is folded in so there is one list of selections
-%   rather than two that have to agree.
+%   vessel: a plot of the wrong tissue, drawn without a word of complaint - and in a
+%   UNION it is worse, because the extra vessels would be added to a picture that
+%   still looked plausible.  exFetch('named',sel) asks the same switch whether it
+%   knows a selection, and testExplorePlan asks it of every entry whereList produces.
+rows = false(height(T),1);
+sel  = asSelections(sel);
+for i = 1:numel(sel)
+    rows = rows | oneSelection(T, sel{i}, dom);
+end
+% drop rows with a non-finite idx (empty table slots)
+if ismember('idx',T.Properties.VariableNames)
+    rows = rows & isfinite(double(T.idx));
+end
+end
+
+function rows = oneSelection(T, sel, dom)
+%oneSelection  One entry of the Where list, resolved.  Kept apart from the union so
+%   that "what does this one name" is a question with an answer - see isNamedSelection.
 n = height(T); rows = false(n,1);
 if isempty(sel), sel = ''; end
 vn = T.Properties.VariableNames;
@@ -643,12 +969,43 @@ switch true
     case contains(sel,'Parenchyma'), if hasCat, rows = (T.category==1); end
     case contains(sel,'All DVS'), rows = true(n,1);
     case contains(sel,'All vessels'), rows = isLum;
+    case isEverythingSel(sel) || isBlankSel(sel), rows = isLum;
     otherwise, rows = isLum;
 end
-% drop rows with a non-finite idx (empty table slots)
-if ismember('idx',vn)
-    rows = rows & isfinite(double(T.idx));
 end
+
+function tf = isNamedSelection(sel)
+%isNamedSelection  DOES THE SWITCH ABOVE KNOW THIS SELECTION, or would it reach the
+%   fallback?  Asked here so a test can assert that nothing the Where list offers
+%   ends up silently drawn as every vessel.  Every arm of oneSelection is answered,
+%   in the same order, and the two are meant to be read side by side.
+sel = char(sel);
+tf = ~isempty(categoryOf(sel)) || startsWith(sel,'Label:') || ...
+     contains(sel,'Arter') || contains(sel,'Vein') || contains(sel,'Uncert') || ...
+     contains(sel,'Parenchyma') || contains(sel,'All DVS') || ...
+     contains(sel,'All vessels') || isEverythingSel(sel) || isBlankSel(sel);
+end
+
+function tf = isEverythingSel(sel)
+%isEverythingSel  The entries whereList writes when there is nothing to narrow BY.
+%   They mean every unit, which is what the fallback does, and naming them keeps the
+%   fallback itself unreachable from anything the tool offers.
+tf = any(strcmpi(char(sel), {'(everything)','(whole image)','(all positions)', ...
+                             '(the whole vessel)','all'}));
+end
+
+function tf = isBlankSel(sel)
+%isBlankSel  No selection at all - the default, which also means every unit.
+tf = isempty(strtrim(char(sel)));
+end
+
+function s = asSelections(sel)
+%asSelections  ONE SELECTION OR SEVERAL, always as a cellstr, so nothing downstream
+%   has to ask which it was handed.
+if isempty(sel), s = {''}; return; end
+if ischar(sel) || isstring(sel), s = {char(sel)}; return; end
+s = cellfun(@char, reshape(sel,1,[]), 'UniformOutput', false);
+if isempty(s), s = {''}; end
 end
 
 function c = categoryOf(sel)
@@ -682,21 +1039,19 @@ W = w.*isfinite(Y); Yz=Y; Yz(~isfinite(Y))=0;
 m = sum(Yz.*W,dim)./max(sum(W,dim),eps);
 end
 
-% ================================================== READING THE LEAF, EITHER WAY
+% ================================================== READING THE LEAF
 
 function [V, why] = readLeaf(R, d, sl)
-%readLeaf  The numbers, sliced on the way in when that saves a read.
+%readLeaf  The numbers, sliced to the indices the chosen plot fixes.
 why = '';
 subs = leafSubs(d, sl);
-if isfield(R,'x_lazy_')
-    [V, why] = readSlab(char(R.x_path_), d, subs);
-    return
-end
 V = getNested(R, d.path);
 if isempty(V) || (~isnumeric(V) && ~islogical(V))
     V = []; why = sprintf('%s is not in this recording.', d.path); return
 end
-V = double(V);
+% THE SLICE IS TAKEN BEFORE THE CAST, not after.  A stride down a 61 208-sample leaf
+% throws away 99% of it, and casting first would build the whole 725 MB in doubles to
+% do so.  Nothing else changes: the values are the same values.
 if numel(subs)>=2 && ~all(cellfun(@(s) ischar(s), subs))
     try
         V = V(subs{:});
@@ -704,54 +1059,12 @@ if numel(subs)>=2 && ~all(cellfun(@(s) ischar(s), subs))
         why = 'The requested slice is outside this leaf.'; V = []; return
     end
 end
-end
-
-function [V, why] = readSlab(pth, d, subs)
-%readSlab  One hyperslab of an HDF5 dataset.  MATLAB's HDF5 layer reports and
-%   returns MATLAB orientation, so start and count are in the same dimension order
-%   as the size exScan measured - but the returned size is CHECKED against the
-%   requested count anyway, because a silently transposed read would give plausible
-%   numbers from the wrong place.
-why = '';
-ds = ['/results/' strrep(d.path,'.','/')];
-sz = padSize(d.size, numel(subs));
-start = ones(1,numel(sz)); count = sz;
-for k = 1:numel(subs)
-    if ischar(subs{k}), continue; end
-    s = subs{k};
-    start(k) = min(s); count(k) = max(s)-min(s)+1;
-end
-try
-    if all(start==1) && isequal(count, sz)
-        V = h5read(pth, ds);
-    else
-        V = h5read(pth, ds, start, count);
-    end
-catch ME
-    why = sprintf('This leaf could not be read from the file (%s).', ME.identifier);
-    V = []; return
-end
-if ~isequal(padSize(size(V),numel(count)), padSize(count,numel(count)))
-    why = 'The file returned a block of the wrong shape, so it was not used.';
-    V = []; return
-end
 V = double(V);
-% re-index inside the block, so a non-contiguous request still lands right
-inner = subs;
-for k = 1:numel(subs)
-    if ischar(subs{k}), continue; end
-    inner{k} = subs{k} - start(k) + 1;
-end
-if ~all(cellfun(@(s) ischar(s), inner))
-    % In range by construction: the block spans min(s) to max(s) of every request,
-    % so no guard is needed and a silent one would only hide a real mistake.
-    V = V(inner{:});
-end
 end
 
 % =====================================================================
 function v = getNested(R, name)
-% Fetch results.<a>.<b>... (dotted) from a full struct; [] if missing/lazy.
+% Fetch results.<a>.<b>... (dotted) from a full struct; [] if missing.
 %
 % Lifted from guiExplore and generalised in the two ways a descriptor path needs:
 % a component of the form name(<digits>) takes that element of a struct array, and
@@ -759,7 +1072,7 @@ function v = getNested(R, name)
 % index ONLY when it is name(<digits>), so the metrics column 'std(diameter)' is
 % never mistaken for one.
 v = [];
-if isempty(R)||~isstruct(R)||isfield(R,'x_lazy_'), return; end
+if isempty(R)||~isstruct(R), return; end
 parts = strsplit(name,'.'); v=R;
 for i=1:numel(parts)
     [nm, idx] = parseComp(parts{i});
@@ -844,6 +1157,18 @@ for i = 1:numel(ax.slice)
     nm = ax.slice{i};
     n  = axisLength(A, nm, d);
     sl.(nm) = clampIdx(sliceAsked(opts, nm), n);
+end
+% A PLOT THAT WALKS ITS AXIS AT A STRIDE CUTS THE LEAF ON THE WAY IN.  The subscript
+% is the slider's own positions, so gsData's [61208 x 1480] never becomes 725 MB of
+% doubles to throw 99% of away - and the payload reads the coordinates at the same
+% positions, from the same function, so the two cannot describe different samples.
+if ~isempty(ax.scrub.name) && isfinite(scrubCap(ax.plot))
+    n = axisLength(A, ax.scrub.name, d);
+    % A length nothing could measure is left alone: an empty subscript would read an
+    % empty leaf and the payload would come back blank with nothing to say why.
+    if isfinite(n) && n>=1
+        sl.(ax.scrub.name) = scrubPositions(n, ax.plot);
+    end
 end
 end
 
@@ -931,7 +1256,7 @@ end
 function T = metricsFor(R, unit)
 T = [];
 if strcmp(unit,'seg'), nm = 'sMetrics'; else, nm = 'dvsMetrics'; end
-if isempty(R) || ~isstruct(R) || isfield(R,'x_lazy_'), return; end
+if isempty(R) || ~isstruct(R), return; end
 if isfield(R,nm) && istable(R.(nm)), T = R.(nm); end
 end
 
@@ -1001,7 +1326,7 @@ function s = trim(s)
 s = strtrim(char(s));
 end
 
-function opts = fillOpts(opts, R)
+function opts = fillOpts(opts)
 if isempty(opts) || ~isstruct(opts), opts = struct(); end
 def = struct('select','', 'units','', 'rows',[], 'interval',[], ...
              'slice',struct(), 'path','', 'scrub','');
@@ -1011,18 +1336,15 @@ for i = 1:numel(fn)
         opts.(fn{i}) = def.(fn{i});
     end
 end
-opts.select = char(opts.select);
+opts.select = asSelections(opts.select);
 opts.units  = char(opts.units);
 opts.path   = char(opts.path);
 opts.scrub  = char(opts.scrub);
-if isempty(opts.path) && isstruct(R) && isfield(R,'x_path_')
-    opts.path = char(R.x_path_);
-end
 end
 
 function P = blankPayload(plotId)
 P = struct('ok',false, 'note','', 'plot',char(plotId), 'kind','', ...
     'x',[], 'Y',[], 'w',[], 'names',{{}}, 'img',[], 'cdata',[], 'yvals',[], ...
-    'frames',[], 'fvals',[], 'xlab','', 'ylab','', 'clab','', 'flab','', ...
-    'xlog',false, 'xscale','linear', 'nUnits',0);
+    'frames',[], 'paint',[], 'fvals',[], 'xlab','', 'ylab','', 'clab','', 'flab','', ...
+    'xlog',false, 'xscale','linear', 'nUnits',0, 'companions',{emptyCompanions()});
 end

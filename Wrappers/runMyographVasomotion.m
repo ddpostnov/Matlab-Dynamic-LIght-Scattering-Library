@@ -1,8 +1,8 @@
 %runMyographVasomotion  Wavelet vasomotion analysis of a myograph diameter trace
 %
 %   runMyographVasomotion(s,fNames) runs the vasomotion analysis on every interval
-%   of every *_MYO_d.mat recording in fNames and writes the result into the
-%   recording's own _MYO triplet.  fNames is a cell array of *_MYO_d.mat paths; the
+%   of every *_MYO_r.mat recording in fNames and writes the result into the
+%   recording's own _MYO triplet.  fNames is a cell array of *_MYO_r.mat paths; the
 %   wrapper iterates them itself, so there is no launcher for-loop.
 %
 %   IT IS THE SAME ANALYSIS THE SPECKLE PIPELINE RUNS.  getMyographVasomotion calls
@@ -52,7 +52,7 @@
 %                .segVsmReturn      which analysis levels are computed and stored
 %                .parforMyographLines  run the per-line loop on several workers
 %              The speckle-only fields (vsmSignals, ppxVsmReturn) do not apply.
-%     fNames   cell array of *_MYO_d.mat paths.  Empty cells are skipped.
+%     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
 %     and s.cancelFcn()->tf (checked between files).
 %
@@ -68,7 +68,7 @@
 %     s.diameterMeasures = {'mid'};
 %     s.vFR = [0.05 0.25];   s.cFR = [0.4 0.6];
 %     s.perLine = false;
-%     D = dir(fullfile(rootFolder,'*_MYO_d.mat'));
+%     D = dir(fullfile(rootFolder,'*_MYO_r.mat'));
 %     runMyographVasomotion(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -99,8 +99,10 @@
 
 function runMyographVasomotion(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_MYO_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_MYO_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_MYO_r.mat'').']);
 end
 s=withDefaults(s);
 

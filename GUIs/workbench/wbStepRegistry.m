@@ -32,7 +32,7 @@
 %       inGlob       dir glob it consumes            ('*.rls')
 %       outSuffix    new triplet suffixes            ({'_t_K_d','_t_K_r','_t_K_s'})
 %       outKind      'new'|'inplace'|'prefix'|'none' (how outputs relate to input)
-%       outTransform strrep rule on the _d name      (struct from/to, or [])
+%       outTransform strrep rule on the _r name      (struct from/to, or [])
 %       gatingField  settings.<field> written        ('runContrastFromRLS')
 %       requires     upstream step ids, ALL needed  ({} | {'setRegions'} ...)
 %       requiresAny  upstream step ids, ANY one is enough - the branch-agnostic
@@ -118,7 +118,7 @@
 %     processing matrix that nobody wanted to tick.
 %   * BRANCHSCOPE - one raw recording yields SEVERAL co-registered products ('_t_K',
 %     '_c_K', '_e_K', ...), and the launchers are explicit about how many of them a
-%     step touches: '*_t_K_d.mat' means one branch, '*_K_d.mat' means all of them.
+%     step touches: '*_t_K_r.mat' means one branch, '*_K_r.mat' means all of them.
 %     A workbench ROW is the recording, not the file, so each step declares the
 %     fan-out its launcher cell implies (wbExecutor>buildFNames does the resolving):
 %       'one'  - a single file, disambiguated by branch/desiredStage.  The default,
@@ -126,7 +126,7 @@
 %                (vasomotion on _t, pulsatility/vascularTree on _c, the entry steps
 %                that read the raw recording).
 %       'all'  - every branch product of the recording, as an Nx1 fNames column, the
-%                way the launcher passes '*_K_d.mat' (BFI, dynamicSegmentation).
+%                way the launcher passes '*_K_r.mat' (BFI, dynamicSegmentation).
 %                The wrapper's own per-file loop then covers the branches, one
 %                workbench cell for the lot.
 %       'copy' - the step RUNS on the contrast-side file and the result is inherited
@@ -143,11 +143,11 @@
 %     animal's columns - a perAnimal step is one work item however many files it
 %     hands the wrapper.
 %     RESOLVED (Phase 6, 2026-07-29): registration and vesselTypes are 'all'.
-%     Their launcher cells are branch-wide ('Roi*_K_d.mat' and 'Roi*_BFI_d.mat',
+%     Their launcher cells are branch-wide ('Roi*_K_r.mat' and 'Roi*_BFI_r.mat',
 %     both of which match _t AND _c), and leaving them at 'one' did not just under-
 %     cover - it silently picked the WRONG file, because resolveStepInputs falls
 %     back to the first dir() match when the step declares no branch, and
-%     '_c_K_d.mat' sorts before '_t_K_d.mat'.  A two-pipeline recording was
+%     '_c_K_r.mat' sorts before '_t_K_r.mat'.  A two-pipeline recording was
 %     therefore registered on its cardiac product only, and never got vessel types
 %     onto '_t_BFI' - which is exactly where vasomotion's per-segment table lives.
 %     This is the same trap the 'copy' note above records for setRegions.
@@ -164,7 +164,7 @@
 %     ROIs drawn on a file are re-offered as editable objects on the NEXT file of
 %     the same row and reset at the next row, so the row has to BE the animal.
 %     That is exactly the launcher's list -
-%     getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+') - whose grouping
+%     getFileNamesList(rootFolder,'*_t_K_r.mat','[A-Z]+\d+') - whose grouping
 %     pattern is the animal token.  Left flat, every recording would arrive as its
 %     own row and the drawn region could never persist from one recording of an
 %     animal to the next, which is the whole point of the step (author, 2026-07-29).
@@ -232,7 +232,7 @@
 %     that is also a prerequisite is a REGISTRY BUG and is thrown at construction
 %     rather than resolved silently - the two rules would pull the same box in
 %     opposite directions and whichever won would be an accident of ordering.
-%   * REQUIRES vs REQUIRESANY.  '*_K_d.mat' steps (setRegions, segmentation, BFI,
+%   * REQUIRES vs REQUIRESANY.  '*_K_r.mat' steps (setRegions, segmentation, BFI,
 %     registration) read ANY branch product of a recording, so their real
 %     prerequisite is "some entry step has run", not "contrast has run".  A purely
 %     pulsatile protocol starts at internalCycle and never computes a contrast
@@ -314,7 +314,7 @@ s = base();
 s.id='contrast'; s.label='Contrast'; s.wrapper=@runContrastFromRLS;
 % s.contrastType chooses the flag: temporal -> _t_K, spatial -> _s_K (same branch)
 s.inGlob='*.rls'; s.outSuffix={'_t_K_d','_t_K_r','_t_K_s'}; s.outKind='new';
-s.outTransform=struct('from','.rls','to','_t_K_d.mat');   % spatial: '_s_K_d'
+s.outTransform=struct('from','.rls','to','_t_K_r.mat');   % spatial: '_s_K_r'
 s.gatingField='runContrastFromRLS'; s.requires={}; s.produces={'contrast'};
 s.interactive=@(ss) isfield(ss,'manualMask') && isequal(ss.manualMask,1);
 s.artifacts={'_rep_contrast.jpg'}; s.legacyArtifacts={'_c.jpg'}; s.branch='contrast';
@@ -343,7 +343,7 @@ reg(end+1)=s;
 s = base();
 s.id='internalCycle'; s.label='Internal cycle'; s.wrapper=@runInternalCycle;
 s.inGlob='*.rls'; s.outSuffix={'_c_K_d','_c_K_r','_c_K_s'}; s.outKind='new';
-s.outTransform=struct('from','.rls','to','_c_K_d.mat');
+s.outTransform=struct('from','.rls','to','_c_K_r.mat');
 s.gatingField='runInternalCycle'; s.requires={}; s.produces={'cardiac'};
 s.artifacts={'_rep_cycle-detect.jpg','_rep_cycle-average.jpg'};
 s.legacyArtifacts={'_ic1.jpg','_ic2.jpg'}; s.branch='cardiac';
@@ -384,8 +384,8 @@ s.id='externalCycle'; s.label='External cycle'; s.wrapper=@runExternalCycle;
 % external/epoch cycle of the contrast side (t or s): the stage flag BECOMES e,
 % i.e. the single suffix _e_K (the contrast base is kept in the settings, not the
 % name - see wbFileModel rationale)
-s.inGlob='*_K_d.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
-s.outTransform=struct('from','_t_K_d.mat','to','_e_K_d.mat');   % replaces the t|s flag with e
+s.inGlob='*_K_r.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
+s.outTransform=struct('from','_t_K_r.mat','to','_e_K_r.mat');   % replaces the t|s flag with e
 s.gatingField='externalCycle';                       % REAL field (differs from fn name)
 s.requires={'contrast'}; s.produces={'epochAvg'};
 s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
@@ -415,7 +415,7 @@ reg(end+1)=s;
 % ---- 4. setRegions ----------------------------------------------------------
 s = base();
 s.id='setRegions'; s.label='Regions'; s.wrapper=@setRegions;
-s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setRegions'; s.requires={}; s.requiresAny={'contrast','internalCycle'};
 s.produces={'regionsMask'};
 s.artifacts={'_rep_regions.jpg'};                     % NEW in Session 3: the drawn
@@ -438,7 +438,7 @@ reg(end+1)=s;
 % ---- 5. segmentation --------------------------------------------------------
 s = base();
 s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
-s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runSegmentation'; s.requires={}; s.requiresAny={'contrast','internalCycle'};
 s.produces={'segmentation'};
 s.artifacts={'_rep_categories.jpg','_rep_segments.jpg'};
@@ -473,7 +473,7 @@ reg(end+1)=s;
 % ---- 6. dynamicSegmentation -------------------------------------------------
 s = base();
 s.id='dynamicSegmentation'; s.label='Dynamic segmentation'; s.wrapper=@runDynamicSegmentation;
-s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runDynamicSegmentation'; s.requires={'segmentation'}; s.produces={'dynamicSeg'};
 s.artifacts={'_rep_segments.jpg'};                    % re-emitted, overwriting the static one
 s.legacyArtifacts={'_vs.jpg'}; s.branch=''; s.branchScope='all';
@@ -498,7 +498,7 @@ reg(end+1)=s;
 % ---- 7. guided --------------------------------------------------------------
 s = base();
 s.id='guided'; s.label='Guided'; s.wrapper=@runGuidedContrast;
-s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runGuidedContrast'; s.requires={'segmentation'}; s.produces={'guidedTraces'};
 s.needsRaw=true; s.branch='contrast';
 s.settingGroups={};                                   % uses sMap + raw; no tunable params
@@ -510,14 +510,14 @@ reg(end+1)=s;
 s = base();
 s.id='registration'; s.label='Registration'; s.wrapper=@runRegistration;
 s.arity='perAnimal';                                   % 2-D fNames row; col 1 = template
-s.inGlob='*_K_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runRegistration';                      % code writes runRegistration (header drift A4)
 s.requires={}; s.requiresAny={'contrast','internalCycle'}; s.produces={'registered'};
 s.interactive=@(ss) ~(isfield(ss,'silent') && isscalar(ss.silent) && isequal(ss.silent,true));
 s.artifacts={'_rep_registration.jpg'};                % was a .png; now a report page
 s.legacyArtifacts={'_registration.png'};
 s.branch=''; s.refBranch='contrast';                  % template = the reference's _t|_s
-s.branchScope='all';                                   % EVERY product of every member (launcher: 'Roi*_K_d.mat')
+s.branchScope='all';                                   % EVERY product of every member (launcher: 'Roi*_K_r.mat')
 s.fileOrder='ordered';                                 % column 1 is the TEMPLATE every other
                                                        % file is registered onto
 s.settingGroups={ 'Registration',{'tFormType','matchSegmentation','prchNSize','silent','forceMethod','rotationLimit'} };
@@ -535,8 +535,8 @@ reg(end+1)=s;
 % ---- 9. BFI -----------------------------------------------------------------
 s = base();
 s.id='BFI'; s.label='BFI'; s.wrapper=@runBFI;
-s.inGlob='*_K_d.mat'; s.outSuffix={'_BFI_d','_BFI_r','_BFI_s'}; s.outKind='new';
-s.outTransform=struct('from','_K_d.mat','to','_BFI_d.mat');   % branch-preserving strrep
+s.inGlob='*_K_r.mat'; s.outSuffix={'_BFI_d','_BFI_r','_BFI_s'}; s.outKind='new';
+s.outTransform=struct('from','_K_r.mat','to','_BFI_r.mat');   % branch-preserving strrep
 s.gatingField='calculateBFI';                         % REAL field (differs from fn name)
 s.requires={}; s.requiresAny={'contrast','internalCycle'}; s.produces={'bfi'};
 s.branch=''; s.branchScope='all';                     % _t AND _c both need a BFI product
@@ -552,7 +552,7 @@ reg(end+1)=s;
 % ---- 10. vasomotion ---------------------------------------------------------
 s = base();
 s.id='vasomotion'; s.label='Vasomotion'; s.wrapper=@runVasomotion;
-s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';   % contrast-side BFI (_t_BFI or _s_BFI)
+s.inGlob='*_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';   % contrast-side BFI (_t_BFI or _s_BFI)
 s.gatingField='runVasomotion'; s.requires={'BFI'}; s.produces={'vasomotion'};
 s.branch='contrast';
 s.settingGroups={ 'Bands',{'vFR','cFR','wFR','wVPO'};
@@ -589,7 +589,7 @@ reg(end+1)=s;
 % ---- 11. pulsatility --------------------------------------------------------
 s = base();
 s.id='pulsatility'; s.label='Pulsatility'; s.wrapper=@runPulsatility;
-s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_c_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runPulsatility'; s.requires={'BFI','internalCycle'}; s.produces={'pulsatility'};
 s.branch='cardiac';
 s.settingGroups={ 'Harmonic model',{'nHarm'};
@@ -611,14 +611,14 @@ reg(end+1)=s;
 s = base();
 s.id='vesselTypes'; s.label='Vessel types'; s.wrapper=@setVesselTypes;
 s.arity='perAnimal';                                   % 2-D fNames row; col 1 = reference
-s.inGlob='*_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVesselTypes'; s.requires={'BFI','segmentation'}; s.produces={'vesselTypes'};
 s.artifacts={'_rep_vesseltypes.jpg'};                 % NEW in Session 3: the artery/vein
                                                       % map, painted or inherited - no
                                                       % legacy tail, it wrote none
 s.interactive=true;                                   % paint GUI (per-file skipped under useReference)
 s.branch=''; s.refBranch='cardiac';                   % paint target = the reference's _c
-s.branchScope='all';                                  % EVERY product of every member (launcher: 'Roi*_BFI_d.mat')
+s.branchScope='all';                                  % EVERY product of every member (launcher: 'Roi*_BFI_r.mat')
 s.fileOrder='ordered';                                % column 1 is the PAINT TARGET the rest
                                                       % inherit under useReference
 s.settingGroups={ 'Reference',{'useReference'} };
@@ -631,7 +631,7 @@ reg(end+1)=s;
 % ---- 13. vascularTree -------------------------------------------------------
 s = base();
 s.id='vascularTree'; s.label='Vascular tree'; s.wrapper=@setVascularTree;
-s.inGlob='*_c_BFI_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_c_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setVascularTree'; s.requires={'vesselTypes','pulsatility'}; s.produces={'hierarchy'};
 s.interactive=@(ss) ~(isfield(ss,'autoOnly') && isscalar(ss.autoOnly) && isequal(ss.autoOnly,true));
 s.branch='cardiac'; s.refBranch='cardiac';   % the hierarchy is derived on the _c side
@@ -652,7 +652,7 @@ s.id='myoVideo'; s.label='Video'; s.wrapper=@runMyographVideo;
 % recording's '_MYO' triplet; every myograph step after it appends to that one
 % triplet in place, which is why the product carries no stage flag.
 s.inGlob='*.avi'; s.outSuffix={'_MYO_d','_MYO_r','_MYO_s'}; s.outKind='new';
-s.outTransform=struct('from','.avi','to','_MYO_d.mat');
+s.outTransform=struct('from','.avi','to','_MYO_r.mat');
 s.gatingField='runMyographVideo'; s.requires={}; s.produces={'myograph'};
 s.modalities={'PMYO'}; s.branch='myograph';
 % 'myograph' rather than '': a branch-agnostic derived step is treated as
@@ -676,7 +676,7 @@ s.id='labChart'; s.label='LabChart'; s.wrapper=@runLabChart;
 % the video entry step it fills the product completely and the '.adicht' is never
 % opened again.
 s.inGlob='*.adicht'; s.outSuffix={'_MYO_d','_MYO_r','_MYO_s'}; s.outKind='new';
-s.outTransform=struct('from','.adicht','to','_MYO_d.mat');
+s.outTransform=struct('from','.adicht','to','_MYO_r.mat');
 s.gatingField='runLabChart'; s.requires={}; s.produces={'myograph'};
 s.modalities={'WMYO'}; s.branch='myograph';
 s.settingGroups={ 'What is read',{'records','channels'};
@@ -708,7 +708,7 @@ s.id='myoPresetIntervals'; s.label='Pre-set intervals'; s.wrapper=@setMyographPr
 % CHOSEN ON THE VIDEO, BEFORE ANY DIAMETER EXISTS: the diameter step then measures
 % only inside these windows and the product is only that long, which is what makes
 % measuring 20 minutes of a two-hour recording cost 20 minutes of memory.
-s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setMyographPresetIntervals'; s.requires={'myoVideo'};
 s.produces={'intervals'};
 s.interactive=true; s.needsRaw=true;                  % the recording IS the window
@@ -730,7 +730,7 @@ s.id='myoCrop'; s.label='Time crop'; s.wrapper=@setMyographCrop;
 % ONE window instead of several - the alternative to pre-set intervals.  It records
 % the decision; the diameter step is what reads only those frames.  CHANGING IT
 % AFTER A DIAMETER EXISTS MEANS MEASURING AGAIN, which the tooltip says out loud.
-s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setMyographCrop'; s.requires={'myoVideo'};
 s.produces={'timeCrop'};
 s.interactive=true; s.needsRaw=true;
@@ -751,21 +751,22 @@ reg(end+1)=s;
 % ---- 18. myoDiameter ---------------------------------------------------------
 s = base();
 s.id='myoDiameter'; s.label='Diameter'; s.wrapper=@runMyographDiameter;
-s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runMyographDiameter'; s.requires={'myoVideo'}; s.produces={'diameter'};
 s.needsRaw=true;                                      % it reads the video itself
 s.modalities={'PMYO'}; s.branch='myograph';
 s.settingGroups={ 'Vessel location',{'rowRange','wallContrast','minWallGap','wallProm','wall2Frac'};
                   'Image cleaning',{'smoothSigma','dustRadius','dustContrast','brightPrctile'};
                   'Wall measurement',{'edgeMode','subpixel','tau','searchWin'};
-                  'Smoothing & outliers',{'tSmoothHz','smoothSpan','tSpan','ySpan','outlierK'} };
+                  'Smoothing & outliers',{'tSmoothHz','smoothSpan','tSpan','ySpan','outlierK'};
+                  'What is kept',{'keepLines'} };
 s.basicFields={'rowRange','wallContrast','smoothSigma','dustRadius','tSmoothHz','minWallGap'};
 s.sharedKeys={'rowRange','libraryFolder'};
 s.enums=struct('edgeMode',{{'mid','outer','inner','min'}});
 s.presets=struct('default',struct('rowRange',[1 Inf],'wallContrast',0.05,'minWallGap',3, ...
     'wallProm',0.25,'wall2Frac',0.15,'smoothSigma',1.2,'dustRadius',8,'dustContrast',0.06, ...
     'brightPrctile',90,'edgeMode','mid','subpixel',true,'tau',0.85,'searchWin',[], ...
-    'tSmoothHz',1,'smoothSpan',15,'tSpan',25,'ySpan',31,'outlierK',3));
+    'tSmoothHz',1,'smoothSpan',15,'tSpan',25,'ySpan',31,'outlierK',3,'keepLines',true));
 s.tips=struct('rowRange','[first last] image row the vessel occupies', ...
     'wallContrast','how dark a wall must be, relative to the lumen, to count as one', ...
     'minWallGap','the smallest diameter that can be real, px', ...
@@ -775,7 +776,12 @@ s.tips=struct('rowRange','[first last] image row the vessel occupies', ...
     'tSmoothHz','the fastest the diameter is allowed to change, Hz', ...
     'edgeMode','which of the three diameters is plotted and analysed by default', ...
     'tSpan','window used to spot a diameter that jumps in time, frames', ...
-    'ySpan','window used to spot a diameter that jumps along the vessel, rows');
+    'ySpan','window used to spot a diameter that jumps along the vessel, rows', ...
+    'keepLines',['on: keep every line''s own diameter in the results, so the ' ...
+     'diameter can be looked at position by position and along the vessel over ' ...
+     'time.  Off keeps only the averaged trace and makes the results file far ' ...
+     'smaller']);
+s.labels=struct('keepLines','Keep every line''s diameter');
 reg(end+1)=s;
 
 % ---- 19. myoIntervals --------------------------------------------------------
@@ -784,7 +790,7 @@ s.id='myoIntervals'; s.label='Intervals'; s.wrapper=@setMyographIntervals;
 % THE WINDOWS THE ANALYSES RUN IN, defined on the diameter that has been measured -
 % which is what makes 'baseline', 'drug' and 'washout' three answers from one
 % recording instead of one average over all three.
-s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='setMyographIntervals'; s.requires={};
 % ONE STEP, TWO MYOGRAPHS, and requiresAny is what lets it be one: the producer
 % differs per modality, and because the Constructor works on a modality-FILTERED
@@ -819,7 +825,7 @@ reg(end+1)=s;
 % ---- 20. myoPropagation ------------------------------------------------------
 s = base();
 s.id='myoPropagation'; s.label='Propagation'; s.wrapper=@runMyographPropagation;
-s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runMyographPropagation'; s.requires={'myoDiameter'}; s.produces={'propagation'};
 s.modalities={'PMYO'}; s.branch='myograph';
 s.settingGroups={ 'Signal',{'diameterMeasures','vFR','detrendSec'};
@@ -845,7 +851,7 @@ reg(end+1)=s;
 % ---- 21. myoVasomotion -------------------------------------------------------
 s = base();
 s.id='myoVasomotion'; s.label='Vasomotion'; s.wrapper=@runMyographVasomotion;
-s.inGlob='*_MYO_d.mat'; s.outSuffix={}; s.outKind='inplace';
+s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
 s.gatingField='runMyographVasomotion'; s.requires={};
 % ONE STEP, TWO MYOGRAPHS - see the note on myoIntervals above.  The wrapper reads
 % the recording's own source.modality and iterates diameter measures or selected

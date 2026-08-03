@@ -92,7 +92,7 @@ s.libraryFolder=libraryFolder;
 %whole window (no region mask is written).
 
 %SET FILE NAMES HERE - GROUPED (rows = animal/FOV) so ROIs can carry within a group
-fNames=getFileNamesList(rootFolder,'*_c_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_K_r.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE (setRegions iterates the groups itself - no for-loop)
 setRegions(s,fNames);
@@ -128,7 +128,7 @@ s.simR=0.3; % minimal similarity ratio between branches to be considered the sam
 s.difR=0.4; % minimal difference ratio to be considered different vessels
 
 %SET FILE NAMES HERE - FLAT (order-independent; grouping was setRegions' job in STEP 2)
-fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 runSegmentation(s, fNames(:));
@@ -142,7 +142,7 @@ s.libraryFolder=libraryFolder;
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE (crops each file by its own regionsMask -> RoiN_ files)
 splitRegions(s,fNames(:));
@@ -174,7 +174,7 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE (after STEP 4 this pattern also matches the RoiN_ crops)
-fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 runDynamicSegmentation(s, fNames(:));
@@ -192,7 +192,7 @@ s.matchSegmentation=true;
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_K_d.mat','[A-Z]+\d+');
+fNames=getFileNamesList(rootFolder,'*_c_K_r.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -211,7 +211,7 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 runBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -233,7 +233,7 @@ s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel marker maps ON
                         % also fit every masked pixel (large full-resolution cubes).
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 runPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -246,13 +246,13 @@ s.libraryFolder=libraryFolder;
 %%IF DOING IT FILE BY FILE
 % s.useReference=false;
 % s.refFName=''; %use '' instead of " "
-%fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 %setVesselTypes(s,fNames(:));
 
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_BFI_d.mat','[A-Z]+\d+','1BP_c_BFI_d\.mat');
+fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat','[A-Z]+\d+','1BP_c_BFI_r\.mat');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -262,7 +262,7 @@ end
 
 %% STEP 10 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 %INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
 %same routine (pick files / a folder / a workbench session, choose the parameters and
 %the averaging, write one workbook per recording or one merged workbook for statistics)

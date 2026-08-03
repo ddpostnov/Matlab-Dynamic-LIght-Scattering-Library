@@ -302,7 +302,7 @@ end
 % =====================================================================
 function tf = outputExists(model)
 %outputExists  Whether the recording already has an exported workbook on disk.
-%   exportToExcel writes '<input>_d.mat' -> '<input>.xlsx', so any
+%   exportToExcel writes '<input>_r.mat' -> '<input>.xlsx', so any
 %   '<identity>*.xlsx' next to the recording means export has run.
 tf = false;
 if isempty(model.folder) || ~isfolder(model.folder), return; end

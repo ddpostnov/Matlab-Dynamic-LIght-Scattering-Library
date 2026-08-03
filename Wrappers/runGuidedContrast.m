@@ -26,11 +26,11 @@
 % Inputs:
 %    s         - parameter struct (uses s.libraryFolder for traceability;
 %                optional s.memoryCoef, fraction of free RAM to use, default 0.25).
-%    fNames    - cell array of segmented *_K_d.mat (or *_I_d.mat) paths; the
-%                companion *_r.mat must already contain results.sMap.
+%    fNames    - cell array of segmented *_K_r.mat (or *_I_r.mat) paths; each must
+%                already contain results.sMap.
 %    fNamesRaw - (optional) cell array of the matching raw recordings (.rls or
 %                .cxd), same size as fNames.  If omitted or left empty, the raw
-%                file name is derived from each *_d.mat name and expected in the
+%                file name is derived from each *_r.mat name and expected in the
 %                same folder (just like the rest of the pipeline).
 %    Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %    s.cancelFcn()->tf.
@@ -42,7 +42,7 @@
 %
 % Example:
 %    s.libraryFolder = libraryFolder;
-%    fNames = getFileNamesList(rootFolder,'*_t_K_d.mat');
+%    fNames = getFileNamesList(rootFolder,'*_t_K_r.mat');
 %    runGuidedContrast(s,fNames(:));
 %
 % Dependencies: getPointerRLS (.rls); Bio-Formats bfGetReader/bfGetPlane (.cxd).
@@ -60,8 +60,10 @@
 
 function runGuidedContrast(s,fNames,fNamesRaw)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_t_K_r.mat'').']);
 end
 if nargin<3 || isempty(fNamesRaw)
     fNamesRaw=deriveRawNames(fNames);
@@ -81,15 +83,15 @@ for fidx=1:1:numel(fNames)
         reportFile(rep,fidx,s.fName);
         clearvars results settings
 
-        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
 
         if ~isfield(results,'sMap')
             error('Reference results file is missing sMap. Run runSegmentation first.');
         end
         if ~isfile(s.fNameRaw)
             error(['Raw recording not found: ',s.fNameRaw,newline,...
-                'Place it next to the *_d.mat file or pass fNamesRaw explicitly.']);
+                'Place it next to the *_r.mat file or pass fNamesRaw explicitly.']);
         end
 
         % Indicator matrix of valid pixels per region (same sMap index AND kept
@@ -145,8 +147,8 @@ for fidx=1:1:numel(fNames)
         s.rawFrameRate=1./median(diff(results.gsTime));
         settings.runGuidedContrast=reportSettings(s);
         reportWriting(rep);
-        save(strrep(s.fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
-        save(strrep(s.fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
+        save(s.fName,'results','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end
@@ -155,16 +157,16 @@ end
 
 %------------- LOCAL FUNCTIONS --------------
 function fNamesRaw=deriveRawNames(fNames)
-% Map each segmented *_d.mat name to its raw recording in the same folder.
+% Map each segmented *_r.mat name to its raw recording in the same folder.
 fNamesRaw=cell(size(fNames));
 for i=1:1:numel(fNames)
     f=fNames{i};
     if isempty(f), fNamesRaw{i}=''; continue; end
-    if contains(f,'_I_d.mat')
-        fNamesRaw{i}=regexprep(f,'_I_d\.mat$','.cxd');   % intensity pipeline -> .cxd
+    if contains(f,'_I_r.mat')
+        fNamesRaw{i}=regexprep(f,'_I_r\.mat$','.cxd');   % intensity pipeline -> .cxd
     else
-        r=regexprep(f,'_[a-z]_K_d\.mat$','.rls');        % contrast pipeline -> .rls
-        if strcmp(r,f), r=regexprep(f,'_K_d\.mat$','.rls'); end
+        r=regexprep(f,'_[a-z]_K_r\.mat$','.rls');        % contrast pipeline -> .rls
+        if strcmp(r,f), r=regexprep(f,'_K_r\.mat$','.rls'); end
         fNamesRaw{i}=r;
     end
 end

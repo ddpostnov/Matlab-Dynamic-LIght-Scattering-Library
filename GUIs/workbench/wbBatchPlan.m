@@ -351,7 +351,7 @@ end
 function [fNames, copyTo, rawNames] = shapeByAnimal(units, step)
 %shapeByAnimal  ROWS = ANIMALS.  A wrapper that carries state across the columns
 %   of a row (setRegions and its ROIs) needs the row to BE the animal, which is
-%   what the launcher's getFileNamesList(root,'*_t_K_d.mat','[A-Z]+\d+') hands it.
+%   what the launcher's getFileNamesList(root,'*_t_K_r.mat','[A-Z]+\d+') hands it.
 %   Rows are the runs of adjacent units sharing an animal - the run order groups an
 %   animal's recordings together, so this never reorders anything - and ragged rows
 %   are padded with '' (setRegions skips empty cells).
@@ -415,7 +415,7 @@ function [files, copies, raws, ok, why] = entryFiles(step, models, cstage, refPa
 %
 %   perAnimal - the animal's members in order, each contributing as many branch
 %   products as branchScope asks for ('one' the stage-preferred file, 'all' every
-%   product, which is the launcher's branch-wide 'Roi*_K_d.mat' cell).  refPath,
+%   product, which is the launcher's branch-wide 'Roi*_K_r.mat' cell).  refPath,
 %   when the host resolved one, IS the first file: the branch of the pinned
 %   reference recording the step declared through refBranch.  A member with no
 %   input on disk means the animal is not ready, so the whole entry waits.
@@ -475,7 +475,7 @@ end
 
 % =====================================================================
 function [p, fenced] = resolveStepInputs(model, step, cstage, ctx)
-%resolveStepInputs  EVERY concrete _d.mat (or raw) file this step could consume for
+%resolveStepInputs  EVERY concrete _r.mat (or raw) file this step could consume for
 %   this recording, ORDERED with the stage-preferred branch first.  Located by base
 %   name + the step's input glob and filtered to this recording's identity AND to
 %   the session's own working set (ctx.admits - see the header); mirrors
@@ -495,7 +495,7 @@ if isempty(step.requires) && ~contains(step.inGlob,'.mat')
     return
 end
 
-tail = regexprep(step.inGlob,'^\*','');                  % '_K_d.mat' | '_BFI_d.mat' | '_c_BFI_d.mat'
+tail = regexprep(step.inGlob,'^\*','');                  % '_K_r.mat' | '_BFI_r.mat' | '_c_BFI_r.mat'
 base = [model.roiPrefix model.stem];
 d = dir(fullfile(model.folder,[base '*' tail]));
 if isempty(d), return; end

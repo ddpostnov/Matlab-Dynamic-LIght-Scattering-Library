@@ -1,7 +1,7 @@
 %splitRegions  Crop LSCI result files into separate ROI-specific datasets
 %
 %   splitRegions(s,fNames) looks for a binary/label mask called
-%   results.regionsMask in every *_d.mat file listed in fNames.  For each
+%   results.regionsMask in every *_r.mat file listed in fNames.  For each
 %   non-zero region ID the function:
 %       • crops every image-sized variable in RESULTS and SOURCE
 %       • writes three new MAT-files whose names are prefixed with 'RoiN_'
@@ -17,7 +17,7 @@
 %                • deleteOriginal   logical flag (true/false)
 %                • libraryFolder    path to toolbox root (not used here but
 %                                   stored in SETTINGS for traceability)
-%     fNames   cell array of full paths to *_d.mat files produced by the
+%     fNames   cell array of full paths to *_r.mat files produced by the
 %              LSCI pipelines.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf.
@@ -30,7 +30,7 @@
 %
 %   EXAMPLE
 %     p.deleteOriginal = false;
-%     D = dir(fullfile(dataRoot,'*_K_d.mat'));
+%     D = dir(fullfile(dataRoot,'*_K_r.mat'));
 %     splitRegions(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -51,8 +51,10 @@
 
 function splitRegions(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain ".mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_K_r.mat'').']);
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -66,9 +68,9 @@ for fidx=1:1:numel(fNames)
         s.fName=fNames{fidx};
         reportFile(rep,fidx,s.fName);
         clearvars results source settings
-        load(s.fName,'source')
-        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'d'),'source')
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
 
         resultsIni=results;
         sourceIni=source;
@@ -133,15 +135,15 @@ for fidx=1:1:numel(fNames)
             settings.splitRegions=reportSettings(s);
             [path,name,extension]=fileparts(fNames{fidx});
             fName = fullfile(path,['Roi' num2str(ridx) '_' name extension]);
-            save(fName,'source','-v7.3','-nocompression');
-            save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-            save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+            save(getProductPath(fName,'d'),'source','-v7.3','-nocompression');
+            save(fName,'results','-v7.3','-nocompression');
+            save(getProductPath(fName,'s'),'settings','-v7.3','-nocompression');
         end
         reportSaved(rep);
         if s.deleteOriginal
-            delete(fNames{fidx});
-            delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
-            delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
+            delete(getProductPath(s.fName,'d'));
+            delete(getProductPath(s.fName,'s'));
+            delete(s.fName);
         end
     end
 end

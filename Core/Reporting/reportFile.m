@@ -2,7 +2,7 @@
 %
 %   The first of the three lines a wrapper emits per recording:
 %
-%       Starting Contrast on Mouse1_t_K_d.mat
+%       Starting Contrast on Mouse1_t_K_r.mat
 %
 %   It names the PROCEDURE and the FILE AS IT IS ON DISK - name and extension,
 %   from fileparts, never a path and never a stem with the role suffix chopped
@@ -27,8 +27,8 @@
 %    None - the line is emitted and rep's state Map is updated in place.
 %
 % Example:
-%    reportFile(rep, 3, 'D:\data\Mouse1_t_K_d.mat');
-%    % -> Starting Contrast on Mouse1_t_K_d.mat
+%    reportFile(rep, 3, 'D:\data\Mouse1_t_K_r.mat');
+%    % -> Starting Contrast on Mouse1_t_K_r.mat
 %
 % See also: reportOpen, reportWriting, reportSaved, reportSave, reportClose
 %
@@ -56,7 +56,7 @@ end
 % =====================================================================
 function n = shortName(f)
 %shortName  Name and extension - what the user sees on disk.  fileparts, not a
-%   split on a backslash, and the extension is kept: 'Mouse1_t_K_d.mat' is a file,
+%   split on a backslash, and the extension is kept: 'Mouse1_t_K_r.mat' is a file,
 %   'Mouse1_t_K_d' is a guess at one.
 [~,b,e] = fileparts(char(f));
 n = [b e];

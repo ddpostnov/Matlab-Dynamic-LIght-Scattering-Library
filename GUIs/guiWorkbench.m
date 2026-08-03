@@ -676,8 +676,8 @@ t = sprintf(['Which file names to look for.  * stands for any text.\n' ...
     '   *.rls           raw speckle recordings\n' ...
     '   *.avi           myograph videos\n' ...
     '   *.adicht        LabChart recordings\n' ...
-    '   *_t_K_d.mat     contrast files\n' ...
-    '   *_BFI_d.mat     blood flow files\n' ...
+    '   *_t_K_r.mat     contrast files\n' ...
+    '   *_BFI_r.mat     blood flow files\n' ...
     'The five boxes below work differently - they are search patterns, not names.']);
 end
 function f = recordingFilter()
@@ -3134,7 +3134,7 @@ function [rows, animalNames, modelArr] = flattenDisc(disc)
 %flattenDisc  Discovery grid -> flat rows in animal-major, reference-first order.
 %   ONE ROW PER RECORDING IDENTITY.  A recording can own several branch products
 %   with the SAME identity (e.g. a _t_K and a _c_K from one .rls), so a glob that
-%   matches more than one branch (*_K_d.mat) would otherwise emit duplicate rows.
+%   matches more than one branch (*_K_r.mat) would otherwise emit duplicate rows.
 %   The first model seen anchors the row; every step still resolves its own branch
 %   file on disk (wbExecutor), and the disk state unions all of the recording's
 %   _s files (wbStateEngine), so the anchor branch does not change what runs.  In
@@ -3343,11 +3343,11 @@ end
 function m = branchModelOf(identity, branch)
 %branchModelOf  ANY data file of one recording sitting on one pipeline ([] if the
 %   pipeline has produced nothing yet).  Which file does not matter: wbStateEngine
-%   unions the settings ALONG the pipeline, so '_t_K_d' and '_t_BFI_d' give the
+%   unions the settings ALONG the pipeline, so '_t_K_r' and '_t_BFI_r' give the
 %   same answer - and asking for a fixed one would break the moment a step deleted
 %   its original (runBFI's deleteOriginal).
 m = [];
-d = dir([identity '*_d.mat']);
+d = dir([identity '*_r.mat']);
 for i = 1:numel(d)
     cm = wbFileModel(fullfile(d(i).folder, d(i).name));
     if strcmp(cm.identity, identity) && strcmp(cm.branch, branch), m = cm; return; end
@@ -5038,7 +5038,7 @@ function files = wipeTargets(app)
 %   between the identity and the role.
 %
 %   THE IDENTITY IS THE FENCE, and it is matched as a whole rather than globbed:
-%   'Foo' must not carry away 'Foo2_t_K_d.mat', so the directory listing is filtered
+%   'Foo' must not carry away 'Foo2_t_K_r.mat', so the directory listing is filtered
 %   by ^<identity>(_...)?_[drs]\.mat$ .  A raw recording (.rls/.avi/...) can never
 %   match that shape, which is why the raw data is safe by construction rather than
 %   by a list of extensions to spare.

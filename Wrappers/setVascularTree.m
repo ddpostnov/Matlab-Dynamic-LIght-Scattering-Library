@@ -1,8 +1,8 @@
 %setVascularTree  Derive & edit the vascular parent-daughter hierarchy
 %
 %   setVascularTree(s,fNames) is the logical post-processing step that
-%   follows setVesselTypes.  For every *_BFI_d.mat dataset in fNames it
-%   loads the companion *_BFI_r.mat, automatically derives a
+%   follows setVesselTypes.  For every *_BFI_r.mat dataset in fNames it
+%   automatically derives a
 %   parent->daughter vascular hierarchy over the segmented vessels and
 %   parenchyma via the Core routine getVascularTree, stores the result in a
 %   self-describing schema, and - unless
@@ -69,15 +69,15 @@
 %                                 is still derived + editable.  Use this to
 %                                 carry the pulsatility-derived hierarchy to
 %                                 a registered vasomotion "_t" partner.
-%                • refFName       path to the reference *_BFI_d.mat (the
-%                                 pulsatility "_c" file, whose *_BFI_r.mat
-%                                 already holds results.hierarchy).
+%                • refFName       path to the reference *_BFI_r.mat (the
+%                                 pulsatility "_c" file, which already holds
+%                                 results.hierarchy).
 %                • propagatePartners  cellstr of recording-variant letters;
 %                                 after a "_c" file is derived, the hierarchy
 %                                 is auto-copied to sibling recordings whose
 %                                 name has _c_BFI replaced by _<L>_BFI, when
 %                                 they exist.  Default {'t','s'}; {} disables.
-%     fNames   cell array of *_BFI_d.mat paths.
+%     fNames   cell array of *_BFI_r.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
 %     s.cancelFcn()->tf (between files).
 %
@@ -91,7 +91,7 @@
 %
 %   EXAMPLE
 %     s.autoOnly = false;
-%     D = dir(fullfile(dataRoot,'*_c_BFI_d.mat'));
+%     D = dir(fullfile(dataRoot,'*_c_BFI_r.mat'));
 %     setVascularTree(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -124,17 +124,19 @@
 % s.bridgeTipRadius=50; % px gap searched from the vessel ends (0 = off)
 % s.bridgeWallRadius=0; % px gap searched from the vessel sides (usually 0)
 % %SET FILE NAMES HERE
-% fNames=getFileNamesList(rootFolder,'*_c_BFI_d.mat');
+% fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat');
 % setVascularTree(s,fNames(:));
 % %OPTIONAL - carry the hierarchy to the registered vasomotion "_t" partner
 % %(no pulse timing there, so inherit instead of deriving):
-% % s.useReference=true; s.refFName=fNames{1}; % the matching _c_BFI_d.mat
-% % setVascularTree(s, getFileNamesList(rootFolder,'*_t_BFI_d.mat'));
+% % s.useReference=true; s.refFName=fNames{1}; % the matching _c_BFI_r.mat
+% % setVascularTree(s, getFileNamesList(rootFolder,'*_t_BFI_r.mat'));
 
 function setVascularTree(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_BFI_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_c_BFI_r.mat'').']);
 end
 
 % ---- defaults ----------------------------------------------------------
@@ -179,14 +181,14 @@ for fidx=1:1:numel(fNames)
         s.fName=fNames{fidx};
         reportFile(rep,fidx,s.fName);
         clearvars results settings
-        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
 
         if s.useReference && ~isempty(s.refFName) && ~strcmp(s.fName,s.refFName)
             % ---- reference mode: inherit hierarchy from the reference ----
             % (the reference must share the segmentation - guaranteed within a
             % registered group; parent/daughter ids are segment idx, valid as-is)
-            ref=load(strrep(s.refFName,'_d.mat','_r.mat'),'results');
+            ref=load(getProductPath(s.refFName,'r'),'results');
             if ~isfield(ref.results,'hierarchy')
                 error('Reference file has no results.hierarchy - run setVascularTree on the reference first.');
             end
@@ -208,8 +210,8 @@ for fidx=1:1:numel(fNames)
 
         settings.setVascularTree=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(s.fName,'results','-v7.3','-nocompression');
+        save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
 
         % auto-propagate the hierarchy to registered partner recordings
@@ -232,10 +234,9 @@ function propagateToPartners(H,s)
 parts=s.propagatePartners; if ischar(parts), parts={parts}; end
 for i=1:numel(parts)
     L=parts{i};
-    partnerD=strrep(s.fName,'_c_BFI',['_' L '_BFI']);
-    if strcmp(partnerD,s.fName), continue; end
-    partnerR=strrep(partnerD,'_d.mat','_r.mat');
-    partnerS=strrep(partnerD,'_d.mat','_s.mat');
+    partnerR=strrep(s.fName,'_c_BFI',['_' L '_BFI']);
+    if strcmp(partnerR,s.fName), continue; end
+    partnerS=getProductPath(partnerR,'s');
     if exist(partnerR,'file')~=2, continue; end
     pr=load(partnerR,'results'); presults=pr.results;
     if ~isequal(size(presults.sMap),H.imgSize)

@@ -27,7 +27,7 @@
 %
 % Inputs:
 %    root         - folder searched recursively (structured/folder).
-%    glob         - dir() glob, e.g. '*_c_K_d.mat'.
+%    glob         - dir() glob, e.g. '*_c_K_r.mat'.
 %    animalRegexp - regexp extracting the animal id (e.g. '[A-Z]+\d+'); empty ->
 %                   a single animal row.
 %    refRegexp    - regexp pinning the reference file into column 1 (structured).

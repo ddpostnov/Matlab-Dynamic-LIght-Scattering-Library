@@ -58,14 +58,14 @@ fNamesRaw=getFileNamesList(rootFolder,'*.avi'); %the RAW recordings
 runMyographVideo(s,fNamesRaw(:));
 
 %from here on every step takes the PRODUCT, not the recording
-fNames=getFileNamesList(rootFolder,'*_MYO_d.mat');
+fNames=getFileNamesList(rootFolder,'*_MYO_r.mat');
 
 %WIRE MYOGRAph VARIANT - a LabChart recording instead of a video:
 % s.records=[]; %which LabChart records to read; [] reads all of them
 % s.channels={}; %names of the channels to keep; {} keeps every channel with samples
 % fNamesRaw=getFileNamesList(rootFolder,'*.adicht');
 % runLabChart(s,fNamesRaw(:));
-% fNames=getFileNamesList(rootFolder,'*_MYO_d.mat');
+% fNames=getFileNamesList(rootFolder,'*_MYO_r.mat');
 
 
 %% STEP 2 (OPTIONAL, INTERACTIVE) Crop the recording in time
@@ -123,6 +123,9 @@ s.minWallGap=3; %smallest diameter that can be real, px
 s.tSpan=25; %temporal outlier-rejection window, frames
 s.ySpan=31; %along-vessel outlier-rejection window, rows
 s.outlierK=3; %outlier rejection threshold, in standard deviations
+
+%ADJUSTED IF NECESSARY - WHAT IS KEPT
+s.keepLines=true; %keep every line's own diameter beside the averaged trace, so the diameter can be looked at position by position. false keeps the trace alone and makes the results file far smaller
 
 %RUN THE PROCESSING ROUTINE
 runMyographDiameter(s,fNames(:),fNamesRaw(:));

@@ -2,14 +2,22 @@
 %
 %   intervals = cutMyographSource(source,ivT,names) turns a set of time windows into
 %   the results.intervals elements the myograph result tree holds: each window's frame
-%   range into source.time, and its LINE-AVERAGED diameter traces and statistics.
+%   range into source.time, its per-line diameter, its line-AVERAGED traces and the
+%   statistics a protocol is compared on.
 %
-%   THE PER-LINE ARRAYS ARE NOT COPIED.  They live once, in source; an interval
-%   carries the range into them (.frames) plus the averaged trace of each measure,
-%   which is what every consumer downstream reads.  Averaging is over the MEASURED
-%   rows only (source.rowRange): the rows outside it were never measured and carry an
-%   interpolated fill, and averaging them in would drag the trace towards the edge of
-%   the vessel.
+%   THE SHAPE IS runMyographDiameter'S, BECAUSE IT IS THE SAME THING - the diameter of
+%   this window - and moving a boundary must not change what a window contains.  So
+%   .diameter.lines.<measure> is written here too: a window rebuilt after an edit that
+%   carried only the trace would silently drop the measurement the trace was made of,
+%   halfway down a pipeline that had it a moment earlier.  Everything is taken over
+%   the MEASURED rows only (source.rowRange): the rows outside were never measured and
+%   carry an interpolated fill, and averaging them in would drag the trace towards the
+%   edge of the vessel.
+%
+%   (runMyographDiameter can be told not to keep the arrays, with s.keepLines false.
+%   That setting is not visible from here - this function is handed a source and a set
+%   of boundaries, nothing else - and the wrong way to guess is the one that loses a
+%   measurement, so they are always written.)
 %
 %   EVERY ELEMENT IS REBUILT FROM THE BOUNDARIES AS THEY NOW STAND, and no attempt is
 %   made to match a window against a previously stored one.  A window still called
@@ -203,18 +211,22 @@ end
 
 % =====================================================================
 function d=diameterBranch(source,idx,rows,meas)
-%diameterBranch  One window's own trace: each measure LINE-AVERAGED over the rows
-%   that were really measured, plus the statistics a protocol is compared on.  Same
-%   shape runMyographDiameter writes, because it is the same thing - the diameter of
-%   this window - and every consumer reads it by that shape.
-d=struct('time',[],'nY',numel(rows),'stats',struct());
+%diameterBranch  One window's own diameter: every line's own over the rows that were
+%   really measured, the same numbers averaged along the vessel, and the statistics a
+%   protocol is compared on.  Same shape runMyographDiameter writes, because it is the
+%   same thing - the diameter of this window - and every consumer reads it by that
+%   shape.  The field ORDER matches it too, so a window cut here and a window measured
+%   there are the same struct and not merely equivalent ones.
+d=struct('time',[],'nY',numel(rows),'lines',struct(),'stats',struct());
 d.time=double(source.time(idx)); d.time=d.time(:);
 valid=fieldOr(source,'valid',[]);
 if isempty(valid), valid=true(numel(idx),1); else, valid=logical(valid(idx)); valid=valid(:); end
 mask=[];
 if ~isempty(fieldOr(source,'mask',[])), mask=source.mask(idx,rows); end
 for m=1:1:numel(meas)
-    trace=mean(double(source.data(idx,rows,m)),2,'omitnan');
+    lines=single(source.data(idx,rows,m));      % source.data is already single
+    d.lines.(meas{m})=lines;
+    trace=mean(double(lines),2,'omitnan');
     d.(meas{m})=trace;
     d.stats.(meas{m})=traceStats(trace,valid,mask);
 end

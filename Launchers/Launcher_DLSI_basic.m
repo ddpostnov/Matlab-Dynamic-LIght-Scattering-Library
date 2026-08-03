@@ -108,17 +108,16 @@ s.spatialDS=1;      %>1 (e.g. 2 or 4) spatially downsamples for a quick test - f
 s.parforFit=true;   %false fits the pixels one at a time in this MATLAB and starts no parallel pool
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_g_d.mat'); %the g2 sources written by STEP 1
+fNames=getFileNamesList(rootFolder,'*_g_r.mat'); %the g2 products written by STEP 1
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
-    dName=fNames{i,1};
-    fprintf('STEP 2 - fit %d/%d: %s\n',i,size(fNames,1),dName);
+    rName=fNames{i,1};
+    fprintf('STEP 2 - fit %d/%d: %s\n',i,size(fNames,1),rName);
 
     %load the g2 source and the existing results/settings (STEP 1) to augment them
-    load(dName,'source');
-    base=regexprep(dName,'_g_d\.mat$','');
-    rName=[base '_g_r.mat']; sName=[base '_g_s.mat'];
+    load(getProductPath(rName,'d'),'source');
+    sName=getProductPath(rName,'s');
     if isfile(rName), load(rName,'results');  else, results  = struct(); end
     if isfile(sName), load(sName,'settings'); else, settings = struct(); end
     fps=1/(source.lags(2)-source.lags(1));
@@ -158,11 +157,10 @@ close all
 clearvars -except fNames libraryFolder rootFolder
 
 %SET FILE NAME HERE (defaults to the first g2 source found)
-fNames=getFileNamesList(rootFolder,'*_g_d.mat');
-dName=fNames{1,1};
-base=regexprep(dName,'_g_d\.mat$','');
-load([base '_g_r.mat'],'results');
-load([base '_g_s.mat'],'settings');
+fNames=getFileNamesList(rootFolder,'*_g_r.mat');
+rName=fNames{1,1};
+load(rName,'results');
+load(getProductPath(rName,'s'),'settings');
 mName=['m',settings.fitDLSI.type];   %the model fitted in STEP 2
 model=results.(mName);
 

@@ -118,7 +118,7 @@ end
 
 % =====================================================================
 function t = globTail(step)
-%globTail  '_K_d.mat' / '_BFI_d.mat' - the step's input glob without its wildcard.
+%globTail  '_K_r.mat' / '_BFI_r.mat' - the step's input glob without its wildcard.
 t = '';
 if isstruct(step) && isfield(step,'inGlob'), t = regexprep(char(step.inGlob),'^\*',''); end
 end

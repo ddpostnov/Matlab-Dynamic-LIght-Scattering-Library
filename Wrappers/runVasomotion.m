@@ -1,6 +1,6 @@
 %runVasomotion  Wavelet analysis of vasomotion amplitude and its dynamics
 %
-%   runVasomotion(s,fNames) loads every *_BFI_d.mat file in fNames (the
+%   runVasomotion(s,fNames) loads every *_BFI_r.mat file in fNames (the
 %   blood-flow-index datasets produced by runBFI) and characterises the
 %   low-frequency oscillations of the signal with a continuous wavelet
 %   transform (analytic Morlet, 'amor').  For each spatial ROI (results
@@ -96,7 +96,7 @@
 %                                   branch: false runs the identical loop body
 %                                   serially in the client and starts no pool.  One
 %                                   field per loop, so the three can be set apart.
-%     fNames   cell array of *_BFI_d.mat paths.
+%     fNames   cell array of *_BFI_r.mat paths.
 %                • Optional workbench hooks in s (no-op when absent):
 %                  s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
 %                  between files, never inside the parfor.
@@ -172,7 +172,7 @@
 %     s.ppxVsmReturn={'bands'};          % LEAN per-pixel maps ON -> RESULTS.vasomotion.ppx ([] = off)
 %     s.ppxSegmentAveraging=[];          % TEMPORARY per-segment averaging demo (off)
 %     s.segVsmReturn={'bands','moments','series','clustering','reconstruction','spectrum'};
-%     files = dir(fullfile(dataRoot,'*_BFI_d.mat'));
+%     files = dir(fullfile(dataRoot,'*_BFI_r.mat'));
 %     runVasomotion(s, fullfile({files.folder}',{files.name}'));
 %
 %   DEPENDS ON
@@ -225,8 +225,10 @@
 
 function runVasomotion(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_BFI_d.mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_t_BFI_r.mat'').']);
 end
 
 %centring statistic used to normalise each signal into the relative fluctuation
@@ -327,10 +329,10 @@ for fidx=1:1:numel(fNames)
         reportFile(rep,fidx,s.fName);
         clearvars results source settings
         if ~isempty(s.ppxVsmReturn) || ~isempty(s.ppxSegmentAveraging)
-            load(s.fName,'source')
+            load(getProductPath(s.fName,'d'),'source')
         end
-        load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
-        load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
 
         %shared wavelet setup + ROOT axes for the results.time base (built once and
         %reused for every results.time-base signal + the per-pixel/averaging paths).
@@ -669,8 +671,8 @@ for fidx=1:1:numel(fNames)
 
         settings.runVasomotion=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(s.fName,'results','-v7.3','-nocompression');
+        save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 

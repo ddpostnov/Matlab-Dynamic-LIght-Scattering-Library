@@ -1,9 +1,9 @@
 %runMyographDiameter  Measure the vessel diameter of a pressure-myograph recording
 %
 %   runMyographDiameter(s,fNames) measures the outer, wall-centre and luminal
-%   diameter of every *_MYO_d.mat recording in fNames by reading its video, and
+%   diameter of every *_MYO_r.mat recording in fNames by reading its video, and
 %   writes the measured arrays into the recording's own _MYO triplet.  fNames is a
-%   cell array of *_MYO_d.mat paths; the wrapper iterates them itself, so there is
+%   cell array of *_MYO_r.mat paths; the wrapper iterates them itself, so there is
 %   no launcher for-loop.  The video is found beside the product, or handed over as
 %   the optional third argument.
 %
@@ -39,12 +39,34 @@
 %   s.edgeMode names the one this step PLOTS and the later steps analyse by default;
 %   it no longer selects what is measured.
 %
-%   LINE AVERAGES ARE THE INTERVAL'S TRACE.  results.intervals(k).diameter holds the
-%   line-AVERAGED trace of each measure, averaged over the measured rows only
-%   (s.rowRange): the rows outside it were never measured and carry an interpolated
-%   fill, and averaging them in would drag the trace towards the edge of the vessel.
-%   The full [frames x lines x 3] arrays live ONCE, in source; an interval carries
-%   its frame range into them.
+%   THE PER-LINE DIAMETER IS A RESULT, AND THE TRACE IS ITS POOLED FORM.  An
+%   interval's diameter block carries both, over the measured rows only (s.rowRange -
+%   the rows outside it were never measured and carry an interpolated fill, and
+%   averaging them in would drag the trace towards the edge of the vessel):
+%
+%     .lines.<measure>  [frames x lines] single - EVERY LINE'S OWN DIAMETER, the
+%                       measurement itself.  It is the exact analogue of a speckle
+%                       recording's sData [samples x segments]: one value per item per
+%                       sample, the item axis last, and the item count already
+%                       declared beside it as .nY.  It is stored as SINGLE because
+%                       that is what getMyographDiameter measures in - these are
+%                       positions in an 8-bit image, and a double copy would double
+%                       the file for precision that does not exist.
+%     .<measure>        [frames x 1] the same numbers averaged along the vessel: the
+%                       window's trace, what a protocol is compared on, and what
+%                       runMyographVasomotion and every export read.  It is written
+%                       rather than left to be re-derived, because it is the quantity
+%                       the protocol is defined in terms of.
+%
+%   The name is .lines because it reads as what it is beside its two siblings - the
+%   pooled trace .<measure> and the summary .stats.<measure> - and because 'line' is
+%   already the word the rest of the library uses for a row across the vessel.
+%
+%   s.keepLines false stores the trace alone, which is what every myograph result
+%   written before this step is.  It is a size decision and nothing else: the arrays
+%   are the bulk of the file (three measures over a 5000-frame, 480-line window are
+%   ~90 MB, against ~2 MB without them), and a protocol that only ever compares
+%   traces never reads them.
 %
 %   INPUTS
 %     s        parameter structure - everything getMyographDiameter takes.  Carried
@@ -56,9 +78,11 @@
 %                .dustRadius   size of the dark specks removed before detection, px
 %                .tSmoothHz    how fast the diameter is allowed to change, Hz
 %                .minWallGap   smallest diameter that can be real, px
+%                .keepLines    store every line's own diameter in the results as
+%                              well as the trace (default true)
 %              s.intervals / s.intervalNames / s.timeCrop are NOT read: the analysed
 %              span comes from the recording's own results (see above).
-%     fNames   cell array of *_MYO_d.mat paths.  Empty cells are skipped.
+%     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     fNamesRaw (optional) the matching raw recordings.  Omitted, each recording's
 %              own source.fName is used, and then the video sitting beside the
 %              product with the same stem.
@@ -69,14 +93,14 @@
 %     <name>_MYO_d.mat   source.time replaced by the analysed span; source.data,
 %                        .wallL, .wallR (all [T x nY x 3]), .mask [T x nY],
 %                        .valid [T x 1], .measures and .rowRange written
-%     <name>_MYO_r.mat   results.intervals(k).frames and .diameter (.time, .outer,
-%                        .mid, .inner, .stats.<measure>, .nY)
+%     <name>_MYO_r.mat   results.intervals(k).frames and .diameter (.time, .nY,
+%                        .lines.<measure>, .outer, .mid, .inner, .stats.<measure>)
 %     <name>_MYO_s.mat   settings.runMyographDiameter = s
 %
 %   EXAMPLE
 %     s.rowRange     = [40 440];
 %     s.wallContrast = 0.05;
-%     D = dir(fullfile(rootFolder,'*_MYO_d.mat'));
+%     D = dir(fullfile(rootFolder,'*_MYO_r.mat'));
 %     runMyographDiameter(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -101,11 +125,15 @@
 % s.smoothSigma=1.2;      % Gaussian pre-smoothing, px
 % s.dustRadius=8;         % dark specks up to this size are removed (0 = off)
 % s.tSmoothHz=1;          % the diameter cannot change faster than this, Hz
+% %ADJUSTED IF NECESSARY - What is kept
+% s.keepLines=true;       % keep every line's own diameter, not only the trace
 
 function runMyographDiameter(s,fNames,fNamesRaw)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_MYO_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_MYO_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_MYO_r.mat'').']);
 end
 if nargin<3, fNamesRaw={}; end
 
@@ -152,7 +180,7 @@ for fidx=1:1:numel(fNames)
 
     % ---- RESULTS: each interval's frame range into that span, and its traces ------
     rows=measuredRows(sCore.rowRange,size(source.data,2));
-    results.intervals=fillIntervals(asked,ivs,rows);
+    results.intervals=fillIntervals(asked,ivs,rows,wantLines(sFile));
 
     settings.runMyographDiameter=reportSettings(sFile);
 
@@ -202,7 +230,7 @@ end
 end
 
 % =====================================================================
-function out=fillIntervals(asked,ivs,rows)
+function out=fillIntervals(asked,ivs,rows,keepLines)
 %fillIntervals  One results.intervals element per measured interval: its frame range
 %   into the span source.time now holds, and its line-averaged traces + statistics.
 %   WITH NO INTERVALS DEFINED the whole span is a single interval, named for what it
@@ -227,7 +255,7 @@ for k=1:1:numel(ivs)
         if n>0, out(k).tStart=ivs(k).time(1); out(k).tEnd=ivs(k).time(end); end
     end
     out(k).frames=[i0 i0+n-1];
-    out(k).diameter=diameterBranch(ivs(k),rows);
+    out(k).diameter=diameterBranch(ivs(k),rows,keepLines);
     % the two analyses downstream are re-derived from the diameter that has just
     % been measured, so anything an earlier run left behind is now out of date
     out(k).propagation=[];
@@ -237,11 +265,22 @@ end
 end
 
 % =====================================================================
-function d=diameterBranch(iv,rows)
-%diameterBranch  The interval's own trace: each measure LINE-AVERAGED over the rows
-%   that were really measured, plus the statistics a protocol is compared on.
-%   The full per-line arrays are not copied here - they live once, in source.
-d=struct('time',[],'nY',0,'stats',struct());
+function d=diameterBranch(iv,rows,keepLines)
+%diameterBranch  The interval's own measurement: EVERY LINE'S OWN DIAMETER over the
+%   rows that were really measured, the same numbers averaged along the vessel, and
+%   the statistics a protocol is compared on.
+%
+%   THE TWO ARE ONE QUANTITY, and the pooled one is written rather than derived so a
+%   protocol never depends on a reader reproducing the reduction.  Only the rows in
+%   s.rowRange are stored, which is what makes size(.lines.<measure>,2) equal .nY by
+%   construction rather than by a consumer re-deriving the row range.
+%
+%   THE ARRAY IS THE FILLED ONE - the numbers the trace is the mean of, interpolated
+%   fill included.  NaN-ing the fill would make the pooled form of .lines disagree
+%   with .<measure> (measured on the reference recording: up to 1.19 px, 0.3%), and
+%   the two claiming to be one quantity is the whole point.  How much of the window
+%   was really measured is not lost: it is .stats.<measure>.measuredFraction.
+d=struct('time',[],'nY',0,'lines',struct(),'stats',struct());
 meas=iv.measures;
 r=rows(rows<=size(iv.diameter,2));
 if isempty(r), r=1:size(iv.diameter,2); end
@@ -249,10 +288,25 @@ d.time=iv.time(:);
 d.nY=numel(r);
 valid=logical(iv.valid(:));
 for m=1:1:numel(meas)
-    trace=mean(double(iv.diameter(:,r,m)),2,'omitnan');
+    lines=iv.diameter(:,r,m);                       % [frames x lines], as measured
+    if keepLines, d.lines.(meas{m})=single(lines); end
+    trace=mean(double(lines),2,'omitnan');
     d.(meas{m})=trace;
     d.stats.(meas{m})=traceStats(trace,valid,iv.mask(:,r));
 end
+% A run that did not keep them leaves no empty container behind: an absent .lines is
+% what every myograph result written before this step looks like, and it is what
+% tells a reader that the trace is the only form of the quantity in this file.
+if ~keepLines, d=rmfield(d,'lines'); end
+end
+
+% =====================================================================
+function tf=wantLines(s)
+%wantLines  Whether every line's own diameter is stored beside the trace.  DEFAULT
+%   ON, and absent counts as on: the arrays are the measurement, and a protocol
+%   written before the setting existed should get them rather than have to ask.
+v=fieldOr(s,'keepLines',true);
+if isempty(v), tf=true; else, tf=logical(v(1)); end
 end
 
 % =====================================================================
@@ -295,7 +349,7 @@ raw='';
 if numel(fNamesRaw)>=fidx && ~isempty(fNamesRaw{fidx}), raw=char(fNamesRaw{fidx}); end
 if isempty(raw) || ~isfile(raw), raw=char(fieldOr(source,'fName','')); end
 if isempty(raw) || ~isfile(raw)
-    [fPath,stem]=fileparts(regexprep(fName,'_MYO_d\.mat$',''));
+    [fPath,stem]=fileparts(regexprep(fName,'_MYO_[drs]\.mat$',''));
     for ext={'.avi','.mp4','.mov','.mkv'}
         cand=fullfile(fPath,[stem ext{1}]);
         if isfile(cand), raw=cand; break; end

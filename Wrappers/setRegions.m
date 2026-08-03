@@ -48,8 +48,8 @@
 %                      the field changes nothing until it is asked for.
 %       .fNamesCopyTo  (optional, default {}) copies the drawn mask onto co-registered
 %                      siblings - see below.
-%     fNames   2-D cell array of *_K_d.mat / *_I_d.mat paths.  Rows = groups; each file
-%              must have matching *_s.mat and *_r.mat siblings.  Empty cells are skipped
+%     fNames   2-D cell array of *_K_r.mat / *_I_r.mat paths.  Rows = groups; each file
+%              must have matching *_d.mat and *_s.mat siblings.  Empty cells are skipped
 %              (ragged rows from getFileNamesList are fine).
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
 %     s.cancelFcn()->tf (checked between files).
@@ -62,7 +62,7 @@
 %       * ELEMENTWISE - a cell array THE SAME SIZE AS fNames, where element (g,c) holds
 %         the target(s) inheriting the mask drawn on fNames{g,c}, as one path (char) or
 %         several (nested cellstr).  This is the natural form for a grouped fNames, e.g.
-%         s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat').
+%         s.fNamesCopyTo = regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat').
 %       * ROW-PER-SOURCE - the runSegmentation convention: row i lists the targets for
 %         the i-th file of fNames in its own (column-major) order.
 %     Empty entries copy nowhere.  A target inherits results.regionsMask verbatim (and
@@ -81,8 +81,8 @@
 %
 %   EXAMPLE
 %     % draw on the temporal contrast, inherit onto the paired internal-cycle files
-%     fNames = getFileNamesList(root,'*_t_K_d.mat','[A-Z]+\d+');   % grouped, rows=animals
-%     s.fNamesCopyTo = regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+%     fNames = getFileNamesList(root,'*_t_K_r.mat','[A-Z]+\d+');   % grouped, rows=animals
+%     s.fNamesCopyTo = regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat');
 %     s.nRegions     = 1;      % one region per recording (omit for as many as you like)
 %     setRegions(s,fNames);
 %     % (skip this call entirely, or draw nothing, to segment the whole window)
@@ -101,8 +101,10 @@
 
 function setRegions(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_d.mat')|| contains(x,'_I_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat" or "_I_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_K_r.mat')|| contains(x,'_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_K_r.mat" or "_I_r.mat".  ' ...
+        'Every step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_t_K_r.mat'').']);
 end
 if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 s.nRegions=validNRegions(s);
@@ -124,16 +126,16 @@ for g=1:1:nGroups
         reportFile(rep,fIdx,fName);
         s.fName=fName;
         clearvars results settings source
-        load(strrep(fName,'_d.mat','_s.mat'),'settings');
-        load(strrep(fName,'_d.mat','_r.mat'),'results');
+        load(getProductPath(fName,'s'),'settings');
+        load(fName,'results');
 
         % --- mean image + modality (only needed for the working frame size / display) ---
-        isK=contains(fName,'_K_d.mat');
+        isK=contains(fName,'_K_r.mat');
         if isK
             if isfield(results,'imgK')
                 imgIni=results.imgK;
             else
-                load(fName,'source');
+                load(getProductPath(fName,'d'),'source');
                 imgIni=mean(source.data,3,'omitmissing');
                 clearvars source
             end
@@ -158,8 +160,8 @@ for g=1:1:nGroups
 
         settings.setRegions=reportSettings(s);
         reportWriting(rep);
-        save(strrep(fName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
-        save(strrep(fName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+        save(getProductPath(fName,'s'),'settings','-v7.3','-nocompression');
+        save(fName,'results','-v7.3','-nocompression');
         reportSaved(rep);
 
         % --- inherit the same regions on the co-registered siblings (s.fNamesCopyTo) ---
@@ -221,8 +223,8 @@ function copyRegionsOnto(s,targetName,regionsMask,rep,fIdx)
 %   It is a RECORDING OF ITS OWN, so it gets its own three lines.
 reportFile(rep,fIdx,targetName);
 clearvars results settings
-load(strrep(targetName,'_d.mat','_s.mat'),'settings');
-load(strrep(targetName,'_d.mat','_r.mat'),'results');
+load(getProductPath(targetName,'s'),'settings');
+load(targetName,'results');
 
 if isempty(regionsMask)
     if isfield(results,'regionsMask'), results=rmfield(results,'regionsMask'); end
@@ -239,8 +241,8 @@ writeRegionsReport(rep,targetName,targetImage(targetName,results),regionsMask);
 sT=s; sT.fName=targetName;
 settings.setRegions=reportSettings(sT);
 reportWriting(rep);
-save(strrep(targetName,'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
-save(strrep(targetName,'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
+save(getProductPath(targetName,'s'),'settings','-v7.3','-nocompression');
+save(targetName,'results','-v7.3','-nocompression');
 reportSaved(rep);
 end
 
@@ -249,11 +251,11 @@ function imgIni=targetImage(targetName,results)
 %targetImage  The copy target's own mean image - results.imgK / results.imgI when
 %   they are there, the source cube's time-mean when they are not.  Same rule the
 %   main loop uses for the file being edited.
-if contains(targetName,'_K_d.mat')
+if contains(targetName,'_K_r.mat')
     if isfield(results,'imgK')
         imgIni=results.imgK;
     else
-        src=load(targetName,'source');
+        src=load(getProductPath(targetName,'d'),'source');
         imgIni=mean(src.source.data,3,'omitmissing');
     end
 else

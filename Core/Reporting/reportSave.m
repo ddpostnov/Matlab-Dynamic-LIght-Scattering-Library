@@ -63,7 +63,7 @@
 % Example:
 %    fh = reportFigure(rep,'segments');
 %    ...
-%    reportSave(rep,fh,'segments');            % -> Mouse1_t_K_d_rep_segments.jpg
+%    reportSave(rep,fh,'segments');            % -> Mouse1_t_K_r_rep_segments.jpg
 %    reportSave(rep,fh,'regions',targetName);  % -> the SIBLING's _rep_regions.jpg
 %
 % See also: reportFigure, reportOpen, reportClose, makeReportPdf, exportgraphics

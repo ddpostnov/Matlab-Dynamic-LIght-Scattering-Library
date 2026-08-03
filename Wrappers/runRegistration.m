@@ -1,4 +1,4 @@
-%runRegistration  Rigid/affine registration of several *_K_d.mat datasets
+%runRegistration  Rigid/affine registration of several *_K_r.mat datasets
 %
 %   runRegistration(s,fNames) aligns every contrast cube in the cell
 %   array fNames to the first file in the list.  For each follower it
@@ -22,7 +22,7 @@
 %                                      override the smallest-Delta choice
 %                • rotationLimit       degrees; reject an intensity/correlation
 %                                      transform rotating > this ([]=no limit)
-%     fNames   cell array of *_K_d.mat paths.  First file is the template.
+%     fNames   cell array of *_K_r.mat paths.  First file is the template.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf (before work + between files).
 %
@@ -42,7 +42,7 @@
 %     p.metric      = met;
 %     p.tFormType   = 'affine';
 %     p.matchSegmentation = true;
-%     D = dir(fullfile(dataRoot,'*_K_d.mat'));
+%     D = dir(fullfile(dataRoot,'*_K_r.mat'));
 %     runRegistration(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -70,8 +70,10 @@
 % s.rotationLimit=45; % degrees; reject registrations rotating > 45 ([] = none)
 
 function runRegistration(s,fNames)
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_K_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_K_r.mat'').']);
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -142,8 +144,8 @@ for oidx=1:numel(procOrder)
     fidx=procOrder(oidx);
     if ~isempty(fNames{fidx})
         clearvars results source
-        load(fNames{fidx},'source');
-        load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
+        load(getProductPath(fNames{fidx},'d'),'source');
+        load(fNames{fidx},'results');
 
         img=mean(source.data,3);
         mask=ones(size(img));
@@ -295,9 +297,9 @@ for fidx=1:1:size(fNames,1)
 
     if ~isempty(fNames{fidx})
         reportFile(rep,fidx,fNames{fidx});
-        load(fNames{fidx},'source');
-        load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
-        load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
+        load(getProductPath(fNames{fidx},'d'),'source');
+        load(getProductPath(fNames{fidx},'s'),'settings');
+        load(fNames{fidx},'results');
         img=mean(source.data,3);
 
 
@@ -471,9 +473,9 @@ for fidx=1:1:size(fNames,1)
         settings.runRegistration=reportSettings(s);
         %Save the data
         reportWriting(rep);
-        save(fNames{fidx},'source','-v7.3','-nocompression');
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(getProductPath(fNames{fidx},'d'),'source','-v7.3','-nocompression');
+        save(fNames{fidx},'results','-v7.3','-nocompression');
+        save(getProductPath(fNames{fidx},'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

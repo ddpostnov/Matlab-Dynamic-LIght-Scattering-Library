@@ -54,6 +54,16 @@
 %   with, the axis falls back to linspace(0,100,n) and is marked .inferred - a
 %   non-default s.pcts must never be silently misread.
 %
+%   THIS IS THE ONE FILE THE EXPLORER OPENS BESIDE THE _r, AND IT IS MEANT TO STAY.
+%   D7 makes _r the whole of what the tool reads, and every other sibling read went
+%   with it - the _d.mat slices and the VideoReader frames alike.  This one is not
+%   of that kind: pcts is a SETTING, not data.  It is the x-axis of
+%   scalars.<band>.ampPct and it is not written into the results at all, so without
+%   it a percentile curve is drawn on an assumed 0:10:100 and a non-default run is
+%   silently misread.  The _d/_r/_s triplet guarantees the file is there, one
+%   dataset is read out of it rather than the file, and the fallback above marks the
+%   axis inferred when it is not.  Do not delete it under the _r-only rule.
+%
 %   SEG AND DVS ARE NOT COORDINATES.  A segment index is a label id: there is no
 %   meaningful "amplitude vs segment number" plot, and the tool must not offer one.
 %   They are registered with .ordered false and no .values, which is what tells
@@ -69,15 +79,12 @@
 %      exAxes('flush')
 %
 %   INPUTS
-%     results     the RESULTS member of a triplet, loaded; or the lazy handle
-%                 struct('x_lazy_',true,'x_path_',<file>), in which case the axis
-%                 vectors are read out of the HDF5 header and the file is never
-%                 loaded.
+%     results     the RESULTS member of a triplet, loaded.
 %     scopePath   dotted path of the sub-tree to resolve from, '' for the root.
 %                 Struct-array elements carry their index: 'intervals(2).vasomotion'.
 %     resultsPath the _r.mat this tree came from, so the sibling _s.mat can be
-%                 found for the percentile LEVELS.  Optional; taken from the lazy
-%                 handle when there is one.  Without it pctLevel is inferred.
+%                 found for the percentile LEVELS.  Optional; without it pctLevel is
+%                 inferred.
 %
 %   OUTPUTS
 %     A  struct whose FIELDS ARE THE AXIS NAMES present at that scope.  An axis
@@ -121,22 +128,13 @@ if nargin<3 || isempty(resultsPath), resultsPath = ''; end
 A = struct();
 if isempty(results) || ~isstruct(results) || ~isscalar(results), return; end
 
-lazy = isfield(results,'x_lazy_');
-if lazy
-    if isempty(resultsPath) && isfield(results,'x_path_'), resultsPath = char(results.x_path_); end
-    T = fileCache('tree', resultsPath);
-    if isempty(T), return; end
-else
-    T = [];
-end
-
 % ---- 1. the axes that are defined once, for the whole recording ---------------
-A = rootOnlyAxes(A, results, T);
+A = rootOnlyAxes(A, results);
 
 % ---- 2. the shared coordinate vectors, root first then every enclosing scope --
 scopes = [{''}, prefixesOf(scopePath)];
 for i = 1:numel(scopes)
-    A = absorbAt(A, results, T, scopes{i});
+    A = absorbAt(A, results, scopes{i});
 end
 
 % ---- 3. the percentile LEVELS, only now that we know whether they are wanted --
@@ -144,68 +142,66 @@ A = fillPctLevel(A, resultsPath);
 end
 
 % =====================================================================
-function A = rootOnlyAxes(A, R, T)
+function A = rootOnlyAxes(A, R)
 %rootOnlyAxes  The axes a recording has ONE of: its units, its image, its windows.
 %   None of them is redefined deeper in the tree, so resolving them at the root is
 %   not a shortcut - a sub-tree that held its own segment count would be a
 %   different recording.
 
 % seg / dvs: the metrics table is the authority, because it is the thing that
-% NAMES the units; the data matrix is the fallback, and it is the only one a lazy
-% file has (a table is opaque to h5info - it reports as a [6x1] object).
-n = tableHeight(R,T,'sMetrics');
-if isempty(n), n = unitDimOf(R,T,'sData'); end
+% NAMES the units; the data matrix is the fallback, for a recording that carries
+% the signal without the table.
+n = tableHeight(R,'sMetrics');
+if isempty(n), n = unitDimOf(R,'sData'); end
 if ~isempty(n), A.seg = mkAxis([],n,false,'categorical','segment'); end
 
-n = tableHeight(R,T,'dvsMetrics');
-if isempty(n), n = unitDimOf(R,T,'dvsData'); end
-if isempty(n), n = unitDimOf(R,T,'dvsDiameter'); end
+n = tableHeight(R,'dvsMetrics');
+if isempty(n), n = unitDimOf(R,'dvsData'); end
+if isempty(n), n = unitDimOf(R,'dvsDiameter'); end
 if ~isempty(n), A.dvs = mkAxis([],n,false,'categorical','vessel'); end
 
 % pixel: the image geometry, [Y X].  sMap first - it is the map every per-segment
 % quantity is painted back through - then whatever else is a picture.
 for c = {'sMap','mask','imgK','imgBFI','imgI','cMask','pMap','dvsMap'}
-    sz = sizeOf(R,T,c{1});
+    sz = sizeOf(R,c{1});
     if numel(sz)>=2 && all(sz(1:2)>1), A.pixel = mkAxis([],sz(1:2),false,'categorical','pixel'); break; end
 end
 
 % plane: how many masks were intersected into commonMask
-sz = sizeOf(R,T,'commonMask');
+sz = sizeOf(R,'commonMask');
 if numel(sz)>=3 && sz(3)>0, A.plane = mkAxis((1:sz(3))',sz(3),true,'ordinal','mask layer'); end
 
 % gsTime: the guided-contrast signal's own time base, a root-level vector
-v = valueOf(R,T,'gsTime');
+v = valueOf(R,'gsTime');
 if ~isempty(v), A.gsTime = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
 
 % interval: the analysed windows, in protocol order.  A speckle recording has none.
-if ~isfield(R,'x_lazy_')
-    k = numel(myographIntervals(R));
-    if k>0, A.interval = mkAxis((1:k)',k,true,'categorical','interval'); end
-end
+k = numel(myographIntervals(R));
+if k>0, A.interval = mkAxis((1:k)',k,true,'categorical','interval'); end
 end
 
 % =====================================================================
-function A = absorbAt(A, R, T, scope)
+function A = absorbAt(A, R, scope)
 %absorbAt  The shared coordinate vectors declared AT this scope, overriding
 %   whatever an enclosing scope said.  Nothing here is conditional on where in the
 %   tree we are: a node that carries an 'f' declares the frequency axis, whether it
 %   is results.vasomotion or intervals(3).vasomotion.inner.
-v = valueOf(R,T,join2(scope,'time'));
+v = valueOf(R,join2(scope,'time'));
 if ~isempty(v), A.time = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
 
-v = valueOf(R,T,join2(scope,'timeWT'));
+v = valueOf(R,join2(scope,'timeWT'));
 if ~isempty(v), A.timeWT = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
 
-v = valueOf(R,T,join2(scope,'timeDWT'));
+v = valueOf(R,join2(scope,'timeDWT'));
 if ~isempty(v), A.timeDWT = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
 
-v = valueOf(R,T,join2(scope,'f'));
+v = valueOf(R,join2(scope,'f'));
 if ~isempty(v), A.f = mkAxis(v(:),numel(v),true,'log','frequency (Hz)'); end
 
-v = valueOf(R,T,join2(scope,'harmonics'));
+v = valueOf(R,join2(scope,'harmonics'));
 if ~isempty(v), A.harmonic = mkAxis(v(:),numel(v),true,'ordinal','harmonic'); end
 
-v = valueOf(R,T,join2(scope,'pctCenters'));
+v = valueOf(R,join2(scope,'pctCenters'));
 if ~isempty(v)
     A.pctBin = mkAxis(v(:),numel(v),true,'linear','percentile (%)');
     % the LEVELS are one longer by construction; their values come later, or not
@@ -213,9 +209,9 @@ if ~isempty(v)
 end
 
 % A WINDOW'S OWN COORDINATES, declared one branch down on its diameter block.
-v = valueOf(R,T,join2(scope,'diameter.time'));
+v = valueOf(R,join2(scope,'diameter.time'));
 if ~isempty(v), A.time = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
-v = valueOf(R,T,join2(scope,'diameter.nY'));
+v = valueOf(R,join2(scope,'diameter.nY'));
 if isscalar(v) && v>0
     A.line = mkAxis((1:double(v))',double(v),true,'linear','position along the vessel');
 end
@@ -247,65 +243,32 @@ a = struct('values',values,'n',n,'ordered',logical(ordered), ...
            'scale',char(scale),'label',char(label),'inferred',false);
 end
 
-% ================================================== READING A NODE, EITHER WAY
+% ================================================== READING A NODE
 
-function v = valueOf(R, T, dotted)
-%valueOf  The VALUE of one leaf, or [] when the path does not lead to one.  Only
-%   ever called for axis vectors, which are small enough to read out of a 3.6 GB
-%   file without a thought - the largest in the reference sets is gsTime at 61208
-%   doubles.
-v = [];
-if isempty(T)
-    v = resolveEager(R, dotted);
-    if ~isnumeric(v) && ~islogical(v), v = []; end
-    return
-end
-[grp, name] = splitLast(dotted);
-if ~T.groups.isKey(grp), return; end
-g = T.groups(grp);
-if isempty(g.Datasets), return; end
-k = strcmp({g.Datasets.Name}, name);
-if ~any(k), return; end
-try
-    v = h5read(T.path, [g.Name '/' name]);
-catch
-    v = [];
-end
+function v = valueOf(R, dotted)
+%valueOf  The VALUE of one leaf, or [] when the path does not lead to one.
+v = resolveEager(R, dotted);
+if ~isnumeric(v) && ~islogical(v), v = []; end
 end
 
-function sz = sizeOf(R, T, dotted)
-%sizeOf  The SIZE of one leaf without reading it - the whole reason the lazy path
-%   is affordable.
+function sz = sizeOf(R, dotted)
+%sizeOf  The SIZE of one leaf.
 sz = [];
-if isempty(T)
-    v = resolveEager(R, dotted);
-    if isnumeric(v) || islogical(v), sz = size(v); end
-    return
-end
-[grp, name] = splitLast(dotted);
-if ~T.groups.isKey(grp), return; end
-g = T.groups(grp);
-if isempty(g.Datasets), return; end
-k = strcmp({g.Datasets.Name}, name);
-if ~any(k), return; end
-sz = reshape(g.Datasets(k).Dataspace.Size,1,[]);
+v = resolveEager(R, dotted);
+if isnumeric(v) || islogical(v), sz = size(v); end
 end
 
-function n = unitDimOf(R, T, name)
+function n = unitDimOf(R, name)
 %unitDimOf  How many UNITS a raw signal matrix holds.  sData / dvsData / gsData are
 %   written [nT x nUnit] - item LAST - so this is the second dimension and not the
 %   first, which is the single most common way to get this tree wrong.
-n = []; sz = sizeOf(R,T,name);
+n = []; sz = sizeOf(R,name);
 if numel(sz)>=2 && sz(2)>0 && sz(1)>0, n = sz(2); end
 end
 
-function n = tableHeight(R, T, name)
-%tableHeight  Rows of a metrics table, or [] when it cannot be read.  A table
-%   inside a -v7.3 file is opaque: h5info reports it as a [6x1] dataset, which is
-%   the table object's own internal fields and not its rows, so the lazy path never
-%   gets an answer here and falls back to the data matrix.
+function n = tableHeight(R, name)
+%tableHeight  Rows of a metrics table, or [] when the recording has none.
 n = [];
-if ~isempty(T), return; end
 if ~isfield(R,name), return; end
 v = R.(name);
 if istable(v), n = height(v); end
@@ -351,29 +314,20 @@ function s = join2(a,b)
 if isempty(a), s = b; else, s = [a '.' b]; end
 end
 
-function [grp, name] = splitLast(dotted)
-k = strfind(dotted,'.');
-if isempty(k), grp = ''; name = dotted;
-else,          grp = dotted(1:k(end)-1); name = dotted(k(end)+1:end);
-end
-end
-
 % ================================================== THE PER-FILE MEMO
 
 function out = fileCache(what, pth)
-%fileCache  h5info trees and percentile levels, remembered per file.
+%fileCache  The percentile levels, remembered per file.
 %
-%   Both are pure functions of a file that nothing in this session writes, and both
+%   They are a pure function of a file that nothing in this session writes, and they
 %   are asked for once per SCOPE by exScan - a dozen times or more on one tree.  The
 %   key carries the file's size and timestamp, so a fixture rewritten between two
 %   runs of a test is re-read rather than remembered wrong; exAxes('flush') empties
 %   it outright.
-persistent trees pcts
-if isempty(trees), trees = containers.Map('KeyType','char','ValueType','any'); end
+persistent pcts
 if isempty(pcts),  pcts  = containers.Map('KeyType','char','ValueType','any'); end
 
-if strcmp(what,'flush'), trees = containers.Map('KeyType','char','ValueType','any');
-                         pcts  = containers.Map('KeyType','char','ValueType','any');
+if strcmp(what,'flush'), pcts = containers.Map('KeyType','char','ValueType','any');
                          out = []; return
 end
 out = [];
@@ -381,36 +335,9 @@ if isempty(pth), return; end
 key = stampOf(pth);
 if isempty(key), return; end
 
-switch what
-    case 'tree'
-        if ~trees.isKey(key)
-            try
-                info = h5info(char(pth),'/results');
-                T = struct('path',char(pth), ...
-                           'groups',containers.Map('KeyType','char','ValueType','any'));
-                T.groups = mapGroups(T.groups, info, '');
-            catch
-                T = [];
-            end
-            trees(key) = T;
-        end
-        out = trees(key);
-    case 'pcts'
-        if ~pcts.isKey(key)
-            pcts(key) = readSiblingPcts(pth);
-        end
-        out = pcts(key);
-end
-end
-
-function M = mapGroups(M, g, dotted)
-%mapGroups  The HDF5 group tree keyed by the DOTTED path a caller thinks in, so the
-%   lazy arm answers the same questions as the loaded one.
-M(dotted) = g;
-for i = 1:numel(g.Groups)
-    nm = g.Groups(i).Name;
-    k = strfind(nm,'/'); nm = nm(k(end)+1:end);
-    M = mapGroups(M, g.Groups(i), join2(dotted,nm));
+if strcmp(what,'pcts')
+    if ~pcts.isKey(key), pcts(key) = readSiblingPcts(pth); end
+    out = pcts(key);
 end
 end
 

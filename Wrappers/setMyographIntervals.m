@@ -1,12 +1,12 @@
 %setMyographIntervals  Interactive, per-file definition of a myograph's analysis windows
 %
-%   setMyographIntervals(s,fNames) opens the interval editor on every *_MYO_d.mat
+%   setMyographIntervals(s,fNames) opens the interval editor on every *_MYO_r.mat
 %   recording in fNames, on the diameter that has already been measured, and writes
 %   the windows the operator defines back into that recording's own _MYO triplet.
 %   ONE WINDOW PER RECORDING, and nothing advances until Done is pressed - the
 %   wrapper loops the files itself, exactly as setRegions does, so there is no file
 %   dropdown to get lost in and no launcher for-loop.  fNames is a cell array of
-%   *_MYO_d.mat paths.
+%   *_MYO_r.mat paths.
 %
 %   WHAT AN INTERVAL IS.  A named stretch of time that the later steps analyse on
 %   its own: the propagation and the vasomotion run per interval, and the Excel
@@ -69,7 +69,7 @@
 %                  the raw samples and every analysis reads those, so lowering it on
 %                  a slow machine changes what the operator sees and NOTHING about
 %                  what comes out.
-%     fNames   cell array of *_MYO_d.mat paths.  Empty cells are skipped.
+%     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     fNamesRaw (optional) the matching raw recordings, for the preview.  Omitted,
 %              each recording's own source.fName is used.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
@@ -86,7 +86,7 @@
 %
 %   EXAMPLE
 %     s.edgeMode = 'mid';
-%     D = dir(fullfile(rootFolder,'*_MYO_d.mat'));
+%     D = dir(fullfile(rootFolder,'*_MYO_r.mat'));
 %     setMyographIntervals(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -111,8 +111,10 @@
 
 function setMyographIntervals(s,fNames,fNamesRaw)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_MYO_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_MYO_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_MYO_r.mat'').']);
 end
 if nargin<3, fNamesRaw={}; end
 if ~isfield(s,'edgeMode') || isempty(s.edgeMode), s.edgeMode='mid'; end
@@ -173,7 +175,7 @@ function opts=editorOptions(results,fName,mode,drawPoints)
 %   it already carries, titled with the recording so a run of files never leaves any
 %   doubt about which one is on screen.
 [ivT,names,chans]=intervalsOf(results);
-[~,stem]=fileparts(regexprep(fName,'_MYO_d\.mat$',''));
+[~,stem]=fileparts(regexprep(fName,'_MYO_[drs]\.mat$',''));
 opts=struct('mode',mode,'intervals',ivT,'names',{names},'channels',{chans}, ...
     'drawPoints',drawPoints,'title',['Intervals - ' stem]);
 end

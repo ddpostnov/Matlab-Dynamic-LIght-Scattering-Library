@@ -41,7 +41,7 @@ s.manualMask=0; %allows manual subselection of the area to mask
 fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runContrastFromRLS',false);
+%fNames=removeProcessedFiles(fNames,'.rls','_t_K_s.mat','runContrastFromRLS',false);
 
 
 runContrastFromRLS(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
@@ -106,7 +106,7 @@ s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runInternalCycle',false);
+%fNames=removeProcessedFiles(fNames,'.rls','_c_K_s.mat','runInternalCycle',false);
 
 %RUN THE PROCESSING ROUTINE
 runInternalCycle(s,fNames(:));
@@ -126,12 +126,12 @@ s.libraryFolder=libraryFolder;
 %SET FILE NAMES HERE - the TEMPORAL CONTRAST files only, GROUPED (rows = animal/FOV)
 %so ROIs carry within a group.  The internal-cycle "_c" files are the SAME field of
 %view, so they inherit the mask instead of being drawn again (see s.fNamesCopyTo below)
-fNames=getFileNamesList(rootFolder,'*_t_K_d.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_t_K_r.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %Copy the regions drawn on each _t onto its paired _c (same idiom as STEP 5's
 %segmentation copy) - one editor per recording instead of one per file.  Comment this
-%line out, and list '*_K_d.mat' above, to draw on every file separately instead.
-s.fNamesCopyTo=regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+%line out, and list '*_K_r.mat' above, to draw on every file separately instead.
+s.fNamesCopyTo=regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat');
 
 %RUN THE PROCESSING ROUTINE (setRegions iterates the groups itself - no for-loop)
 setRegions(s,fNames);
@@ -146,10 +146,10 @@ s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE
 
 %SET FILE NAMES HERE - both _t and _c now carry regionsMask (STEP 3 copied it onto _c),
 %so every branch of a recording is cropped with the same regions
-fNames=getFileNamesList(rootFolder,'*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','splitRegions',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','splitRegions',false);
 
 %RUN THE PROCESSING ROUTINE
 splitRegions(s,fNames(:));
@@ -185,18 +185,18 @@ s.simR=0.3; % minimal similarity ratio between branches to be considered the sam
 s.difR=0.4; % minimal difference ratio to be considered different vessels
 
 %SET FILE NAMES HERE - segment the temporal-contrast _t files (FLAT, order-independent)
-fNames=getFileNamesList(rootFolder,'Roi*_t_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'Roi*_t_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 fNames=fNames(:);
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runSegmentation',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','runSegmentation',false);
 
 % Assign the SAME segmentation to the co-registered pulsatility _c files (replaces the
 % old assignCategories step): each _c inherits the _t segmentation (cMask / sMap /
 % sMetrics) and gets its OWN sData re-extracted from its own cube. Requires _t and _c
 % to be co-registered / same FOV. Computed AFTER any removeProcessedFiles so the source
 % and target lists stay aligned.
-s.fNamesCopyTo=regexprep(fNames,'_t_K_d.mat$','_c_K_d.mat');
+s.fNamesCopyTo=regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat');
 
 runSegmentation(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -228,10 +228,10 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE (after STEP 5 this pattern also matches the RoiN_ crops)
-fNames=getFileNamesList(rootFolder,'Roi*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'Roi*_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runDynamicSegmentation',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','runDynamicSegmentation',false);
 
 runDynamicSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -253,10 +253,10 @@ s.rotationLimit=45; % degrees; reject registrations rotating > 45 ([] = none)
 
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'Roi*_K_d.mat','[A-Z]+\d+');%,'*BV_t_K_d\.mat$');
+fNames=getFileNamesList(rootFolder,'Roi*_K_r.mat','[A-Z]+\d+');%,'*BV_t_K_r\.mat$');
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runRegistration',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','runRegistration',false);
 
 %OPTIONAL - backup files
 m=~cellfun(@isempty,fNames); cellfun(@copyfile,fNames(m),strrep(fNames(m),'.mat','_bckp.mat'));
@@ -290,10 +290,10 @@ s.deleteOriginal=false; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'Roi*_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'Roi*_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runBFI',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','runBFI',false);
 
 runBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -325,10 +325,10 @@ s.ppxVsmReturn =[];%{'bands'};% [];% {'bands'};         %per-pixel analysis OFF 
 s.ppxSegmentAveraging=[]; %TEMPORARY scaffolding (to be removed): per-segment averaging demo, subset of {'coherent','incoherent'}; [] = off. Change only if needed
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'Roi*_t_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'Roi*_t_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 % Uncomment below if you need to avoid re-processing processed files
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runVasomotion',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','runVasomotion',false);
 
 runVasomotion(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
@@ -350,9 +350,9 @@ s.ppxPulsReturn={'markers'};%,'model'};  % NON-EMPTY = per-pixel marker maps ON
                         % also fit every masked pixel (large full-resolution cubes).
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'Roi*_c_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'Roi*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','runPulsatility',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','runPulsatility',false);
 
 runPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -364,15 +364,15 @@ s.libraryFolder=libraryFolder;
 %%IF DOING IT FILE BY FILE
 % s.useReference=false;
 % s.refFName=''; %use '' instead of " "
-%fNames=getFileNamesList(rootFolder,'*_c_K_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 %setVesselTypes(s,fNames(:));
 
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'Roi*_BFI_d.mat','[A-Z]+\d+','1BP_c_BFI_d\.mat');
+fNames=getFileNamesList(rootFolder,'Roi*_BFI_r.mat','[A-Z]+\d+','1BP_c_BFI_r\.mat');
 
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','setVesselTypes',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','setVesselTypes',false);
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -392,15 +392,15 @@ s.useHarmonicPhase=false;    % include the fundamental phase b1 in the flow pote
 s.propagatePartners={'t','s'}; % after a "_c" file is derived, auto-copy the hierarchy to its _t/_s partners if they exist
 
 %SET FILE NAMES HERE - use the pulsatility "_c" files (they carry the pulse timing)
-fNames=getFileNamesList(rootFolder,'Roi*_c_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'Roi*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-%fNames=removeProcessedFiles(fNames,'_d.mat','_s.mat','setVascularTree',false);
+%fNames=removeProcessedFiles(fNames,'_r.mat','_s.mat','setVascularTree',false);
 
 setVascularTree(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 13 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_BFI_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
 %same routine (pick files / a folder / a workbench session, choose the parameters and

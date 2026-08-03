@@ -19,10 +19,10 @@
 %   THE DELETION SET COMES FROM THE REGISTRY, NOT FROM THE FILE NAME.  This is the
 %   non-obvious decision here and the next reader will otherwise "simplify" it
 %   back to a name-prefix test, which silently deletes nothing.  A derived product
-%   SUBSTITUTES the product token rather than extending the name: runBFI.m:97 is
-%   strrep(fName,'_K_d.mat','_BFI_d.mat'), so 'Mouse1_t_K_d.mat' becomes
-%   'Mouse1_t_BFI_d.mat' and there is no '_K_BFI' for a prefix test to find.  The
-%   external cycle inserts a flag instead ('Mouse1_t_e_K_d.mat').  The flag chain
+%   SUBSTITUTES the product token rather than extending the name: runBFI.m:103 is
+%   strrep(fName,'_K_r.mat','_BFI_r.mat'), so 'Mouse1_t_K_r.mat' becomes
+%   'Mouse1_t_BFI_r.mat' and there is no '_K_BFI' for a prefix test to find.  The
+%   external cycle inserts a flag instead ('Mouse1_t_e_K_r.mat').  The flag chain
 %   cannot separate ancestor from descendant either - '_t_K' and '_t_BFI' both
 %   parse to flags {t}.  So WHICH STEPS are downstream is asked of the registry's
 %   requires graph (wbInvalidate), WHAT each of them writes is its own outSuffix
@@ -30,21 +30,21 @@
 %   answered by the names on disk.  The registry orders; the file name identifies.
 %
 %   A SIGNATURE, NEVER A COMPOSED NAME.  outTransform is not a safe way to compose
-%   an output name: externalCycle declares from '_t_K_d.mat' to '_e_K_d.mat' - a
+%   an output name: externalCycle declares from '_t_K_r.mat' to '_e_K_r.mat' - a
 %   hardcoded '_t' - so on a '_s' or '_c' input the strrep is a no-op and hands
 %   back THE INPUT FILE ITSELF, which a deletion set would then propose for
-%   deletion.  And on a '_t' input the registry composes 'Mouse1_e_K_d.mat' while
-%   runExternalCycle.m:318 actually writes 'Mouse1_t_e_K_d.mat' - the registry and
+%   deletion.  And on a '_t' input the registry composes 'Mouse1_e_K_r.mat' while
+%   runExternalCycle.m:347 actually writes 'Mouse1_t_e_K_r.mat' - the registry and
 %   the wrapper disagree about that name (a known, still-open defect, see
 %   wbStepRegistry.m:78).  Matching a PARSED signature survives the disagreement:
-%   'Mouse1_t_e_K_d.mat' parses to flags {t,e}, stage e, product K, so it carries
+%   'Mouse1_t_e_K_r.mat' parses to flags {t,e}, stage e, product K, so it carries
 %   the rewritten stage in its chain AND matches externalCycle's signature,
 %   whichever way it was spelled.
 %
 %   WHEN ANCESTRY IS NOT RECOVERABLE FROM THE NAME, UNDER-DELETE (spec D9a).
 %   Over-deleting destroys the author's data; under-deleting leaves one narrow
 %   case of the bug.  A file matching a downstream signature whose flag chain
-%   cannot be tied to the stage being rewritten - 'Mouse1_e_K_d.mat' when '_t_K'
+%   cannot be tied to the stage being rewritten - 'Mouse1_e_K_r.mat' when '_t_K'
 %   is the one being recomputed - is returned SEPARATELY as unattributable, for
 %   the caller to name in the log, and is never deleted on a guess.
 %
@@ -52,8 +52,8 @@
 %   '.mat' products only: handed a '.jpg' it returns the whole name as the identity
 %   and leaves stage / branch / product / role empty.  A page is named
 %   '<stem>_rep_<tag>.jpg' after the product it belongs to (reportSave.m:86), so
-%   'Mouse1_t_K_d_rep_segments.jpg' is stripped at its last '_rep_' and read as
-%   'Mouse1_t_K_d.mat' -> stage 't', and 'Mouse1_rep_contrast.jpg' as 'Mouse1' ->
+%   'Mouse1_t_K_r_rep_segments.jpg' is stripped at its last '_rep_' and read as
+%   'Mouse1_t_K_r.mat' -> stage 't', and 'Mouse1_rep_contrast.jpg' as 'Mouse1' ->
 %   no flag, i.e. the recording itself.  A PRE-RENAME page ('Mouse1_t_K_cm.jpg')
 %   carries no '_rep_' marker and cannot be attributed at all: 'stageOf' returns
 %   the UNKNOWN token for it and 'admits' FAILS OPEN.  That is a policy choice -

@@ -1,6 +1,6 @@
 %runPulsatility  Harmonic pulsatility analysis into the results.pulsatility tree
 %
-%   runPulsatility(s,fNames) loads every *_BFI_d.mat cardiac-cycle triplet in
+%   runPulsatility(s,fNames) loads every *_BFI_r.mat cardiac-cycle triplet in
 %   fNames (produced by runInternalCycle/runExternalCycle -> runSegmentation ->
 %   runBFI: results.sData/dvsData/dvsDiameter [nT x nSeg] on results.time, plus
 %   the source cube source.data [Y x X x nT]) and reduces every averaged cycle to
@@ -56,7 +56,7 @@
 %                                 fit loop in parallel.  A WORKER BOUND, not a branch:
 %                                 false runs the identical loop body serially in the
 %                                 client and starts no pool.
-%     fNames   cell array of *_BFI_d.mat paths.
+%     fNames   cell array of *_BFI_r.mat paths.
 %                • Optional workbench hooks in s (no-op when absent):
 %                  s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
 %                  between files (never inside the per-pixel parfor).
@@ -70,7 +70,7 @@
 %     s.nHarm=5;
 %     s.segPulsReturn={'markers','model','reconstruction'};
 %     s.ppxPulsReturn={'markers'};
-%     files = dir(fullfile(dataRoot,'*_BFI_d.mat'));
+%     files = dir(fullfile(dataRoot,'*_BFI_r.mat'));
 %     runPulsatility(s, fullfile({files.folder}',{files.name}'));
 %
 %   DEPENDS ON
@@ -103,8 +103,10 @@
 
 function runPulsatility(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_BFI_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_c_BFI_r.mat'').']);
 end
 
 %resolve defaults so they are recorded in the saved settings (the core defaults
@@ -142,10 +144,10 @@ for fidx=1:1:numel(fNames)
         clearvars results source settings
         %SOURCE is read only for the per-pixel path (and never written back).
         if ~isempty(s.ppxPulsReturn)
-            load(s.fName,'source')
+            load(getProductPath(s.fName,'d'),'source')
         end
-        load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
-        load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
 
         %runPulsatility owns RESULTS.pulsatility entirely; rebuild it from scratch so
         %no stale sub-branch survives a re-run with different levels.
@@ -355,8 +357,8 @@ for fidx=1:1:numel(fNames)
         settings.runPulsatility=reportSettings(s);
         reportWriting(rep);
         %NON-DESTRUCTIVE: SOURCE (_d) is never re-saved - only RESULTS and SETTINGS.
-        save(strrep(fNames{fidx},'_d.mat','_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings','-v7.3','-nocompression');
+        save(s.fName,'results','-v7.3','-nocompression');
+        save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

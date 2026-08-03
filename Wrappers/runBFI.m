@@ -1,6 +1,6 @@
-%runBFI  Convert contrast cubes (*. _K_d.mat) to blood-flow index (BFI)
+%runBFI  Convert contrast cubes (*_K_r.mat) to blood-flow index (BFI)
 %
-%   runBFI(s,fNames) scans every *_K_d.mat file in fNames, replaces every
+%   runBFI(s,fNames) scans every *_K_r.mat file in fNames, replaces every
 %   field whose name contains the substring ‘data’ with its blood-flow
 %   index, updates the corresponding metrics, and writes three new MAT-files
 %   per dataset:
@@ -17,7 +17,9 @@
 %     s        parameter structure  
 %                • deleteOriginal   true / false  
 %                • method           currently only "basic" (=1/K²)
-%     fNames   cell array of full paths to *_K_d.mat files.
+%     fNames   cell array of full paths to *_K_r.mat files - the RESULTS member
+%              of each contrast product.  The SOURCE cube and the SETTINGS are
+%              named from it (getProductPath).
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail),
 %     s.cancelFcn()->tf.
 %
@@ -27,7 +29,7 @@
 %   EXAMPLE
 %     p.deleteOriginal = false;
 %     p.method         = "basic";
-%     D = dir(fullfile(dataRoot,'*_K_d.mat'));
+%     D = dir(fullfile(dataRoot,'*_K_r.mat'));
 %     runBFI(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -47,8 +49,10 @@
 % s.method="basic"; %only "basic" is avaliable
 
 function runBFI(s,fNames)
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_K_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_K_r.mat'').']);
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -62,9 +66,9 @@ for fidx=1:1:numel(fNames)
     s.fName=fNames{fidx};
     reportFile(rep,fidx,s.fName);
     clearvars results source settings
-    load(s.fName,'source')
-    load(strrep(fNames{fidx},'_d.mat','_s.mat'),'settings');
-    load(strrep(fNames{fidx},'_d.mat','_r.mat'),'results');
+    load(getProductPath(s.fName,'d'),'source')
+    load(getProductPath(s.fName,'s'),'settings');
+    load(s.fName,'results');
 
     fn = fieldnames(source);
     for k=1:numel(fn)
@@ -94,14 +98,17 @@ for fidx=1:1:numel(fNames)
 
     reportWriting(rep);
     settings.calculateBFI=reportSettings(s);
-    save(strrep(fNames{fidx},'_K_d.mat','_BFI_d.mat'),'source','-v7.3','-nocompression');
-    save(strrep(fNames{fidx},'_K_d.mat','_BFI_r.mat'),'results','-v7.3','-nocompression');
-    save(strrep(fNames{fidx},'_K_d.mat','_BFI_s.mat'),'settings','-v7.3','-nocompression');
+    % the BFI triplet SUBSTITUTES the product token of the input's own name, so
+    % the branch flag it carries ('_t', '_c', ...) is preserved by construction
+    bfiName=strrep(s.fName,'_K_r.mat','_BFI_r.mat');
+    save(getProductPath(bfiName,'d'),'source','-v7.3','-nocompression');
+    save(bfiName,'results','-v7.3','-nocompression');
+    save(getProductPath(bfiName,'s'),'settings','-v7.3','-nocompression');
 
     if s.deleteOriginal
-        delete(fNames{fidx});
-        delete(strrep(fNames{fidx},'_d.mat','_s.mat'));
-        delete(strrep(fNames{fidx},'_d.mat','_r.mat'));
+        delete(getProductPath(s.fName,'d'));
+        delete(getProductPath(s.fName,'s'));
+        delete(s.fName);
     end
     reportSaved(rep);
      end

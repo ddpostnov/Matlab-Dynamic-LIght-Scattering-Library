@@ -1,6 +1,6 @@
 %setMyographCrop  Choose the one stretch of a myograph recording that is analysed
 %
-%   setMyographCrop(s,fNames) opens the interval editor on every *_MYO_d.mat
+%   setMyographCrop(s,fNames) opens the interval editor on every *_MYO_r.mat
 %   recording in fNames restricted to a SINGLE window, and records that window as
 %   results.timeCrop.  ONE WINDOW PER RECORDING, blocking, no file dropdown: the
 %   wrapper loops the files, exactly as setRegions does.
@@ -37,7 +37,7 @@
 %                  profile has, when there is no diameter yet to plot instead.
 %       .edgeMode  (optional, default 'mid') which diameter is plotted when there IS
 %                  one.
-%     fNames   cell array of *_MYO_d.mat paths.  Empty cells are skipped.
+%     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     fNamesRaw (optional) the matching raw recordings.  Omitted, each recording's
 %              own source.fName is used.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
@@ -49,7 +49,7 @@
 %     <name>_MYO_s.mat   settings.setMyographCrop = s
 %
 %   EXAMPLE
-%     D = dir(fullfile(rootFolder,'*_MYO_d.mat'));
+%     D = dir(fullfile(rootFolder,'*_MYO_r.mat'));
 %     setMyographCrop(struct(), fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
@@ -71,8 +71,10 @@
 
 function setMyographCrop(s,fNames,fNamesRaw)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_MYO_d.mat".');
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_MYO_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_MYO_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_MYO_r.mat'').']);
 end
 if nargin<3, fNamesRaw={}; end
 if ~isfield(s,'profileSamples') || isempty(s.profileSamples), s.profileSamples=1200; end
@@ -131,7 +133,7 @@ function opts=editorOptions(results,fName)
 crop=fieldOr(results,'timeCrop',[]);
 ivT=zeros(0,2); names={};
 if numel(crop)==2, ivT=double(crop(:))'; names={'analysed window'}; end
-[~,stem]=fileparts(regexprep(fName,'_MYO_d\.mat$',''));
+[~,stem]=fileparts(regexprep(fName,'_MYO_[drs]\.mat$',''));
 opts=struct('mode','PMYO','intervals',ivT,'names',{names},'maxIntervals',1, ...
     'title',['Time crop - ' stem]);
 end

@@ -7,7 +7,7 @@
 %                  dynamicSegmentation genuinely cannot run before segmentation.
 %     requiresAny  AT LEAST ONE of these must be done/selected.  The middle of the
 %                  pipeline (regions, segmentation, BFI, registration) consumes
-%                  '*_K_d.mat' - ANY branch product of the recording - so it is
+%                  '*_K_r.mat' - ANY branch product of the recording - so it is
 %                  ready as soon as SOME entry step has produced one.  The contrast
 %                  step is the usual producer, but a purely pulsatile protocol
 %                  starts at the internal cycle and never computes a contrast

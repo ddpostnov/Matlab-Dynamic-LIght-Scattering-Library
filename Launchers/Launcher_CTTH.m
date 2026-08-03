@@ -59,7 +59,7 @@ s.libraryFolder=libraryFolder;
 
 %SET FILE NAMES HERE - passed as one ROW (transpose) so a drawn ROI carries (editable)
 %across all bolus files as a single group (the intensity _I path has no grouping id)
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 setRegions(s,fNames(:)'); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -91,7 +91,7 @@ s.simR=0.3; % minimal similarity ratio between branches to be considered the sam
 s.difR=0.4; % minimal difference ratio to be considered different vessels
 
 %SET FILE NAMES HERE - FLAT (order-independent; grouping was setRegions' job in STEP 2)
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 runSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -104,7 +104,7 @@ s.libraryFolder=libraryFolder;
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %USES THE SAME FILE NAMES AS ABOVE as STEP 2 (crops each file by its own regionsMask -> RoiN_ files)
 splitRegions(s,fNames(:)); %LAUNCHES THE UTILITY ROUTINE
@@ -136,7 +136,7 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE (after STEP 4 this pattern also matches the RoiN_ crops)
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 runDynamicSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
@@ -153,9 +153,9 @@ s.tFormType='affine';
 s.matchSegmentation=true;
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
 
-files      = dir(fullfile(rootFolder,'**','*t_K_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*t_K_r.mat')); %<---ALWAYS REFER TO "_K_r.mat" files, but you may use regexp to define specific "_K_r.mat" files of interest
 fNamesVSM  = fullfile({files.folder}', {files.name}');
-fNamesPLS=regexprep(fNamesVSM, '\_t_K_d.mat$', '_c_K_d.mat');
+fNamesPLS=regexprep(fNamesVSM, '\_t_K_r.mat$', '_c_K_r.mat');
 fNames=cat(1,fNamesPLS,fNamesVSM);
 runRegistration(s,fNames); %LAUNCHES THE UTILITY ROUTINE
 
@@ -172,7 +172,7 @@ s.libraryFolder=libraryFolder;
     s.slopeWin=9; s.promFrac=0.2;      % robust upslope / peak
     s.minStep=1;                       % uint16 resolution
 
-fNames=getFileNamesList(rootFolder,'*_b_I_d.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(rootFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 
 runCTTH(s,fNames(:))
@@ -188,7 +188,7 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*_K_d.mat'));
+files      = dir(fullfile(rootFolder,'**','*_K_r.mat'));
 fNames     = fullfile({files.folder}', {files.name}');
 
 runBFI(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
@@ -221,7 +221,7 @@ s.vsmSignals={'sData','dvsData','dvsDiameter','gsData'};  %which data-type signa
 s.segVsmReturn={'bands','moments','series','clustering','reconstruction'};
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat'));
+files      = dir(fullfile(rootFolder,'**','*t_BFI_r.mat'));
 fNames     = fullfile({files.folder}', {files.name}');
 
 runVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
@@ -244,7 +244,7 @@ s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel marker maps ON
                         % also fit every masked pixel (large full-resolution cubes).
 
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*c_BFI_d.mat')); %<---ALWAYS REFER TO "c_BFI_d.mat" files, but you may use regexp to define specific "c_BFI_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*c_BFI_r.mat')); %<---ALWAYS REFER TO "c_BFI_r.mat" files, but you may use regexp to define specific "c_BFI_r.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
 runPulsatility(s, fNames); %LAUNCHES THE PROCESSING ROUTINE
@@ -257,16 +257,16 @@ s.libraryFolder=libraryFolder;
 s.useReference=true; 
 s.libraryFolder=libraryFolder;
 
-files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*t_BFI_r.mat')); %<---ALWAYS REFER TO "_K_r.mat" files, but you may use regexp to define specific "_K_r.mat" files of interest
 fNamesVSM  = fullfile({files.folder}', {files.name}');
-fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_d.mat$', '_c_BFI_d.mat');
+fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_r.mat$', '_c_BFI_r.mat');
 fNames=cat(1,fNamesPLS,fNamesVSM);
 s.refFName=fNames{1};
 setVesselTypes(s,fNames);
 
 %% STEP 11 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-files      = dir(fullfile(rootFolder,'**','*_BFI_d.mat')); %<---ALWAYS REFER TO "_BFI_d.mat" files, but you may use regexp to define specific "_BFI_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*_BFI_r.mat')); %<---ALWAYS REFER TO "_BFI_r.mat" files, but you may use regexp to define specific "_BFI_r.mat" files of interest
 fNames     = fullfile({files.folder}', {files.name}');
 
 %INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
@@ -380,20 +380,20 @@ yticklabels([]);
 
 
 %%
-files      = dir(fullfile(rootFolder,'**','*t_BFI_d.mat')); %<---ALWAYS REFER TO "_K_d.mat" files, but you may use regexp to define specific "_K_d.mat" files of interest
+files      = dir(fullfile(rootFolder,'**','*t_BFI_r.mat')); %<---ALWAYS REFER TO "_K_r.mat" files, but you may use regexp to define specific "_K_r.mat" files of interest
 fNamesVSM  = fullfile({files.folder}', {files.name}');
-fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_d.mat$', '_c_BFI_d.mat');
+fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_r.mat$', '_c_BFI_r.mat');
 
 clearvars vsm
 for i=1:1:numel(fNamesVSM)
-load(strrep(fNamesVSM{i},'_d.mat','_r.mat'),'results');
+load(fNamesVSM{i},'results');
 vsm(i)=results;
 clearvars results
 end
 
 clearvars pls
 for i=1:1:numel(fNamesPLS)
-load(strrep(fNamesPLS{i},'_d.mat','_r.mat'),'results');
+load(fNamesPLS{i},'results');
 pls(i)=results;
 clearvars results
 end

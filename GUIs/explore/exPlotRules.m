@@ -42,20 +42,49 @@
 %   different axes, one shorter than the other by construction - so the label and
 %   the values are taken from the axis registry and never from a constant here.
 %
-%   WHERE THIS TABLE EXTENDS SPEC SECTION 4.1.  Four combinations occur in the real
+%   WHERE THIS TABLE EXTENDS SPEC SECTION 4.1.  Five combinations occur in the real
 %   files or the fixtures that the frozen table does not name, and each is filled by
-%   the nearest analogous row rather than by inventing a plot id:
+%   the nearest analogous row rather than by inventing a plot id - except the last,
+%   which IS a new id and is argued for below:
 %
 %     pixel x f          per-pixel fVectors [Y X nF]        -> as pixel x pct
 %     pixel x f,pct      per-pixel ampMeanPct [Y X nF nPct] -> as pixel x f,timeDWT
-%     pixel x plane      commonMask [Y X nPlane]            -> as pixel x harmonic,
-%                        which is what section 2.1 already calls plane's role
+%     pixel x plane      commonMask [Y X nPlane]            -> ONE FRAME AT A TIME,
+%                        and never a video - see the next paragraph
 %     line  x <anything> a per-line myograph <VSM>          -> as seg/dvs, plus the
 %                        family of curves that only an ORDERED unit makes meaningful
+%     seg/dvs x time     a per-segment time series          -> video.fromSegments,
+%                        the video an LSCI recording really has
 %
 %   A combination with no row returns an EMPTY plot list, deliberately: a leaf the
 %   tool can see but cannot draw is a hole in the rule table, and testExplorePlan
 %   asserts there are none.  A silent default would hide it.
+%
+%   A MASK IS NOT A VIDEO (D9).  commonMask is [Y x X x nPlane] and plane is a STACK
+%   OF LAYERS, not a coordinate anything was measured against, so scrubbing it plays
+%   a slideshow of bookkeeping.  On both reference contrast files it is the only
+%   [Y X n] leaf there is - pulsatility.ppx holds scalars and no timeVectors, and the
+%   tracked branch has no ppx group at all - so Kind = Video collapsed to one family,
+%   one signal and one variable, every step of the cascade auto-hid, and the window
+%   showed the shared analysed area.  The plane row therefore offers image.frame and
+%   nothing else: looking at layer 2 is a legitimate question and it is the whole of
+%   what a mask has to answer.  The change is HERE and not in exSchema, because plane
+%   really is a dimension of that array and a schema that denied it would be lying
+%   about the shape to win an argument about the plots.
+%
+%   AND THE VIDEO AN LSCI RECORDING DOES HAVE is a per-segment time series painted
+%   back through sMap - sData, gsData, vasomotion.<sig>.timeVectors.<band>.amp,
+%   pulsatility.<sig>.timeVectors.fData - one frame per sample, every segment showing
+%   its own value.  It is image.fromSegments once per sample, which is why it sits on
+%   the seg/dvs x time row and why a per-segment leaf is worth keeping resident.
+%   THE CUBE IS NEVER MATERIALISED: 2448 x 1496 x 896 doubles is 26 TB, so exFetch
+%   holds the [nUnit x nFrame] matrix and paints the frame the slider is on.  AND A
+%   LONG RECORDING IS WALKED AT A STRIDE - gsData has 61 208 samples, and a slider
+%   with 61 208 positions is a defect even when every frame is correct - so exFetch
+%   caps the slider at a few hundred evenly spaced positions, each a real sample
+%   labelled in seconds off the leaf's own time base.  Nothing is averaged, no frame
+%   is invented, and the cap lives there rather than here because this file reads
+%   nothing and a stride is a fact about the leaf's length.
 %
 %   Syntax:
 %      P  = exPlotRules(d)
@@ -74,7 +103,7 @@
 %               curves.family
 %               image  image.fromSegments  image.timeAverage  image.frame
 %               heat.ft  heat.fpct  heat.positionTime
-%               video
+%               video  video.fromSegments
 %     A       the axis registry from exAxes, resolved at the leaf's scope.  Optional:
 %             with it the axis labels, scales and coordinate VALUES are the
 %             recording's own; without it they are generic fallbacks and .values is
@@ -85,8 +114,10 @@
 %
 %   OUTPUTS
 %     P   cellstr of plot ids, first = the default.  {} when the descriptor cannot
-%         be drawn - which today means only a confidence interval, which rides on
-%         another variable as an error bar rather than being one.
+%         be drawn AS A VARIABLE OF ITS OWN - which today means a COMPANION: a leaf
+%         exSchema declares as riding with another one, in a role (an interval on a
+%         scalar, the fit of a scatter, the caption of a plot).  exFetch hands those
+%         to the renderer with their host rather than as menu entries.
 %     K   cellstr of kinds, in the order the plots introduce them.
 %     ax  struct describing one plot:
 %           .plot .kind
@@ -105,6 +136,8 @@
 %      exPlotRules(d)                       % {'box','bar','image.fromSegments'}
 %      exPlotRules('kinds',d)               % {'Scalar','Image'}
 %      exPlotRules('axes',d,'box').units    % 'points'
+%      d = D(strcmp({D.path},'sData'));
+%      exPlotRules(d)                       % {'curve.time','video.fromSegments'}
 %
 %   DEPENDS ON
 %     nothing.
@@ -114,7 +147,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 03-August-2026
 
 %------------- BEGIN CODE --------------
 function varargout = exPlotRules(varargin)
@@ -142,27 +175,45 @@ function P = plotsFor(d)
 %   IS the preference order - the first entry is what the cascade selects when the
 %   user picks the variable and says nothing else.
 P = {};
-if ~isempty(d.pairedWith), return; end   % a confidence interval, not a variable
+if ~isempty(d.pairedWith), return; end   % a companion: it rides with its host
 key = plotKey(d);
 
 switch unitClass(d.unit)
     case 'item'                                        % seg / dvs
+        % THE TIME ROW CARRIES THE RECONSTRUCTION.  A value per segment per sample
+        % painted back through sMap, one frame per sample, is the video an LSCI
+        % recording actually has - the same operation image.fromSegments does once,
+        % done once per sample.  It is not on the f,time row: a spectrum cube would
+        % have to be sliced at one frequency first, and that is a second question.
         switch key
             case '',         P = {'box','bar','image.fromSegments'};
             case 'pct',      P = {'curve.pct'};
             case 'harmonic', P = {'curve.harmonic'};
             case 'f',        P = {'curve.f'};
-            case 'time',     P = {'curve.time'};
+            case 'time',     P = {'curve.time','video.fromSegments'};
             case 'f,time',   P = {'heat.ft','curve.f','curve.time'};
             case 'f,pct',    P = {'curves.family','heat.fpct'};
         end
 
     case 'pixel'
+        % A PER-PIXEL RESULT IS A PICTURE, AND ONLY A PICTURE.  It has no unit a
+        % reader can name, so there is nothing for a curve or a number to be OF: an
+        % ROI curve over a per-pixel time series used to be offered here and it is
+        % not a quantity the file holds, it is an average over whatever happened to
+        % be selected.  Averaging pixels is what a SEGMENT is for, and the per-segment
+        % branch beside it already carries that answer with the units named.
+        % A per-LINE myograph leaf is the opposite case and keeps its curves: a line
+        % is a position across the vessel, which is a unit exactly as a segment is.
+        % AND plane - the 'frame' key - IS NOT A COORDINATE EITHER (D9).  It indexes
+        % the layers stacked into commonMask, so one layer at a time is the whole of
+        % what it can be asked; a video of it is a slideshow of bookkeeping, and on
+        % the reference files it was the ONLY thing Kind = Video had to offer.
         switch key
             case '',                         P = {'image'};
-            case {'pct','harmonic','frame','f'}
+            case 'frame',                    P = {'image.frame'};
+            case {'pct','harmonic','f'}
                                              P = {'video','image.frame'};
-            case 'time',                     P = {'video','image.timeAverage','curve.time'};
+            case 'time',                     P = {'video','image.timeAverage'};
             case 'f,time',                   P = {'video','image.timeAverage','heat.ft'};
             case 'f,pct',                    P = {'video','image.frame','heat.fpct'};
         end
@@ -217,7 +268,7 @@ switch char(plotId)
           'curve.harmonic','curve.position','curves.family'}, k = 'Vector';
     case {'image','image.fromSegments','image.timeAverage', ...
           'image.frame','heat.ft','heat.fpct','heat.positionTime'}, k = 'Image';
-    case 'video',                                        k = 'Video';
+    case {'video','video.fromSegments'},                 k = 'Video';
     otherwise
         error('exPlotRules:plotId','Unknown plot ''%s''.', char(plotId));
 end
@@ -227,7 +278,7 @@ function ids = allPlotIds()
 ids = {'box','bar','curve.time','curve.f','curve.pct','curve.harmonic', ...
        'curve.position','curves.family','image','image.fromSegments', ...
        'image.timeAverage','image.frame','heat.ft','heat.fpct', ...
-       'heat.positionTime','video'};
+       'heat.positionTime','video','video.fromSegments'};
 end
 
 % ================================================================= THE PLOT KEY
@@ -417,6 +468,21 @@ switch plotId
         ax.y = mkAx('','','linear',[],A);
         ax.c = mkVar(vLab);
         ax.unitAxis = 'pixel';
+        ax.scrub    = scrubAx(d, A, want);
+        ax.scrubChoices = drawableDims(d, {});
+        ax.slice    = setdiffDims(ax.scrubChoices, {ax.scrub.name});
+
+    case 'video.fromSegments'
+        % THE INVERSE OF A ROW SELECTION, ONCE PER SAMPLE.  Everything image.
+        % fromSegments says holds here - the unit is drawn rather than reduced, so
+        % the units are kept and never pooled - and the extra fact is the scrub: the
+        % dimension it walks is the leaf's OWN time base, taken from the registry and
+        % labelled in seconds, never in frame numbers.
+        ax.x = mkAx('','','linear',[],A);
+        ax.y = mkAx('','','linear',[],A);
+        ax.c = mkVar(vLab);
+        ax.unitAxis = 'pixel';
+        ax.units    = 'points';
         ax.scrub    = scrubAx(d, A, want);
         ax.scrubChoices = drawableDims(d, {});
         ax.slice    = setdiffDims(ax.scrubChoices, {ax.scrub.name});

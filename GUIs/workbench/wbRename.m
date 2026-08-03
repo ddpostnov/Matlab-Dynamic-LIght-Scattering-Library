@@ -4,8 +4,8 @@
 %   produced ('_t_K', '_c_K', '_t_BFI', ...), the report images written beside them,
 %   the raw recording they came from, and any workbook exported from them - all of
 %   them named after ONE recording identity.  Renaming a single member is therefore
-%   not on offer: every wrapper finds its siblings with
-%   strrep(fName,'_d.mat','_s.mat'), so a lone _d rename breaks the set the moment
+%   not on offer: every wrapper is handed the _r member and finds the other two with
+%   getProductPath(fName,'d'|'s'), so renaming one alone breaks the set the moment
 %   anything runs.  This module renames the identity, and everything named after it
 %   moves together (author decision D4, 2026-07-31).
 %
@@ -15,8 +15,8 @@
 %   - no name is invented any other way.  What belongs to the recording is decided
 %   twice over:
 %     * a '.mat' belongs when wbFileModel parses it to the SAME identity, so a
-%       rename of 'Foo' can never carry away 'Foo_b2_t_K_d.mat' (identity 'Foo_b2')
-%       or 'Foo2_t_K_d.mat' (a different recording entirely);
+%       rename of 'Foo' can never carry away 'Foo_b2_t_K_r.mat' (identity 'Foo_b2')
+%       or 'Foo2_t_K_r.mat' (a different recording entirely);
 %     * a RAW RECORDING (.rls / .mraw / .cxd / a video) is a recording in its own
 %       right, so it belongs only when its name IS the identity - renaming 'Foo'
 %       must never move 'Foo_a1.rls';
@@ -59,7 +59,7 @@
 %             .why        one line, '' when .ok.
 %
 % Example:
-%    m    = wbFileModel('D:\data\PSY01_a1_t_K_d.mat');
+%    m    = wbFileModel('D:\data\PSY01_a1_t_K_r.mat');
 %    list = wbRename('plan', m, 'PSY01_a2');
 %    if wbRename('check', list), out = wbRename('apply', list); end
 %
@@ -120,7 +120,7 @@ function [tf, rest, ext] = belongsTo(folder, name, base, identity)
 %   is known about the name:
 %     a '.mat'              the name GRAMMAR decides - wbFileModel must parse it to
 %                           the same identity, so a rename of 'Foo' can carry away
-%                           neither 'Foo2_t_K_d.mat' nor 'Foo_b2_t_K_d.mat';
+%                           neither 'Foo2_t_K_r.mat' nor 'Foo_b2_t_K_r.mat';
 %     a RAW RECORDING       a recording of its own, so only an exact name match -
 %                           renaming 'Foo' must never move 'Foo_a1.rls';
 %     anything else         a report image or a workbook written beside the data, so

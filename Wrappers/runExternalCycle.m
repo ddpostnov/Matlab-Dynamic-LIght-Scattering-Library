@@ -1,6 +1,6 @@
 %runExternalCycle  Extract and average stimulus-locked LSCI epochs
 %
-%   runExternalCycle(s,fNames) processes each *_K_d.mat file in fNames that
+%   runExternalCycle(s,fNames) processes each *_K_r.mat file in fNames that
 %   originates from the basic contrast pipeline.  For a periodic external
 %   stimulus (e.g. whisker stimulation in neuro-vascular coupling studies)
 %   the function
@@ -24,9 +24,9 @@
 %     s        parameter structure (fields: stimStartType, stimOffset,
 %              epochsN, epochDurationSec, epochBaselineSec, epochFinaleSec,
 %              reject*Coefs, maskType, enablelRejectionModification, etc.)
-%     fNames   cell array of full paths to CONTRAST products - *_t_K_d.mat or
-%              *_s_K_d.mat, as written by runContrastFromRLS.  A cardiac product
-%              (*_c_K_d.mat) is not an input: it is one averaged period and carries
+%     fNames   cell array of full paths to CONTRAST products - *_t_K_r.mat or
+%              *_s_K_r.mat, as written by runContrastFromRLS.  A cardiac product
+%              (*_c_K_r.mat) is not an input: it is one averaged period and carries
 %              no results.timeStamp, so there is no recording clock to place the
 %              stimulus on.  Rejected with a named error rather than a missing-field
 %              one; the workbench never offers the combination (requires 'contrast').
@@ -38,7 +38,7 @@
 %
 %   EXAMPLE
 %     p = defaultExternalCycleParams();
-%     files = dir(fullfile(dataRoot,'*_K_d.mat'));
+%     files = dir(fullfile(dataRoot,'*_K_r.mat'));
 %     runExternalCycle(p, fullfile({files.folder}',{files.name}'));
 %
 %   DEPENDS ON
@@ -95,8 +95,10 @@
 % s.rejectFirstEpoch=1; %always reject the first epoch
 
 function runExternalCycle(s,fNames)
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_d.mat'), fNames(:)) )
-    error('One or more *non-empty* entries do not contain "_K_d.mat".');
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries do not contain "_K_r.mat".  Every ' ...
+        'step takes the RESULTS member of a product - list them with ' ...
+        'getFileNamesList(rootFolder,''*_K_r.mat'').']);
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -111,9 +113,9 @@ for fidx=1:1:numel(fNames)
         s.fName=fNames{fidx};
         reportFile(rep,fidx,s.fName);
         clearvars results source settings
-        load(s.fName,'source')
-        load(strrep(s.fName,'_d.mat','_s.mat'),'settings');
-        load(strrep(s.fName,'_d.mat','_r.mat'),'results');
+        load(getProductPath(s.fName,'d'),'source')
+        load(getProductPath(s.fName,'s'),'settings');
+        load(s.fName,'results');
         data=source.data; source=rmfield(source,"data");
         %source.time is [T x 1] library-wide; normalised here anyway so no expression
         %below can be silently orientation-dependent (it used to need a ROW, which no
@@ -123,13 +125,13 @@ for fidx=1:1:numel(fNames)
         %This step needs the ABSOLUTE start of the recording to place the stimulus, and
         %only a step that read the raw recording clock can supply it.  runInternalCycle
         %writes no timeStamp - its product is one AVERAGED cardiac period, a cube with no
-        %position on the recording timeline - so a *_c_K_d.mat cannot be epoched, by
+        %position on the recording timeline - so a *_c_K_r.mat cannot be epoched, by
         %construction rather than by omission (wbStepRegistry: requires 'contrast').
         if ~isfield(results,'timeStamp')
             error('runExternalCycle:noTimeStamp', ...
                 ['%s carries no results.timeStamp, so the stimulus cannot be located ' ...
-                 'on the recording clock.  Epoch a contrast product (*_t_K_d.mat or ' ...
-                 '*_s_K_d.mat); an averaged cardiac cycle (*_c_K_d.mat) has no timeline.'], ...
+                 'on the recording clock.  Epoch a contrast product (*_t_K_r.mat or ' ...
+                 '*_s_K_r.mat); an averaged cardiac cycle (*_c_K_r.mat) has no timeline.'], ...
                 s.fName);
         end
         s.rlsStartTime=datetime(results.timeStamp,'ConvertFrom','epochtime','Epoch',datetime(1970,1,1),'TicksPerSecond',1e3,'Format', 'HH:mm:ss.SSS');
@@ -340,9 +342,12 @@ for fidx=1:1:numel(fNames)
         reportWriting(rep);
         settings.externalCycle=reportSettings(s);
         results.time=source.time;
-        save(strrep(s.fName,'_K_d.mat','_e_K_d.mat'),'source','-v7.3','-nocompression');
-        save(strrep(s.fName,'_K_d.mat','_e_K_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(s.fName,'_K_d.mat','_e_K_s.mat'),'settings','-v7.3','-nocompression');
+        % the epoch triplet INSERTS its own flag into the input's name; the other two
+        % members are named from the RESULTS one so the three cannot drift apart
+        epochName=strrep(s.fName,'_K_r.mat','_e_K_r.mat');
+        save(getProductPath(epochName,'d'),'source','-v7.3','-nocompression');
+        save(epochName,'results','-v7.3','-nocompression');
+        save(getProductPath(epochName,'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

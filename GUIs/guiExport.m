@@ -21,12 +21,12 @@
 %
 % HOW TO USE IT
 %   1. Get files in, three ways (mix them freely):
-%        - "Add files..."     pick *_d.mat products by hand;
-%        - "Scan folder..."   a recursive glob (getFileNamesList), e.g. '*_BFI_d.mat';
+%        - "Add files..."     pick *_r.mat products by hand;
+%        - "Scan folder..."   a recursive glob (getFileNamesList), e.g. '*_BFI_r.mat';
 %        - "Load session..."  a workbench session - the file list arrives with its
 %                             animal / type / group labels already resolved.
-%      Every input is resolved to the exportable products of that recording: a
-%      *_d.mat whose *_r.mat RESULTS sibling exists.
+%      Every input is resolved to the exportable products of that recording: its
+%      *_r.mat RESULTS files.
 %   2. Curate the list.  Untick 'use' to leave a file out; edit animal / type /
 %      group in place for files that came without labels; filter the table by any
 %      of the three labels to export one experimental group at a time.  The filter
@@ -103,7 +103,7 @@ s1 = uigridlayout(s1p,[2 7],'RowHeight',{'fit','fit'}, ...
     'Padding',[6 6 6 6],'RowSpacing',5,'ColumnSpacing',6,'BackgroundColor','w');
 
 c.addBtn = uibutton(s1,'Text','Add files...','ButtonPushedFcn',@onAddFiles, ...
-    'Tooltip','pick processed *_d.mat products by hand');
+    'Tooltip','pick processed *_r.mat products by hand');
 c.scanBtn = uibutton(s1,'Text','Scan folder...','ButtonPushedFcn',@onScanFolder, ...
     'Tooltip','search a folder recursively for the glob on the right');
 c.sessBtn = uibutton(s1,'Text','Load session...','ButtonPushedFcn',@onLoadSession, ...
@@ -111,9 +111,9 @@ c.sessBtn = uibutton(s1,'Text','Load session...','ButtonPushedFcn',@onLoadSessio
     'Tooltip',['read a Processing Workbench session: the file list arrives with ' ...
                'its animal / recording type / experimental group already resolved']);
 uilabel(s1,'Text','Glob');
-c.globF = uieditfield(s1,'text','Value','*_BFI_d.mat', ...
+c.globF = uieditfield(s1,'text','Value','*_BFI_r.mat', ...
     'Tooltip',['what "Scan folder..." looks for, searched recursively.  ' ...
-               '*_BFI_d.mat for processed speckle recordings, *_MYO_d.mat for ' ...
+               '*_BFI_r.mat for processed speckle recordings, *_MYO_r.mat for ' ...
                'myograph ones']);
 c.clearBtn = uibutton(s1,'Text','Clear list','ButtonPushedFcn',@(~,~)clearList(), ...
     'Tooltip','empty the file list');
@@ -272,7 +272,7 @@ if nargout>0, h = fig; end
 
 %% ========================== INPUT ====================================== %%
     function onAddFiles(~,~)
-        [f,p] = uigetfile({'*_d.mat','Processed SOURCE files (*_d.mat)'; ...
+        [f,p] = uigetfile({'*_r.mat','Processed results files (*_r.mat)'; ...
                            '*.mat','MATLAB files (*.mat)'}, ...
             'Select processed recordings to export','MultiSelect','on',app.lastRoot);
         if isequal(f,0), return; end
@@ -347,7 +347,7 @@ if nargout>0, h = fig; end
     end
 
     function addItems(paths, lab)
-        %addItems  Expand every input path to its exportable *_d.mat products, drop
+        %addItems  Expand every input path to its exportable *_r.mat products, drop
         %   duplicates, probe each RESULTS file once, then rebuild the whole UI.
         n0 = numel(app.items);
         have = containers.Map('KeyType','char','ValueType','logical');
@@ -365,13 +365,17 @@ if nargout>0, h = fig; end
         n = numel(app.items);
         setStatus(sprintf('%d exportable recording(s) (%d new).', n, n-n0));
         if n==n0
-            logLine('no new exportable products (a product needs its _r.mat sibling)');
+            logLine('no new exportable products (a recording needs an _r.mat results file)');
         end
     end
 
-    function it = makeItem(dPath, lab)
-        [~,nm,ex] = fileparts(dPath);
-        it = struct('path',dPath,'rpath',strrep(dPath,'_d.mat','_r.mat'), ...
+    function it = makeItem(rPath, lab)
+        %makeItem  One row of the list.  'path' is what exportToExcel is handed and
+        %   'rpath' is what the probe reads - the SAME file since the library refers
+        %   to a product by its RESULTS member; the field is kept because the probe
+        %   cache and the session sidecar are both keyed by it.
+        [~,nm,ex] = fileparts(rPath);
+        it = struct('path',rPath,'rpath',rPath, ...
             'name',[nm ex],'animal',lab.animal,'type',lab.type,'group',lab.group, ...
             'use',true,'cols',{{}},'has','','note','');
     end
@@ -791,7 +795,7 @@ if nargout>0, h = fig; end
             drawnow limitrate
             try
                 exportToExcel(files(k), O);
-                out = strrep(files{k},'_d.mat',['.' c.fmt.Value]);
+                out = strrep(files{k},'_r.mat',['.' c.fmt.Value]);
                 paths{end+1} = out; %#ok<AGROW>
                 nok = nok + 1;
                 logLine(['  wrote ' out]);
@@ -867,26 +871,25 @@ end
 
 function prods = resolveProducts(pth)
 %resolveProducts  The exportable products of ONE input path.  exportToExcel takes
-%   the SOURCE member of a triplet ('*_d.mat') and reads its '_r.mat' sibling, so a
-%   product is exportable only when that sibling exists.  A raw recording (or any
-%   member of the same recording) expands to EVERY product of that recording -
-%   '_t_BFI', '_c_BFI', ... - which is how a session of .rls files becomes a list of
-%   workbooks.  Identity comes from wbFileModel, so a 'Roi2_' crop stays distinct.
+%   the RESULTS member of a triplet ('*_r.mat'), so a product is exportable exactly
+%   when it has one.  A raw recording (or any other member of the same recording)
+%   expands to EVERY product of that recording - '_t_BFI', '_c_BFI', ... - which is
+%   how a session of .rls files becomes a list of workbooks.  Identity comes from
+%   wbFileModel, so a 'Roi2_' crop stays distinct.
 prods = {};
 pth = char(pth);
 if isempty(pth), return; end
-if endsWith(pth,'_d.mat') && isfile(strrep(pth,'_d.mat','_r.mat'))
+if endsWith(pth,'_r.mat') && isfile(pth)
     prods = {pth};
     return
 end
 m = wbFileModel(pth);
 if isempty(m.folder) || ~isfolder(m.folder), return; end
-d = dir(fullfile(m.folder,[m.roiPrefix m.stem '*_d.mat']));
+d = dir(fullfile(m.folder,[m.roiPrefix m.stem '*_r.mat']));
 for k = 1:numel(d)
     p = fullfile(d(k).folder,d(k).name);
     cm = wbFileModel(p);
     if ~strcmp(cm.identity, m.identity), continue; end
-    if ~isfile(strrep(p,'_d.mat','_r.mat')), continue; end
     prods{end+1} = p; %#ok<AGROW>
 end
 end
