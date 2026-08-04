@@ -15,6 +15,9 @@
 %
 % Optional Name-Value Pair Arguments:
 %    'kernelSize'  - (Numeric) Size of the window used for contrast calculation.
+%                    Must be ODD: the window is centred on the pixel it describes,
+%                    and an even size has no centre - the 'cpu' and 'gpu' branches
+%                    would place it on opposite sides and return different contrast.
 %                    Default: 25 for 'temporal', 5 for 'spatial'.
 %    'procType'    - (String) Processor to use: 'cpu' or 'gpu'. Default: 'gpu'.
 %    'decimFactor' - (Numeric) Factor for temporal decimation/averaging.
@@ -40,7 +43,8 @@
 %    data         - Processed contrast data as a 3D matrix [Y, X, OutputTime].
 %                   OutputTime = floor(InputTime / decimFactor).
 %    time         - (Optional) Decimated time vector corresponding to the
-%                   output frames.
+%                   output frames, [OutputTime x 1] - a COLUMN whatever the
+%                   orientation of the 'time' input and whatever decimFactor.
 %
 % Examples:
 %    % 1. Standard Temporal Contrast (GPU, default kernel=25):
@@ -58,7 +62,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 04-August-2026
 %------------- BEGIN CODE --------------
 function [data, time] = getK(dataIn,contrastType, varargin)
 p = inputParser;
@@ -99,6 +103,20 @@ if isempty(kernelSize)
     end
 end
 
+%A contrast window is CENTRED on the pixel it describes, and an even size has no centre.
+%The two branches below then stop agreeing: conv2/convn 'same' takes an even window as K
+%taps placed to one side, movstd's [floor(K/2) floor(K/2)] takes it as K+1 taps placed to
+%the other.  Measured on a real recording, 'gpu' and 'cpu' return the same contrast to
+%rounding at K=25 and K=49 (1.6e-5, 1.3e-5) and differ by 21% at K=50 and 35% at K=24.
+%The callers assume the centre too - getContrastFromRLS sizes its overlap tail from
+%floor(kernelSize/2), runInternalCycle pads its read with it - so the size is refused
+%here rather than centred one way and left to disagree with everything downstream.
+if ~isscalar(kernelSize) || ~isfinite(kernelSize) || kernelSize < 1 || mod(kernelSize,2) ~= 1
+    error('getK:EvenKernel', ...
+        'kernelSize must be an odd whole number of pixels or frames, and %s is not: a contrast window has to be centred on the pixel it describes.', ...
+        mat2str(kernelSize));
+end
+
 if strcmpi(decimMethod, 'sharp')
     if strcmpi(contrastType, 'spatial')
         error('getContrastFromRLS:InvalidMethod', ...
@@ -135,14 +153,19 @@ else
     end
 end
 
+%The time base is a COLUMN, [T x 1], everywhere in this library - frames run down the
+%rows, matching source.time and results.sData's [nT x nSeg].  Both branches say so
+%explicitly: the decimated one returned a ROW from mean(...,1) while the undecimated one
+%passed whatever the caller handed in, so the SAME function's second output changed
+%orientation with decimFactor.
 if ~isempty(timeIn)
     if length(timeIn) ~= sz(3)
         error('Time vector length must match the number of frames (size(dataIn,3)).');
     end
     if decimFactor > 1
-        time = mean(reshape(timeIn(1:framesToProc), decimFactor, outT),1);
+        time = mean(reshape(timeIn(1:framesToProc), decimFactor, outT),1).';
     else
-        time = timeIn;
+        time = timeIn(:);
     end
 end
 
@@ -153,14 +176,14 @@ switch contrastType
         data=allocOut([sz(1)*sz(2),outT],outputType);
         switch procType
             case 'gpu'
-                memAvailGPU = gpuDevice;
-                memAvailGPU = memAvailGPU.AvailableMemory;
-                batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches. 
-                batchSize=floor(size(dataIn,1)./batchNum);
+                memAvailGPU = gpuDeviceBudget(dataIn);
+                batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches.
+                rowEdges=rowBlockEdges(size(dataIn,1),batchNum);
                 kernel=gpuArray(ones(1,kernelSize,'single'))./kernelSize;
                 normMap = conv2(gpuArray.ones(1, sz(3), 'single'), kernel, 'same');
-                for i=1:batchSize:size(dataIn,1)
-                    i2=min(i+batchSize-1,size(dataIn,1));
+                for b=1:numel(rowEdges)-1
+                    i =rowEdges(b)+1;
+                    i2=rowEdges(b+1);
                     if decimFactor > 1 && strcmpi(decimMethod, 'sharp')
                         dataGPU=single(gpuArray(dataIn(i:i2,1:framesToProc)));
                         numSubBlocks = decimFactor / kernelSize;
@@ -198,9 +221,10 @@ switch contrastType
                     memAvailRAM = memAvailRAM.PhysicalMemory.Available;
                 end
                 batchNum=ceil(max((4*numel(dataIn)*4)./(memAvailRAM*memoryCoef),1)); % operations below should take aprox 2x batch array size, but, we allocate 3x just for safety
-                batchSize=floor(size(dataIn,1)./batchNum);
-                for i=1:batchSize:size(dataIn,1)
-                    i2=min(i+batchSize-1,size(dataIn,1));
+                rowEdges=rowBlockEdges(size(dataIn,1),batchNum);
+                for b=1:numel(rowEdges)-1
+                    i =rowEdges(b)+1;
+                    i2=rowEdges(b+1);
                     chunk = single(dataIn(i:i2, :));
                     if decimFactor > 1 && strcmpi(decimMethod, 'sharp')
                         chunk = chunk(:, 1:framesToProc);
@@ -232,9 +256,8 @@ switch contrastType
         switch procType
             case 'gpu'
                 data=allocOut(outSz,outputType);
-                memAvailGPU = gpuDevice;
-                memAvailGPU = memAvailGPU.AvailableMemory;
-                batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches. 
+                memAvailGPU = gpuDeviceBudget(dataIn);
+                batchNum=ceil(max((7*numel(dataIn)*4)./(memAvailGPU*memoryCoef),1)); % The actual memory use is approx 3*numel, we use 7*numel because for high-end consumer GPU performance is better with small batches.
                 batchSize=floor(size(dataIn,3)./batchNum);
 
                 batchSize = floor(batchSize/decimFactor) * decimFactor;
@@ -297,6 +320,49 @@ switch contrastType
                     data(:,:,j:j2) = chunk;
                 end
         end
+end
+end
+
+% =====================================================================
+function e = rowBlockEdges(nRows,batchNum)
+%rowBlockEdges  Pixel-row block boundaries, all of the same height to within one row.
+%   Block k is the rows e(k)+1 : e(k+1).
+%
+%   The two temporal branches used to step 1:floor(nRows/batchNum):nRows, which leaves a
+%   RAGGED final block whenever batchNum does not divide the row count - on a 1496x896
+%   camera at batchNum 3 that block is exactly ONE row.  Height 1 is the one height at
+%   which the decimation mean(reshape(x,rows,decimFactor,outT),2) rounds differently:
+%   measured on an RTX 4090 on 2026-08-04, heights 2, 3, 4, 7, 8, 16, 17, 1000, 4999,
+%   5000, 6667 and 10000 are all BIT-IDENTICAL to the whole-height answer while height 1
+%   is not (max|d| 1.5e-05, 1.6e-07 relative).  So the last pixel of the frame was
+%   computed by different arithmetic from every other pixel - and batchNum comes from
+%   gpuDevice.AvailableMemory, so which pixels that hit depended on how much of the card
+%   happened to be free.  Two runs of the same recording could disagree there.
+%   An even split never makes that block, which is what makes the result independent of
+%   the split rather than merely less often wrong.  (conv2, the decimFactor 1 path, is
+%   invariant at every height including 1, so nothing that does not decimate moves.)
+%
+%   Capping batchNum at half the row count is the same guarantee stated for the other
+%   end: it also removes the missing batchSize==0 guard - the two SPATIAL branches have
+%   had one for as long as they have had a split - which on a batchNum above the row
+%   count gave a step of 0 and a loop that never advanced.
+nB = max(1,min(batchNum,floor(nRows/2)));
+e  = round(linspace(0,nRows,nB+1));
+end
+
+% =====================================================================
+function m = gpuDeviceBudget(dataIn)
+%gpuDeviceBudget  What the batch loops above may spend, in bytes.
+%   AvailableMemory answers what is free RIGHT NOW, so a dataIn that is already on the
+%   card has been subtracted from it - while the 7*numel*4 estimate the callers divide
+%   by it is a whole-footprint figure that still counts dataIn.  Left alone the two
+%   disagree by the input's own size, the loop splits finer than the card needs, and
+%   every extra split is one more real device copy of a sub-batch.  So a resident input
+%   is added back, and a host input is not.
+m = gpuDevice;
+m = m.AvailableMemory;
+if isa(dataIn,'gpuArray')
+    m = m + numel(dataIn)*numel(typecast(cast(0,underlyingType(dataIn)),'uint8'));
 end
 end
 

@@ -46,13 +46,17 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 04-August-2026
 
 %------------- BEGIN CODE --------------
 function [dataLSCI,time,timeStamp,trustMatrix,settings]=getContrastFromMRAW(mrawFileName,contrastType,contrastKernel,rawBatchSize,procType,decimation,saveContrast,selectROI,rawAveraging)
 
 timeStamp=0;
-procType=erase(lower(procType),'fast');       % accept legacy 'fastcpu'/'fastgpu' -> 'cpu'/'gpu'
+%One spelling, the same one getK and getContrastFromRLS validate against.  The
+%erase(lower(procType),'fast') that stood here accepted a second, older spelling
+%('fastcpu'/'fastgpu') that nothing in the library writes any more - the launchers and
+%the workbench registry both offer 'gpu'/'cpu' - so it could only ever silence a typo.
+procType=validatestring(procType,{'cpu','gpu'});
 %read metadata
 [dataLSCI,fps,~,rawFramesN]=readMRAW(mrawFileName,0,1);
 ROI=[1,size(dataLSCI,1);1,size(dataLSCI,2)];

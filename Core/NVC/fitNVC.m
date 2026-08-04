@@ -214,8 +214,8 @@
 %    m      = fitNVC(results.sData(:,7), layout, s);
 %    fprintf('zeta = %.2f, undershoot/peak = %.2f\n', m.Zeta, m.URatio);
 %
-% See also: runFitNVC, getPulsatilityMetrics, getVasomotionMetrics, runExternalCycle,
-%           lsqcurvefit
+% See also: runFitNVC, fitVasoreactivity, quasiUniform, getPulsatilityMetrics,
+%           getVasomotionMetrics, runExternalCycle, lsqcurvefit
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -424,19 +424,6 @@ if nStarts>nSeed
     S(nSeed+1:end,L.iT0:L.nPBase)=Q;
 end
 L.starts=S;
-end
-
-% =====================================================================
-function U=quasiUniform(n,dim)
-%quasiUniform  Roberts' R_d low-discrepancy sequence on the unit cube.
-%   phi is the real root of x^(dim+1) = x + 1 (the generalised golden ratio), found
-%   by the fixed-point iteration x <- (1+x)^(1/(dim+1)), which converges in a few
-%   steps for every dim used here.  No random number generator is involved, so no
-%   rng state leaks between traces or between workers.
-phi=2;
-for k=1:32, phi=(1+phi)^(1/(dim+1)); end
-alpha=phi.^-(1:dim);
-U=mod(0.5+(1:n)'*alpha,1);
 end
 
 % =====================================================================

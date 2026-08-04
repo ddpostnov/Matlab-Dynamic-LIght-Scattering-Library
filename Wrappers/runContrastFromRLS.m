@@ -17,8 +17,9 @@
 %
 %   INPUTS
 %     s        parameter structure with fields:
-%              • contrastType, contrastKernel, rawBatchSize
-%              • procType, decimation
+%              • contrastType, contrastKernel
+%              • decimFactor, decimMethod
+%              • procType          'gpu' or 'cpu'
 %              • trustLimitsK(1:2)  accepted contrast range
 %              • trustLimitsI(1:2)  accepted intensity range
 %              • minTrust(1:3)      quality thresholds
@@ -48,13 +49,12 @@
 % s.contrastKernel=25; %typical values: 25 for 'temporal', 5 or 7 for 'spatial'
 % s.decimFactor=25; %decimates the contrast. Output framerate = original framerate / s.decimation
 % % %ADJUSTED IF NECESSARY - PERFORMANCE ADJUSTEMNTS
-% s.procType='fastcpu'; %use 'fastgpu' for spatial contrast type if high-end GPU is availible, 'fastcpu' otherwise
-% s.rawBatchSize=1000; %only affects processing speed, depends on availible memory (GPU and RAM)
+% s.procType='gpu'; %use 'gpu' if a high-end GPU is availible, 'cpu' otherwise
 % % %ADJUSTED IF NECESSARY - INITIAL MASKING PARAMETERS
 
 % s.minTrust=[0.68,0.68,0.68]; %in relation of uncertain frames to the total number
 % s.manualMask=0; %allows manual subselection of the area to mask
-% s.decimaMethod='leaking';
+% s.decimMethod='leaking';
 
 function runContrastFromRLS(s,fNames)
 
@@ -80,11 +80,11 @@ for fidx=1:1:numel(fNames)
         % Starting line above and the Finished line below are the whole account
         % of this recording.
         [source.data,source.time,results.timeStamp,s.trustMatrix]=...
-            getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
+            getContrastFromRLS(s.fName,s.contrastType,'kernelSize',s.contrastKernel,'procType',s.procType,'decimFactor',s.decimFactor,'decimMethod',s.decimMethod);
 
         imgK=squeeze(mean(source.data,3,'omitmissing'));
         imgBFI=1./(imgK.*imgK);
-        results.imgI=s.trustMatrix(:,:,4);
+        results.imgI=s.trustMatrix(:,:,3);
         results.imgK=imgK;
 
         % Set mask

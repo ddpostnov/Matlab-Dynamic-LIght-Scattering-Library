@@ -208,7 +208,46 @@ fNames=getFileNamesList(resultsFolder,'*_t_BFI_r.mat'); %if structured file name
 
 runVasomotion(s,fNames);  %LAUNCHES THE PROCESSING ROUTINE
 
-%% STEP 8 Assign vessel types and regions of interest
+%% STEP 8 (Optional) Fit the response to a drug injection or a gas challenge
+close all
+clearvars -except fNames libraryFolder rootFolder resultsFolder
+
+s.libraryFolder=libraryFolder;
+
+%ADJUSTED PER PROTOCOL - WHEN THE DRUG WAS GIVEN.  One number per recording, in the
+%same order as the file list below; a single number is used for all of them.  Nothing
+%earlier in this pipeline records an injection time, so it is set here and nowhere else.
+s.injectionSec=600; %seconds from the start of the recording
+s.baselineSec=[60,540]; %the quiet stretch before the injection the response is measured against. It HAS TO END BEFORE the injection
+
+%ADJUSTED (OR VERIFIED) PER PROTOCOL - RESPONSE MODEL
+s.vrcModel='bateman'; %a rising and a falling phase on a drifting baseline. The reported amplitude is the peak change in the trace's own units
+s.tgtFS=1; %Hz. The traces are averaged down to this rate before fitting - the response takes minutes, so 1 Hz is plenty and 45 minutes of raw frames would not fit in memory
+
+%ADJUSTED IF NECESSARY - WHAT COUNTS AS A RESPONSE
+s.vrcAucSec=2700; %how long after the injection the area under the response is taken over, seconds
+s.vrcStealK=2; %how far below baseline, in baseline noise levels, counts as a dip
+s.vrcStealFrac=0.15; %or this fraction of the response, whichever is the larger drop
+s.vrcStealSec=60; %and how long it has to stay there before the recording is flagged
+s.vrcWashFrac=0.1; %washout time = when the response is back to this fraction of its peak
+
+%ADJUSTED IF NECESSARY - Which per-segment analysis levels to compute/store
+s.segVrcReturn={'markers','model','reconstruction'}; %markers (model-free scalars), model (fitted parameters - runs the fit), reconstruction (the fitted curve). Default = all three
+s.ppxVrcReturn=[]; %[] = off. NON-EMPTY fits every pixel of the field over the whole recording - expect many minutes
+
+%ADJUSTED IF NECESSARY - Fitting
+s.vrcStarts=16; %how many start points the fit is tried from. Fewer is faster and more likely to settle on a wrong answer
+
+%ADJUSTED IF NECESSARY - Parallel execution
+s.parforVrcSegments=true;
+s.parforVrcPixels=true; %false fits one at a time in this MATLAB and starts no parallel pool
+
+%SET FILE NAMES HERE - THE ORDER MATTERS: s.injectionSec is read position by position
+fNames=getFileNamesList(resultsFolder,'*_t_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+runFitVasoreactivity(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
+
+%% STEP 9 Assign vessel types and regions of interest
 close all
 clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
@@ -230,7 +269,7 @@ for i=1:1:size(fNames,1)
     setVesselTypes(s,fNames(i,:)');
 end
 
-%% STEP 9 (OPTIONAL) Export key results to an excel table
+%% STEP 10 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
 fNames=getFileNamesList(resultsFolder,'*_t_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 

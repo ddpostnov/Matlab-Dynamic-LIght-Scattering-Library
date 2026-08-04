@@ -329,7 +329,7 @@ s.presets=struct('default',struct('contrastType','temporal','contrastKernel',25,
     'decimFactor',25,'decimMethod','sharp','procType','gpu','trustLimitsK',[0.001 0.99], ...
     'trustLimitsI',[1 254],'minTrust',[0.99 0.99],'manualMask',0));
 s.tips=struct('contrastType','''temporal'' or ''spatial''', ...
-    'contrastKernel','25 for temporal, 5-7 for spatial', ...
+    'contrastKernel','must be odd: 25 for temporal, 5 or 7 for spatial', ...
     'decimFactor','output framerate = original / decimFactor', ...
     'decimMethod','''sharp'' (temporal only) or ''leaking''', ...
     'procType','''gpu'' for spatial if a high-end GPU is available, else ''cpu''', ...
@@ -368,6 +368,8 @@ s.presets=struct('default',struct('maskLimitsK',[0.01 0.3],'maskLimitsI',[5 250]
     'decimationSpace',4,'framesToAverage',1,'contrastKernelT',25,'contrastKernelPreproc',5, ...
     'interpFactor',10,'smoothCoef1',1/3,'minPromCoef',1/4));
 s.tips=struct('method','sLSCIMM recommended; ltLSCIMM for high-quality data', ...
+    'contrastKernelS','spatial contrast kernel, must be odd: 5 or 7', ...
+    'contrastKernelPreproc','spatial kernel used to detect the pulse, must be odd: 5 or 7', ...
     'maxFrqIni','initial max frequency of interest, Hz', ...
     'minFrqIni','initial min frequency of interest, Hz', ...
     'coeffsSTD','pulse-rejection coefficients relative to feature std', ...
@@ -611,7 +613,118 @@ s.tips=struct('nHarm','number of harmonics in the sinusoidal cardiac model', ...
     'parforPulsatilityPixels',parforTip('the per-pixel fit'));
 reg(end+1)=s;
 
-% ---- 12. vesselTypes (per animal) --------------------------------------------
+% ---- 12. fitNVC (stimulus-locked response fit) -------------------------------
+s = base();
+s.id='fitNVC'; s.label='NVC fit'; s.wrapper=@runFitNVC;
+s.inGlob='*_e_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runFitNVC';
+% REQUIRES NAMES STEPS, NOT CAPABILITIES.  wbPrereqs matches these against step
+% IDS, so the epoch product's producer is 'externalCycle' - the token it PRODUCES
+% ('epochAvg') is a separate vocabulary nothing in the dependency graph reads.
+s.requires={'BFI','externalCycle'}; s.produces={'nvcFit'};
+% THE ROW IS 'contrast', NOT 'epoch', AND THAT IS NOT A TYPO.  There are two
+% different senses of "branch" in this library and only one of them is a row.
+% wbFileModel>branchOf classifies a FILE by its stage flag, and an '_e' product is
+% indeed on the 'epoch' branch there.  A ROW, though, exists only where a RAW
+% PRODUCER declares one (wbTypeSelection>branchesOf) - contrast, cardiac, myograph -
+% and externalCycle is a DERIVED consumer of '*_K_r.mat', so it creates no row of
+% its own.  Declaring 'epoch' here made wbTypeSelection>offers false on every row
+% that exists and the step unreachable in the workbench.  The epoch stage is part of
+% the contrast PIPELINE, which is exactly what wbStateEngine>samePipeline already
+% says - "a stage the pipeline grew into later (the external cycle's '_e')" - so the
+% NVC chain is ticked on the contrast row, beside the externalCycle that starts it.
+s.branch='contrast';
+s.artifacts={'_rep_nvcfit.jpg'};
+s.settingGroups={ 'Model',{'nvcModel','nvcDip','stimDurationSec'};
+                  'Analysis levels',{'segNvcReturn','ppxNvcReturn'};
+                  'Fitting',{'nvcStarts'};
+                  'Parallel',{'parforNvcSegments','parforNvcPixels'} };
+s.basicFields={'stimDurationSec','nvcModel'};
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('nvcModel',{{'secondOrder','doubleGamma'}});
+s.presets=struct('default',struct('nvcModel','secondOrder','nvcDip',false, ...
+    'stimDurationSec',5,'segNvcReturn',{{'markers','model','reconstruction'}}, ...
+    'ppxNvcReturn',{{'markers'}},'nvcStarts',16, ...
+    'parforNvcSegments',true,'parforNvcPixels',true));
+s.labels=struct('parforNvcSegments','Use parfor: segments', ...
+                'parforNvcPixels','Use parfor: per pixel');
+s.tips=struct( ...
+    'nvcModel',['''secondOrder'' fits the flow response of a damped autoregulatory ' ...
+       'system - its undershoot is mechanistic and its damping compares across ' ...
+       'protocols.  ''doubleGamma'' only describes the shape'], ...
+    'nvcDip','also fit a fast constriction before the rise, and report both fits side by side', ...
+    'stimDurationSec',['how long the stimulus lasts, seconds.  Taken from the ' ...
+       'external cycle step unless it is set here'], ...
+    'segNvcReturn','per-segment levels: markers / model / reconstruction', ...
+    'ppxNvcReturn',['per-pixel maps ([] = off).  Adding ''model'' fits every pixel ' ...
+       'of the field and takes minutes rather than seconds'], ...
+    'nvcStarts',['how many start points the fit is tried from.  Fewer is faster and ' ...
+       'more likely to settle on a wrong answer'], ...
+    'parforNvcSegments',parforTip('the per-segment fit'), ...
+    'parforNvcPixels',parforTip('the per-pixel analysis'));
+reg(end+1)=s;
+
+% ---- 13. fitVasoreactivity (drug / gas challenge response fit) ---------------
+s = base();
+s.id='fitVasoreactivity'; s.label='Vasoreactivity fit'; s.wrapper=@runFitVasoreactivity;
+% THE WHOLE RECORDING, not an average of it: a drug challenge is one continuous trace
+% with one injection, so this reads the contrast-side BFI product (_t_BFI or _s_BFI)
+% exactly as the vasomotion step does.  An epoch or cardiac average carries no
+% recording clock to place the injection on, and the wrapper refuses one by name.
+s.inGlob='*_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
+s.gatingField='runFitVasoreactivity';
+% REQUIRES NAMES STEPS, NOT CAPABILITIES.  wbPrereqs matches these against step IDS;
+% 'produces' is a separate vocabulary nothing in the dependency graph reads.
+s.requires={'BFI'}; s.requiresAny={'contrast'}; s.produces={'vasoreactivityFit'};
+% A ROW, NOT A FILE BRANCH.  Rows exist only where a RAW PRODUCER declares one
+% (wbTypeSelection>branchesOf): contrast, cardiac, myograph.  '' would be wrong too -
+% it offers the step on the cardiac and myograph rows, where a contrast BFI product
+% cannot exist, and it would also make the step recording-level.
+s.branch='contrast';
+% s.injectionSec IS A PER-FILE LIST, so the file order is part of the meaning: cut the
+% list and the files up differently and every fit anchors to the wrong time.
+s.fileOrder='ordered';
+s.artifacts={'_rep_vasoreactivityfit.jpg'};
+s.settingGroups={ 'Challenge',{'injectionSec','baselineSec'};
+                  'Model',{'vrcModel','tgtFS'};
+                  'Response limits',{'vrcAucSec','vrcStealK','vrcStealFrac','vrcStealSec','vrcWashFrac'};
+                  'Analysis levels',{'segVrcReturn','ppxVrcReturn'};
+                  'Fitting',{'vrcStarts'};
+                  'Parallel',{'parforVrcSegments','parforVrcPixels'} };
+s.basicFields={'injectionSec','baselineSec','tgtFS'};
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('vrcModel',{{'bateman'}});
+s.presets=struct('default',struct('vrcModel','bateman','tgtFS',1, ...
+    'injectionSec',[],'baselineSec',[],'vrcAucSec',2700,'vrcStealK',2, ...
+    'vrcStealFrac',0.15,'vrcStealSec',60,'vrcWashFrac',0.1, ...
+    'segVrcReturn',{{'markers','model','reconstruction'}},'ppxVrcReturn',[], ...
+    'vrcStarts',16,'parforVrcSegments',true,'parforVrcPixels',true));
+s.labels=struct('parforVrcSegments','Use parfor: segments', ...
+                'parforVrcPixels','Use parfor: per pixel');
+s.tips=struct( ...
+    'injectionSec',['when the drug was given, seconds from the start of the ' ...
+       'recording.  One number per recording, in the order the files are listed'], ...
+    'baselineSec',['the quiet stretch before the injection the response is measured ' ...
+       'against, [start end] in seconds.  It has to end before the injection'], ...
+    'vrcModel',['a rising and a falling phase on a drifting baseline.  The reported ' ...
+       'amplitude is the peak change in the trace''s own units'], ...
+    'tgtFS',['the traces are averaged down to this rate before fitting.  The response ' ...
+       'takes minutes, so 1 Hz is plenty'], ...
+    'vrcAucSec','how long after the injection the area under the response is taken over, seconds', ...
+    'vrcStealK','how far below baseline, in baseline noise levels, counts as a dip', ...
+    'vrcStealFrac','or this fraction of the response, whichever is the larger drop', ...
+    'vrcStealSec','and how long it has to stay there before the recording is flagged, seconds', ...
+    'vrcWashFrac','washout time = when the response is back to this fraction of its peak', ...
+    'segVrcReturn','per-segment levels: markers / model / reconstruction', ...
+    'ppxVrcReturn',['per-pixel maps ([] = off).  This fits every pixel over the whole ' ...
+       'recording and takes many minutes'], ...
+    'vrcStarts',['how many start points the fit is tried from.  Fewer is faster and ' ...
+       'more likely to settle on a wrong answer'], ...
+    'parforVrcSegments',parforTip('the per-segment fit'), ...
+    'parforVrcPixels',parforTip('the per-pixel analysis'));
+reg(end+1)=s;
+
+% ---- 14. vesselTypes (per animal) --------------------------------------------
 s = base();
 s.id='vesselTypes'; s.label='Vessel types'; s.wrapper=@setVesselTypes;
 s.arity='perAnimal';                                   % 2-D fNames row; col 1 = reference
@@ -632,7 +745,7 @@ s.presets=struct('default',struct('useReference',false));
 s.tips=struct('useReference','true = paint the first (reference) file only, inherit to the rest');
 reg(end+1)=s;
 
-% ---- 13. vascularTree -------------------------------------------------------
+% ---- 15. vascularTree -------------------------------------------------------
 s = base();
 s.id='vascularTree'; s.label='Vascular tree'; s.wrapper=@setVascularTree;
 s.inGlob='*_c_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -649,7 +762,7 @@ s.tips=struct('autoOnly','true = derive & save without opening the tree editor',
     'propagatePartners','after a _c file is derived, copy the hierarchy to these partners');
 reg(end+1)=s;
 
-% ---- 14. myoVideo (pressure myograph, entry step) ----------------------------
+% ---- 16. myoVideo (pressure myograph, entry step) ----------------------------
 s = base();
 s.id='myoVideo'; s.label='Video'; s.wrapper=@runMyographVideo;
 % THE ENTRY STEP OF THE PRESSURE MYOGRAPH, and the only function that creates the
@@ -672,7 +785,7 @@ s.tips=struct('pixelSize','µm per px; leave empty (or 0) to report results in p
     'rowRange','[first last] image row the vessel occupies');
 reg(end+1)=s;
 
-% ---- 15. labChart (wire myograph, entry step) --------------------------------
+% ---- 17. labChart (wire myograph, entry step) --------------------------------
 s = base();
 s.id='labChart'; s.label='LabChart'; s.wrapper=@runLabChart;
 % THE ENTRY STEP OF THE WIRE MYOGRAPH, and the twin of myoVideo: it creates the
@@ -708,7 +821,7 @@ s.note=['Reading LabChart files needs the ADInstruments SDK in the library''s ' 
         '"3rd party" folder, and works on Windows only.'];
 reg(end+1)=s;
 
-% ---- 16. myoPresetIntervals (before anything is measured) --------------------
+% ---- 18. myoPresetIntervals (before anything is measured) --------------------
 s = base();
 s.id='myoPresetIntervals'; s.label='Pre-set intervals'; s.wrapper=@setMyographPresetIntervals;
 % CHOSEN ON THE VIDEO, BEFORE ANY DIAMETER EXISTS: the diameter step then measures
@@ -730,7 +843,7 @@ s.tips=struct('profileSamples', ...
 s.labels=struct('profileSamples','Points in the preview curve');
 reg(end+1)=s;
 
-% ---- 17. myoCrop -------------------------------------------------------------
+% ---- 19. myoCrop -------------------------------------------------------------
 s = base();
 s.id='myoCrop'; s.label='Time crop'; s.wrapper=@setMyographCrop;
 % ONE window instead of several - the alternative to pre-set intervals.  It records
@@ -754,7 +867,7 @@ s.tips=struct('profileSamples', ...
 s.labels=struct('profileSamples','Points in the preview curve');
 reg(end+1)=s;
 
-% ---- 18. myoDiameter ---------------------------------------------------------
+% ---- 20. myoDiameter ---------------------------------------------------------
 s = base();
 s.id='myoDiameter'; s.label='Diameter'; s.wrapper=@runMyographDiameter;
 s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -792,7 +905,7 @@ s.tips=struct('rowRange','[first last] image row the vessel occupies', ...
 s.labels=struct('keepArrays','Keep every line''s diameter');
 reg(end+1)=s;
 
-% ---- 19. myoIntervals --------------------------------------------------------
+% ---- 21. myoIntervals --------------------------------------------------------
 s = base();
 s.id='myoIntervals'; s.label='Intervals'; s.wrapper=@setMyographIntervals;
 % THE WINDOWS THE ANALYSES RUN IN, defined on the diameter that has been measured -
@@ -830,7 +943,7 @@ s.note=['Moving an interval re-cuts its diameter and clears its propagation and 
         'vasomotion - run those again afterwards.'];
 reg(end+1)=s;
 
-% ---- 20. myoPropagation ------------------------------------------------------
+% ---- 22. myoPropagation ------------------------------------------------------
 s = base();
 s.id='myoPropagation'; s.label='Propagation'; s.wrapper=@runMyographPropagation;
 s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -856,7 +969,7 @@ s.tips=struct('diameterMeasures','which diameters to analyse: outer wall, wall c
     'propNShuffle','how many times the locations are shuffled to test the result against chance');
 reg(end+1)=s;
 
-% ---- 21. myoVasomotion -------------------------------------------------------
+% ---- 23. myoVasomotion -------------------------------------------------------
 s = base();
 s.id='myoVasomotion'; s.label='Vasomotion'; s.wrapper=@runMyographVasomotion;
 s.inGlob='*_MYO_r.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -894,46 +1007,6 @@ s.tips=struct('diameterMeasures',['which diameters to analyse: outer wall, wall 
     'nPeakProm','VB peak-count prominence as a fraction of the band range', ...
     'segVsmReturn','which analysis levels to store (set of tokens)', ...
     'parforMyographLines',parforTip('the per-line analysis'));
-reg(end+1)=s;
-
-% ---- 22. fitNVC (stimulus-locked response fit) -------------------------------
-s = base();
-s.id='fitNVC'; s.label='NVC fit'; s.wrapper=@runFitNVC;
-s.inGlob='*_e_BFI_r.mat'; s.outSuffix={}; s.outKind='inplace';
-s.gatingField='runFitNVC';
-% REQUIRES NAMES STEPS, NOT CAPABILITIES.  wbPrereqs matches these against step
-% IDS, so the epoch product's producer is 'externalCycle' - the token it PRODUCES
-% ('epochAvg') is a separate vocabulary nothing in the dependency graph reads.
-s.requires={'BFI','externalCycle'}; s.produces={'nvcFit'};
-s.branch='epoch';
-s.artifacts={'_rep_nvcfit.jpg'};
-s.settingGroups={ 'Model',{'nvcModel','nvcDip','stimDurationSec'};
-                  'Analysis levels',{'segNvcReturn','ppxNvcReturn'};
-                  'Fitting',{'nvcStarts'};
-                  'Parallel',{'parforNvcSegments','parforNvcPixels'} };
-s.basicFields={'stimDurationSec','nvcModel'};
-s.sharedKeys={'libraryFolder'};
-s.enums=struct('nvcModel',{{'secondOrder','doubleGamma'}});
-s.presets=struct('default',struct('nvcModel','secondOrder','nvcDip',false, ...
-    'stimDurationSec',5,'segNvcReturn',{{'markers','model','reconstruction'}}, ...
-    'ppxNvcReturn',{{'markers'}},'nvcStarts',16, ...
-    'parforNvcSegments',true,'parforNvcPixels',true));
-s.labels=struct('parforNvcSegments','Use parfor: segments', ...
-                'parforNvcPixels','Use parfor: per pixel');
-s.tips=struct( ...
-    'nvcModel',['''secondOrder'' fits the flow response of a damped autoregulatory ' ...
-       'system - its undershoot is mechanistic and its damping compares across ' ...
-       'protocols.  ''doubleGamma'' only describes the shape'], ...
-    'nvcDip','also fit a fast constriction before the rise, and report both fits side by side', ...
-    'stimDurationSec',['how long the stimulus lasts, seconds.  Taken from the ' ...
-       'external cycle step unless it is set here'], ...
-    'segNvcReturn','per-segment levels: markers / model / reconstruction', ...
-    'ppxNvcReturn',['per-pixel maps ([] = off).  Adding ''model'' fits every pixel ' ...
-       'of the field and takes minutes rather than seconds'], ...
-    'nvcStarts',['how many start points the fit is tried from.  Fewer is faster and ' ...
-       'more likely to settle on a wrong answer'], ...
-    'parforNvcSegments',parforTip('the per-segment fit'), ...
-    'parforNvcPixels',parforTip('the per-pixel analysis'));
 reg(end+1)=s;
 
 validateRegistry(reg);          % a registry edit is checked before anyone sees it

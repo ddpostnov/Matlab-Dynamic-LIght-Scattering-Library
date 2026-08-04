@@ -33,6 +33,9 @@
 %                maskLimitsK, maskLimitsI  – mask A, the contrast and
 %                     intensity range of the pixels averaged into the
 %                     reference time course the heartbeat is DETECTED from.
+%                     Both are read on the decimated grid, each over the
+%                     same decimationSpace-wide block, so a limit here is a
+%                     limit on a block average and not on one pixel.
 %                     It does not leave this function.
 %                trustLimitsK, trustLimitsI, minTrust – mask B, written to
 %                     results.mask and read by every downstream step.  Same
@@ -58,7 +61,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 04-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -162,7 +165,6 @@ for fidx=1:1:numel(fNames)
         data=zeros(numel(1:decimSpace:s.sizeY),numel(1:decimSpace:s.sizeX),s.sizeT,'single');
         meanI=zeros(1,s.sizeT,'single');
         imgI=zeros(s.sizeY,s.sizeX,'single','gpuArray');
-        imgK=zeros(s.sizeY,s.sizeX,'single','gpuArray');
         timeStamps=zeros(s.sizeT,1,'int64');
 
         %perform data pre-processing, store spacially decimated information.  The
@@ -196,7 +198,6 @@ for fidx=1:1:numel(fNames)
             imgI=imgI+sum(tmp,3);
             tmp=getK(tmp,'spatial','kernelSize',s.contrastKernelPreproc, ...
                 'procType','gpu','outputType','gpu');
-            imgK=imgK+sum(tmp,3);
             tmp=convn(tmp,kernelDecim,'same')./(decimSpace.*decimSpace);
             data(:,:,iOut+(1:nOut))=gather(tmp(1:decimSpace:end,1:decimSpace:end,:));
             rawTail=raw(:,:,end-s.framesToAverage+2:end);
@@ -204,22 +205,23 @@ for fidx=1:1:numel(fNames)
             iOut=iOut+nOut;
         end
         fclose(stream.fId);
-        imgI=gather(imgI)./s.sizeT;
-        imgK=gather(imgK)./s.sizeT;
-        %results.imgI stays the WHOLE-RECORDING mean intensity, deliberately unlike
-        %mask B below, which measures only the accepted-cycle frames.  This image is a
-        %background for setRegions and runSegmentation to draw and threshold on, and
-        %what it should show is the field of view as it was recorded - not the subset
-        %of it the cycle rejection happened to keep.
-        results.imgI=imgI;
+        %Mask A ANDs its two criteria on the DECIMATED grid, so both have to be measured
+        %over the same support.  imgK below is the BLOCK MEAN of the contrast - that is
+        %the convolution every frame of the cube went through - so the intensity is
+        %averaged over that same block rather than point-sampled out of it.  Sampling one
+        %pixel per block instead lets that one pixel decide the block: a single hot or
+        %dead pixel landing on the sampling grid rejects it, and a block whose sampled
+        %pixel is clean while its neighbours saturate is kept.  The same kernel and the
+        %same 'same' shape as the cube, so the half-pixel offset an even kernel gives
+        %cancels between the two images instead of shifting one against the other.
+        imgI=convn(imgI./s.sizeT,kernelDecim,'same')./(decimSpace.*decimSpace);
+        imgI=gather(imgI(1:decimSpace:end,1:decimSpace:end));
         %mask A - the pixels averaged into the reference time course below.  It decides
         %which pixels the heartbeat is DETECTED from and goes no further; the mask that
         %travels with the result is mask B, built from the averaged cycle at the end.
+        imgK=mean(data,3,'omitmissing');
         mask=imgK<s.maskLimitsK(2) & imgK>s.maskLimitsK(1) & isfinite(imgK) & imgI<s.maskLimitsI(2) & imgI>s.maskLimitsI(1);
         mask=imerode(mask,[0,1,0;1,1,1;0,1,0]);
-        mask=(convn(mask,ones(decimSpace),'same')./(decimSpace.*decimSpace))>0;
-
-        mask=mask(1:decimSpace:end,1:decimSpace:end);
         data(~isfinite(data))=0;                 %isfinite is false for NaN too - the isnan line that stood here swept the whole cube for nothing
         data=reshape(data,size(data,1)*size(data,2),s.sizeT);
         tsK=(single(mask(:)).'*data)./nnz(mask); %a matrix-vector product; sum(data.*mask(:),1) allocated a second copy of the largest array in the function
@@ -281,18 +283,28 @@ for fidx=1:1:numel(fNames)
         cycleFrq=s.fps./pulsesFeatures(:,4);
         pulsesToReject(11,(cycleFrq<s.minFrq | cycleFrq>s.maxFrq).')=1;
         if any(strcmp(s.method,'tLSCIMM'))
-            %Rule 12 guards BOTH ends of the recording.  tLSCIMM's pass-2 read is padded
-            %by half a temporal kernel on either side so getK's centred window is full
-            %for every frame of an accepted cycle; the trailing pad has always been
-            %protected here, the LEADING one was not.  A cycle starting within kernelPad
-            %of frame 1 then asks readRLS for a negative FramesToSkip, which it answers
-            %with a misaligned block rather than an error - so that cycle was averaged
-            %from the wrong frames.  Rejecting it costs one cycle and keeps every window
-            %in the average full, which clamping the read would not: getK's edge
-            %normalisation would then engage on the leading window alone, and one cycle
-            %of the average would be taken over a shorter kernel than all the others.
-            pulsesToReject(12,(pulsesList(:,3)>(s.sizeT-s.contrastKernelT) ...
-                | pulsesList(:,1)<=floor(s.contrastKernelT*s.framesToAverage/2)).')=1;
+            %Rule 12 guards BOTH ends of the recording, and BOTH ENDS ARE THE SAME PAD.
+            %tLSCIMM's pass-2 read is readAveraged(s,firstStart-readPad,span+kernelT-1),
+            %so it needs the averaged frames firstStart-readPad .. lastEnd+readPad to
+            %exist, with readPad = floor(contrastKernelT*framesToAverage/2) - rounding
+            %the product up to an odd kernel leaves floor(x/2) alone, so this IS the pad
+            %the read uses.  The two ends used to ask different questions: the leading
+            %one asked for that product, the trailing one for contrastKernelT alone, and
+            %those are the same number only while framesToAverage <= 2 (equal at 2).  At
+            %framesToAverage >= 3 the trailing pad ran off the END of the recording -
+            %floor(25*3/2)=37 frames needed against 25 guarded - and readRLS answers an
+            %over-read with zero-filled frames rather than an error, so the last accepted
+            %cycle was averaged partly from zeros.  At the leading end the same cycle
+            %asked for a negative FramesToSkip and was averaged from misaligned frames.
+            %REJECTING the cycle rather than clamping the read is what keeps every window
+            %in the average full: clamping would engage getK's edge normalisation on one
+            %cycle alone, and that cycle would be taken over a shorter kernel than all
+            %the others.  s.sizeT is one averaged frame short of what the file can serve
+            %(line 132 drops a frame), so this is conservative by one frame - deliberately,
+            %because a cycle is tens of frames long and the margin costs nothing.
+            readPad=floor(s.contrastKernelT*s.framesToAverage/2);
+            pulsesToReject(12,(pulsesList(:,3)>(s.sizeT-readPad) ...
+                | pulsesList(:,1)<=readPad).')=1;
         end
         pulsesToReject(13,(abs(1-pulsesFeatures(:,1)./median(pulsesFeatures(:,1)))>s.coeffsRel(2)).')=1;
 
@@ -467,7 +479,17 @@ for fidx=1:1:numel(fNames)
             %The LEADING pad is guaranteed to exist: rejection rule 12 drops any cycle
             %starting within kernelPad of frame 1, which is what keeps the FramesToSkip
             %below non-negative.
+            %ODD IS NOT OPTIONAL, AND THE PRODUCT NEED NOT BE: contrastKernelT and
+            %framesToAverage are both offered in the workbench, and the defaults 25 and 2
+            %multiply to an EVEN 50.  getK refuses an even kernel outright - it has no
+            %centre, and its two branches would place it on opposite sides of the frame -
+            %so the product is rounded UP to the next odd size here, which never asks for
+            %a shorter window than the user set.  Rounding up leaves kernelPad alone
+            %(floor((2m+1)/2)=floor(2m/2)=m), so rule 12's leading guard still matches it
+            %exactly, and it makes the read's trailing pad kernelT-1-kernelPad = kernelPad,
+            %symmetric with the leading one instead of a frame short.
             kernelT=s.contrastKernelT*s.framesToAverage;
+            kernelT=kernelT+1-mod(kernelT,2);
             kernelPad=floor(kernelT/2);
             [cyclesDur,cycleCol,cyclesBin]=makeCycleBins(cyclesDurList,nPx,gpuDev);
             runs=cycleRuns(pulsesListFinal,max(1,batchSize-kernelT-s.framesToAverage+2));
@@ -594,6 +616,7 @@ for fidx=1:1:numel(fNames)
         reportWriting(rep);
         settings.runInternalCycle=reportSettings(s);
         results.imgK=squeeze(mean(source.data,3,'omitmissing'));
+        results.imgI=imgIcycle;
         results.time=source.time;
         %-nocompression is the library-wide save rule (README, 'File format'): deflate
         %is single-threaded and cost 13.2 s of the 14.2 s spent writing this step's
