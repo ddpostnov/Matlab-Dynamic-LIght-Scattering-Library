@@ -48,13 +48,29 @@
 %       are both legitimate;
 %     * DONE.  Closing the window means Done.
 %
+%   AND DONE ASKS, WHEN THESE WINDOWS WOULD THROW A MEASUREMENT AWAY.  A myograph
+%   product keeps no copy of the recording, so the windows ARE the storage: a stretch
+%   left outside every one of them is not written back, and only the recording itself
+%   can bring it back.  When data.measurement says the trace is the measurement and
+%   some of it falls outside the windows as they stand, Done asks once and says how
+%   many frames (or samples) that is.  NOTHING TO LOSE IS SILENT - a window chosen
+%   before anything was measured, one that still covers everything, or no windows at
+%   all, which means the whole recording.  So is a window that is not on screen: an
+%   invisible editor is being driven by a script, and a modal dialog on it would wait
+%   for an answer that never comes.  There is no setting that turns the question off.
+%
 %   PMYO MODE (opts.mode='PMYO') adds, when the data carries it, a VIDEO PREVIEW of
 %   the selected interval with the detected walls drawn on it - play / stop, a
 %   frame-step spinner and a frame slider.  A frame where a wall left the field of
 %   view is drawn RED, in the preview and in the trace, because its diameter is an
-%   edge-clamped lower bound rather than a measurement.  With no diameter measured
-%   yet (the pre-set-intervals step) the trace is whatever cheap profile the caller
-%   passes, the wall overlay is absent, and the video is the point of the window.
+%   edge-clamped lower bound rather than a measurement.  THE FRAME AND THE WALLS ON
+%   IT COME FROM ONE PLACE - data.wallFrame, which getMyographTrace fills with
+%   getMyographWallFrame - so the walls drawn are always the walls of the frame
+%   shown; the concatenated data.walls are for the trace, where a position in the
+%   windows laid end to end is all that is wanted, and a picture needs the frame of
+%   the ORIGINAL recording instead.  With no diameter measured yet (the
+%   pre-set-intervals step) the trace is whatever cheap profile the caller passes,
+%   the wall overlay is absent, and the video is the point of the window.
 %
 %   WMYO MODE (opts.mode='WMYO') is the same window with the video column replaced.
 %   A wire myograph records channels, not pictures, so what stands where the preview
@@ -91,8 +107,16 @@
 %       .traceName (optional) what the curve is, for the title
 %       .traceUnit (optional) the y-axis label
 %       .valid     (optional) [T x 1] logical; false = drawn red (a wall off-FOV)
-%       .walls     (optional) struct .L .R (each [T x m]) and .rows - the preview
-%                  overlay, drawn at the image rows the walls were detected on
+%       .walls     (optional) struct .L .R (each [T x m]) and .rows - the walls of
+%                  the whole trace, at the image rows they were detected on
+%       .wallFrame (optional) @(t,vr) -> the frame of the recording at time t with
+%                  THAT frame's own walls on it (getMyographWallFrame).  It is what
+%                  the preview draws when it is there, so the picture and the walls
+%                  on it always describe the same frame; vr is this window's own
+%                  VideoReader, handed over so none is opened per frame
+%       .measurement (optional, default false) true when .trace or .channels IS the
+%                  measurement, so a stretch left outside every window is discarded
+%                  by keeping them.  It is what Done asks the operator about
 %       .video     (optional) the recording to preview; '' = no preview panel
 %       .fs        (optional) sampling rate.  It is the AUTHORITY on the sampling -
 %                  with disjoint intervals data.time has gaps, so it cannot be read
@@ -107,9 +131,10 @@
 %       .names        1 x n cellstr of their names
 %       .channels     (WMYO) 1 x n cell - the channel each pre-loaded interval is
 %                     analysed on, as a cellstr.  {} means every channel; a cellstr
-%                     naming ONE channel means that channel.  A legacy element
-%                     naming several takes the first of them, because a window now
-%                     belongs to one channel or to all of them.
+%                     naming ONE channel means that channel.  A NAME THIS RECORDING
+%                     DOES NOT HAVE is dropped rather than shown - a set of windows
+%                     carried over to another recording of the protocol must not
+%                     claim a chamber that is not there.
 %       .maxIntervals (default Inf) the largest number of windows allowed.  1 is the
 %                     time crop: one window, so Add greys out once it exists.
 %       .drawPoints   (default 2000) HOW MUCH OF THE SIGNAL IS DRAWN - the number of
@@ -153,7 +178,7 @@
 %   parked window would pull it back to the front, over this one.
 %
 %   EXAMPLE
-%     data = getMyographTrace(source,s);
+%     data = getMyographTrace(results,s);
 %     [ivT,names] = editMyographIntervals(data, ...
 %         struct('title','Intervals - Mouse1.avi','intervals',ivT0,'names',{names0}));
 %
@@ -209,9 +234,13 @@ end
 for f={'traceName','traceUnit','video'}
     if ~isfield(d,f{1}) || isempty(d.(f{1})), d.(f{1})=''; else, d.(f{1})=char(d.(f{1})); end
 end
-for f={'valid','walls'}
+for f={'valid','walls','wallFrame'}
     if ~isfield(d,f{1}), d.(f{1})=[]; end
 end
+% A caller that says nothing is taken to be showing the recording rather than the
+% measurement: the question Done asks is one nobody should be asked by accident.
+if ~isfield(d,'measurement') || isempty(d.measurement), d.measurement=false; end
+d.measurement=logical(d.measurement(1));
 d=withChannelDefaults(d,opts);
 if ~isempty(d.walls) && ~isfield(d.walls,'rows'), d.walls.rows=1:size(d.walls.L,2); end
 if ~isempty(d.valid), d.valid=logical(d.valid(:)); end
@@ -975,11 +1004,13 @@ clampAll(fig);
 end
 
 function ch=firstKnownChannel(app,want)
-%firstKnownChannel  The channel a pre-loaded window is analysed on.  Empty, or a
-%   list covering every channel, means all of them; a list naming several takes the
-%   FIRST that this recording has, because a window now belongs to one channel or to
-%   all of them and silently keeping a subset it can no longer show would be worse
-%   than saying which one it kept.
+%firstKnownChannel  The channel a pre-loaded window is analysed on, MATCHED AGAINST
+%   THE CHANNELS THIS RECORDING ACTUALLY HAS.  Empty, or a list covering every
+%   channel, means all of them; anything else takes the first name the recording
+%   answers to, and nothing when it answers to none.  The match is what earns the
+%   function: a set of windows carried over from another recording of the same
+%   protocol may name a chamber this one does not have, and showing it would offer a
+%   window on a channel that cannot be drawn.
 ch='';
 if isempty(want) || ~isWmyo(app.opts), return; end
 want=reshape(cellstr(want),1,[]);
@@ -1323,31 +1354,50 @@ function renderPreviewFrame(fig)
 %   THE WALLS GO RED when that frame is flagged invalid - one wall had dilated out
 %   of the field of view, so its diameter is a lower bound rather than a measurement,
 %   and the operator has to see that while choosing the window.
+%
+%   THE FRAME AND ITS WALLS COME FROM ONE PLACE, getMyographWallFrame, so they cannot
+%   describe different frames.  This window is where a person decides where the
+%   analysis windows go, and it decides it on whether the edges were found - so the
+%   walls drawn have to be the walls of the frame shown, which means asking the
+%   function that knows which frame of the ORIGINAL recording a stored row came from
+%   rather than snapping to the nearest sample of the windows laid end to end.  The
+%   editor's OWN reader is handed over so no reader is opened per frame.  A recording
+%   with no measured walls (a crop chosen before the diameter step) falls back to
+%   showing the frame alone.
 if ~isvalid(fig), return; end
 app=getApp(fig); pv=app.preview;
 if ~isfield(app.c,'axPrev') || ~isvalid(app.c.axPrev), return; end
 if isempty(pv.vr) || isempty(pv.times), return; end
 ax=app.c.axPrev;
 t=pv.times(min(pv.curIdx,numel(pv.times)));
-try
-    pv.vr.CurrentTime=min(max(t,0),max(0,pv.vr.Duration-1/max(pv.vr.FrameRate,eps)));
-    frame=readFrame(pv.vr);
-catch
-    return
-end
-cla(ax); image(ax,frame); axis(ax,'image'); ax.XTick=[]; ax.YTick=[];
-d=app.data; ok=true;
-if ~isempty(d.time)
-    [~,fi]=min(abs(d.time-t));
-    if ~isempty(d.valid), ok=d.valid(fi); end
-    if ~isempty(d.walls) && fi<=size(d.walls.L,1)
-        hold(ax,'on');
-        col=[0.1 0.9 0.1]; if ~ok, col=[0.95 0.15 0.15]; end
-        yy=d.walls.rows;      % the image rows the walls were detected on
-        plot(ax,double(d.walls.L(fi,:)),yy,'-','Color',col,'LineWidth',1.2);
-        plot(ax,double(d.walls.R(fi,:)),yy,'-','Color',col,'LineWidth',1.2);
-        hold(ax,'off');
+d=app.data;
+
+W=[];
+if ~isempty(d.wallFrame)
+    try
+        W=d.wallFrame(t,pv.vr);
+    catch
+        W=[];
     end
+end
+if isempty(W)
+    try
+        pv.vr.CurrentTime=min(max(t,0),max(0,pv.vr.Duration-1/max(pv.vr.FrameRate,eps)));
+        W=struct('frame',readFrame(pv.vr),'left',[],'right',[],'rows',[],'valid',true);
+    catch
+        return
+    end
+end
+if isempty(W.frame), return; end
+
+cla(ax); image(ax,W.frame); axis(ax,'image'); ax.XTick=[]; ax.YTick=[];
+ok=W.valid;
+if ~isempty(W.left)
+    hold(ax,'on');
+    col=[0.1 0.9 0.1]; if ~ok, col=[0.95 0.15 0.15]; end
+    plot(ax,W.left, W.rows,'-','Color',col,'LineWidth',1.2);
+    plot(ax,W.right,W.rows,'-','Color',col,'LineWidth',1.2);
+    hold(ax,'off');
 end
 ttl=sprintf('%.1f s   (frame %d of %d)',t,pv.curIdx,numel(pv.times));
 if ~ok, ttl=[ttl '   wall out of view']; end
@@ -1408,7 +1458,82 @@ end
 function requestDone(fig)
 %requestDone  The one way out: set the sentinel the blocking waitfor watches.  The
 %   window is NOT deleted here - the caller still has to read the intervals off it.
-if isvalid(fig), fig.UserData='done'; end
+%
+%   AND THE ONE PLACE THE OPERATOR IS ASKED BEFORE ANYTHING IS THROWN AWAY.  What
+%   this window returns REPLACES the measurement: the stretches left outside every
+%   window are not written back, and no result can bring them back - only measuring
+%   the recording again can.  So Done asks, once, and only when there really is
+%   something to lose.  There is no setting that turns it off.
+if ~isvalid(fig), return; end
+if ~confirmDiscard(fig), return; end
+fig.UserData='done';
+end
+
+function ok=confirmDiscard(fig)
+%confirmDiscard  Ask when these windows would discard measured data, and say how
+%   much.  TWO CASES ARE SILENT AND BOTH ARE HONEST.  Nothing to lose is the
+%   ordinary one - a window chosen before anything was measured, or one that still
+%   covers everything - and there is nothing to warn about.  A window nobody can see
+%   is the other: an invisible editor is being driven by a script rather than by a
+%   person, and a modal dialog on it would wait for an answer that never comes.  The
+%   wrapper's own refusal is what guards that path, and it guards it before the
+%   editor ever opens.
+ok=true;
+app=getApp(fig);
+[out,total]=discardedSamples(app);
+if out<=0 || total<=0, return; end
+if ~strcmpi(char(fig.Visible),'on'), return; end
+word='frames'; if isWmyo(app.opts), word='samples'; end
+msg=sprintf(['These windows leave out %d of the %d %s already measured, and only ' ...
+    'the recording itself can bring them back.\n\nKeep the windows as they are?'], ...
+    out,total,word);
+try
+    sel=uiconfirm(fig,msg,'Some of the measurement will be thrown away', ...
+        'Options',{'Keep the windows','Go back'},'DefaultOption',2, ...
+        'CancelOption',2,'Icon','warning');
+catch
+    return          % no dialog to be had: do not trap the operator in the window
+end
+ok=strcmp(sel,'Keep the windows');
+end
+
+function [out,total]=discardedSamples(app)
+%discardedSamples  How much of what is already measured falls OUTSIDE the windows as
+%   they now stand - which is exactly what saving them would throw away.  Counted on
+%   the samples that EXIST rather than on the seconds a window covers: a stretch that
+%   was never measured is not lost by being left out of a window.
+%   NO WINDOWS AT ALL MEANS THE WHOLE RECORDING, the same rule the re-cut applies, so
+%   it discards nothing rather than everything.
+out=0; total=0;
+if ~isstruct(app) || isempty(app.iv), return; end
+if ~isfield(app.data,'measurement') || ~app.data.measurement, return; end
+if isWmyo(app.opts)
+    for i=1:1:numel(app.data.channels)
+        t=app.data.channels(i).time;
+        if isempty(t), continue; end
+        total=total+numel(t);
+        out=out+nnz(~coveredBy(t,app.iv,app.data.channels(i).name));
+    end
+    return
+end
+t=app.data.time;
+if isempty(t), return; end
+total=numel(t);
+out=nnz(~coveredBy(t,app.iv,''));
+end
+
+function tf=coveredBy(t,iv,chanName)
+%coveredBy  Which of these times fall inside some window.  A window assigned to one
+%   channel covers only that channel's samples; one left on 'all channels' covers
+%   every channel's, which is what it means.
+tf=false(numel(t),1);
+for k=1:1:numel(iv)
+    if ~isempty(chanName) && ~isempty(iv(k).channel) && ...
+            ~strcmpi(strtrim(iv(k).channel),strtrim(chanName))
+        continue
+    end
+    tf=tf | (t>=iv(k).t0 & t<=iv(k).t1);
+end
 end
 
 function [ivT,names]=collect(fig)

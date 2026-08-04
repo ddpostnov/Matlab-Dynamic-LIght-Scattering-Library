@@ -24,6 +24,14 @@
 %     s        parameter structure (fields: stimStartType, stimOffset,
 %              epochsN, epochDurationSec, epochBaselineSec, epochFinaleSec,
 %              reject*Coefs, maskType, enablelRejectionModification, etc.)
+%              • stimDurationSec - HOW LONG THE STIMULUS LASTS, seconds.  This step
+%                does not use it: the epoching is driven by the epoch duration, not
+%                by the stimulus, so the field is OPTIONAL here.  It is recorded
+%                beside the rest of the stimulus geometry because that geometry is
+%                protocol, and the steps that DO need the duration - runFitNVC above
+%                all, where it is required - then inherit it from this recording's
+%                own settings instead of asking for it to be retyped.  Given, it is
+%                checked against the epoch.
 %     fNames   cell array of full paths to CONTRAST products - *_t_K_r.mat or
 %              *_s_K_r.mat, as written by runContrastFromRLS.  A cardiac product
 %              (*_c_K_r.mat) is not an input: it is one averaged period and carries
@@ -76,6 +84,8 @@
 % %seconds.
 % s.epochBaselineSec=[0,5];
 % s.epochStimStartSec=5; %time when stimulation actually starts
+% s.stimDurationSec=5; %how long the stimulation lasts, seconds. Not used here - it
+% %is recorded so the response fit can read the protocol instead of being told it again
 %
 % %time from the end of the epoch when flow is expected to return to baseline
 % %Example: [-5,0] means that finale starts 5 seconds before the end of the
@@ -99,6 +109,24 @@ if ~all( cellfun(@(s) isempty(s) || contains(s,'_K_r.mat'), fNames(:)) )
     error(['One or more *non-empty* entries do not contain "_K_r.mat".  Every ' ...
         'step takes the RESULTS member of a product - list them with ' ...
         'getFileNamesList(rootFolder,''*_K_r.mat'').']);
+end
+
+%THE STIMULUS DURATION IS RECORDED HERE AND CHECKED HERE, and used by nobody until
+%the response fit reads it back (see the header).  The check is worth its four lines:
+%a stimulus that outlasts its epoch means the epochs overlap the stimulus and every
+%average below is wrong, and hearing that now costs a second instead of sixty files.
+if isfield(s,'stimDurationSec') && ~isempty(s.stimDurationSec)
+    d=double(s.stimDurationSec);
+    if ~(isscalar(d) && isfinite(d) && d>0)
+        error('runExternalCycle:stimDuration', ...
+            's.stimDurationSec must be a positive number of seconds.');
+    end
+    if s.epochStimStartSec+d > s.epochDurationSec
+        error('runExternalCycle:stimOutlastsEpoch', ...
+            ['The stimulus starts %g s into the epoch and lasts %g s, which runs ' ...
+             'past the end of the %g s epoch.  Either the stimulus duration or the ' ...
+             'epoch duration is wrong.'],s.epochStimStartSec,d,s.epochDurationSec);
+    end
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks

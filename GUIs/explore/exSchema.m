@@ -54,22 +54,36 @@
 %   answers the other direction, so exFetch can hand a host's riders to a renderer
 %   and no renderer ever reaches into a results tree for an error bar or a caption.
 %
-%   THE FIFTH ROLE IS A WHOLE CONTAINER RIDING, and it is declared on a ROW instead.
-%   A myograph window stores its diameter twice on purpose - .lines.<measure>, one
-%   value per row across the vessel per frame, and .<measure>, those same numbers
-%   averaged along the vessel - and the second is the POOLED form of the first.  The
-%   leaf table cannot say so, because the measure is the signal token of both paths
-%   and neither has a leaf name; so the row that claims the trace names its host with
-%   .pairedWith = 'lines.<sig>' and .pairRole = 'pooled'.  ONE quantity, ONE menu
-%   entry: the per-line leaf, whose 'Units are: pooled' reproduces the stored trace
-%   because a mean over lines with equal weights is exactly what wrote it.
+%   TWO MORE ROLES ARE DECLARED ON A ROW INSTEAD, because their host has no leaf
+%   name to key a table row on.
 %
-%   That one role is CONDITIONAL, and exScan is what resolves it.  Every myograph
-%   result written before the per-line arrays existed carries the trace and nothing
-%   to pool, and there the trace is the only form of the quantity in the file - so
-%   exScan drops the declaration when the host is not there.  The other four roles
-%   are not conditional: a producer that writes a fit or a caption writes the leaf it
-%   is about in the same breath.
+%     'pooled'  A myograph window stores its diameter twice on purpose -
+%               .lines.<measure>, one value per row across the vessel per frame, and
+%               .<measure>, those same numbers averaged along the vessel - and the
+%               second is the POOLED form of the first.  The leaf table cannot say
+%               so, because the measure is the signal token of both paths and neither
+%               has a leaf name; so the row that claims the trace names its host with
+%               .pairedWith = 'lines.<sig>' and .pairRole = 'pooled'.  ONE quantity,
+%               ONE menu entry: the per-line leaf, whose 'Units are: pooled'
+%               reproduces the stored trace because a mean over lines with equal
+%               weights is exactly what wrote it.
+%     'mask'    The same window's .measured and .valid are the QUALITY of that
+%               measurement - which points were detected rather than interpolated,
+%               which frames had both walls in the field of view.  Nobody wants a
+%               menu entry for either, and both belong to the diameter beside them,
+%               so they ride on it: .pairedWith = 'lines', .pairRole = 'mask'.  There
+%               is no <sig> to interpolate here, and that is not an omission - ONE
+%               .measured is shared by all three measures (it is the wall-centre
+%               one's), so naming a single measure as its host would be a claim the
+%               data does not make.
+%
+%   ONLY 'pooled' IS CONDITIONAL, and exScan is what resolves it.  A run with
+%   s.keepArrays false stores the trace and its statistics alone, and there the trace
+%   is the only form of the quantity in the file - so exScan drops the declaration
+%   when the host is not there.  The other five roles are not conditional: a producer
+%   that writes a fit, a caption or a quality flag writes the leaf it is about in the
+%   same breath - myographDiameterBranch adds .lines and .measured together and
+%   removes them together.
 %
 %   THE CAPTION IS NOT A DESCRIPTOR, WHICH IS WHY THE TABLE IS KEYED ON NAMES.
 %   confidenceLevel and confidenceText are char, and exScan skips text leaves as
@@ -108,10 +122,16 @@
 %   costs one row here.  Until then it falls to exScan's inferred path and appears
 %   under Other, which is visible rather than silent.
 %
-%   ONE FAMILY IS NOT IN THE SPEC'S LIST.  The metrics tables get family 'Metrics'.
-%   sMetrics holds tortuosity beside blood flow index beside pulsatility index; it
-%   is not flow, not pulsatility and not a map, and filing it under any of them
-%   would put a segment's length in a flow menu.  Flagged for the author.
+%   TWO FAMILIES ARE NOT IN THE SPEC'S LIST.  The metrics tables get family
+%   'Metrics'.  sMetrics holds tortuosity beside blood flow index beside pulsatility
+%   index; it is not flow, not pulsatility and not a map, and filing it under any of
+%   them would put a segment's length in a flow menu.  Flagged for the author.
+%
+%   And a WIRE myograph's recorded samples get family 'Recording'.  A LabChart
+%   channel measures force, so it is neither Flow nor Diameter, and it is the raw
+%   trace rather than anything derived from it - which is why the family sorts FIRST
+%   in the menu, where a speckle recording puts Flow.  It is the one family whose
+%   leaves are the recording itself and not a result of analysing it.
 %
 %   Syntax:
 %      S   = exSchema()
@@ -464,6 +484,58 @@ S(end).pairRole   = 'pooled';
 S(end+1) = row('myoDiameterStats', [MYO 'diameter\.stats\.(?<sig>\w+)\.(?<leaf>\w+)$'], 'Diameter', ...
         'fixed','whole','none',{}, '<signal>','px', statLeaves());
 
+% THE TWO WALL POSITIONS ARE VARIABLES, and worth being ones: the kymograph of a wall
+% position is the picture that shows whether the detection wandered, which the
+% diameter alone cannot - both walls drifting together leave the difference flat.
+% They are the per-line diameter's shape exactly (the diameter IS their difference),
+% so they take the same row, and no plot id had to be invented for them.
+S(end+1) = row('myoDiameterWalls', ...
+        [MYO 'diameter\.(?<leaf>wallL|wallR)\.(?<sig>outer|mid|inner)$'], ...
+        'Diameter', 'fixed','line','unitLast',{'time'}, '<signal>','px', wallLeaves());
+
+% AND THE TWO QUALITY FLAGS RIDE WITH THEM, in a role of their own.  Neither is a
+% quantity anyone wants a menu entry for: .measured says which points were detected
+% rather than filled, .valid which frames had both walls in the field of view, and
+% both are the QUALITY of the diameter beside them.  They are declared on the ROW,
+% like the pooled trace and for the same reason - their host is diameter.lines, which
+% has no leaf name because the measure is its signal token.  Unlike the pooled role
+% this one is NOT conditional: myographDiameterBranch writes the arrays and the flags
+% in one breath and removes them in one breath, so a file carrying a flag and no
+% array does not exist.
+S(end+1) = row('myoMeasured', [MYO 'diameter\.(?<leaf>measured)$'], 'Diameter', ...
+        'fixed','line','unitLast',{'time'}, '','', qualityLeaves());
+S(end).pairedWith = 'lines';  S(end).pairRole = 'mask';
+S(end+1) = row('myoValid', [MYO 'diameter\.(?<leaf>valid)$'], 'Diameter', ...
+        'fixed','whole','none',{'time'}, '','', qualityLeaves());
+S(end).pairedWith = 'lines';  S(end).pairRole = 'mask';
+
+% ---- the wire myograph: the recorded signal itself -----------------------------
+% A WIRE RECORDING'S SAMPLES ARE ITS MEASUREMENT, and they are stored in whichever of
+% two places the recording has reached: whole on the channel until the intervals step
+% cuts it, then inside each window.  Both are the same quantity and take the same
+% declaration; two rows, because the two paths cannot be one pattern without making
+% the channel index optional in a place it is not.
+%
+% THE CHANNEL INDEX IS THE SIGNAL TOKEN, which is the whole of why it is captured.
+% Four chambers on one LabChart file produce four leaves spelled identically, and the
+% Signal control keys on .signal - so without it all four would collapse into one
+% entry and three chambers would be unreachable.  The index is never SHOWN: exScan
+% picks the channel's real name up on the way past and the menu reads that.
+%
+% SO THE CHANNEL PREFIX IS REQUIRED HERE, unlike in IV above, and for two reasons.
+% Only a WIRE window ever carries samples - a pressure window leaves .samples empty,
+% which exScan skips as an absent branch - so nothing is excluded by demanding it.
+% And it cannot be made optional even if one wanted to: MATLAB's regexp drops a NAMED
+% token that sits inside a non-capturing optional group, silently and without leaving
+% the field in the struct, so '(?:channel\((?<sig>\d+)\)\.)?' matches the path and
+% then reports no signal at all - and four chambers collapse into one menu entry
+% again, which is the bug this token exists to prevent.
+S(end+1) = row('wireWindowSamples', ...
+        '^channel\((?<sig>\d+)\)\.intervals\(\d+\)\.samples\.(?<leaf>data)$', ...
+        'Recording', 'fixed','whole','none',{'time'}, '','', sampleLeaves());
+S(end+1) = row('wireChannelSamples', '^channel\((?<sig>\d+)\)\.(?<leaf>data)$', ...
+        'Recording', 'fixed','whole','none',{'time'}, '','', sampleLeaves());
+
 % The three special propagation leaves come FIRST - the catch-all below would
 % otherwise claim them and call a 475-row table of lags a scalar.
 S(end+1) = row('myoLagByRow', [MYO 'propagation\.(?<sig>\w+)\.(?<leaf>lagByRow)$'], 'Propagation', ...
@@ -584,6 +656,33 @@ L = { 'psMin',      'minimum',                      'a.u.'
       'pdR2',       'diameter fit quality',         ''
       'hAmp',       'harmonic amplitudes',          'a.u.'
       'hPhase',     'harmonic phases',              'rad' };
+end
+
+function L = wallLeaves()
+%wallLeaves  The two edges of the vessel, in the words a biologist reads them in.
+%   'left' and 'right' are positions IN THE IMAGE, which is what they are: the
+%   detector works along an image row and reports where the dark band starts and
+%   where it ends.
+L = { 'wallL', 'left wall position',  'px'
+      'wallR', 'right wall position', 'px' };
+end
+
+function L = qualityLeaves()
+%qualityLeaves  The two flags that say how much of a window was really seen.  They
+%   are never offered - they ride with the per-line diameter - but a rider keeps its
+%   words, because exFetch labels a companion from this table and a label that fell
+%   back to the field name would put 'measuredFraction' in front of a reader.
+%   They carry the WHOLE label rather than the tail of one, because their row has no
+%   head to hang it on: there is no single measure these belong to.
+L = { 'measured', 'Where the walls were detected rather than filled', ''
+      'valid',    'Frames with both walls in view',                   '' };
+end
+
+function L = sampleLeaves()
+%sampleLeaves  A wire recording's own signal.  No unit is claimed: what a LabChart
+%   channel is measured in is a property of that channel (mN here, but not always),
+%   the channel carries it, and this table reads nothing.
+L = { 'data', 'Recorded signal', '' };
 end
 
 function L = statLeaves()

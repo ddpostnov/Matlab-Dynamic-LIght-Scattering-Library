@@ -18,12 +18,27 @@
 %   question twice rather than mixing them.  It is one protocol decision shared with
 %   the vasomotion step.
 %
-%   IT READS THE FULL PER-LINE ARRAYS, not the interval's averaged trace: a
-%   travelling wave is precisely the disagreement BETWEEN the lines, and an average
-%   over them has none of it left.  The per-line arrays live once, in source; the
-%   interval carries the frame range into them.  The calibration (pixelSize) and the
-%   measured rows (rowRange) are read back from source rather than asked for again -
-%   they are properties of the recording, fixed when it was measured.
+%   IT READS THE PER-LINE ARRAYS, not the interval's averaged trace: a travelling
+%   wave is precisely the disagreement BETWEEN the lines, and an average over them
+%   has none of it left.  They live in the window itself,
+%   results.intervals(k).diameter.lines.<measure>, so this step reads exactly the
+%   window it is answering about; the calibration (pixelSize) is read back from
+%   results.recording rather than asked for again, because it is a property of the
+%   recording and was fixed when it was measured.
+%
+%   THE LOCATIONS ARE THE MEASURED ROWS, and that is a change of answer as well as
+%   of storage.  This step used to be handed EVERY image row of the recording,
+%   including the rows outside the measured band, which carry an interpolated fill
+%   and are not measurements of anything; the stored arrays hold the band and
+%   nothing else, so those rows no longer reach the estimator.  On a recording whose
+%   rowRange is [1 Inf] the two row sets are identical and no number moves.  On one
+%   with a narrow band the speed will differ, and it differs because the old answer
+%   included rows that were never measured.
+%
+%   A WINDOW WITH NO ARRAYS CANNOT BE ANSWERED.  runMyographDiameter's s.keepArrays
+%   false stores the trace alone and there is no source copy to fall back on, so
+%   this step says so and stops rather than reporting a speed derived from one
+%   averaged curve.
 %
 %   INPUTS
 %     s        parameter structure.  Carried through into
@@ -45,7 +60,6 @@
 %                        confidenceLevel, confidenceText, metrics, lagByRow, nRows,
 %                        domFreq, qualityFlags
 %     <name>_MYO_s.mat   settings.runMyographPropagation = s
-%     The SOURCE file is not rewritten: this step reads it and adds nothing to it.
 %
 %   EXAMPLE
 %     s.diameterMeasures = {'mid'};
@@ -63,7 +77,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 03-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -97,32 +111,43 @@ for fidx=1:1:numel(fNames)
     if isempty(fNames{fidx}), continue; end
     fName=char(fNames{fidx});
     reportFile(rep,fidx,fName);
-    clearvars source results settings
+    clearvars results settings
 
-    [source,results,settings]=myographProduct('open',fName);
-    if isempty(source.data)
-        error('runMyographPropagation:noDiameter', ...
-            'No diameter has been measured for %s yet - run the Diameter step first.',fName);
+    [results,settings]=myographProduct('open',fName);
+    rec=fieldOr(results,'recording',struct());
+    if ~any(hasArrays(results))
+        error('runMyographPropagation:noPerLineDiameter', ...
+            ['No per-line diameter is stored for %s, so there is nothing to look ' ...
+             'for a travelling wave in.  Run the Diameter step on it, with ' ...
+             '''Keep every line''''s diameter'' switched on.'],fName);
     end
 
     % the recording's own properties, not a protocol choice: they were fixed when
     % the diameter was measured
     sFile=s; sFile.fName=fName;
     sCore=sFile;
-    sCore.rowRange=fieldOr(source,'rowRange',[1 Inf]);
-    sCore.pixelSize=fieldOr(source,'pixelSize',[]);
+    % THE STORED ROWS ARE ALREADY THE MEASURED ONES.  getMyographPropagation clips
+    % the block it is handed by s.rowRange, counting from column 1 of that block,
+    % and each window keeps only the rows inside the recording's band - so passing
+    % the band again would apply it a second time and quietly move the speed.
+    % [1 Inf] is how "these are all the locations there are" is spelled.  It is also
+    % the fix the shape change makes: the wrapper used to hand over EVERY image row,
+    % including rows outside the band that carry an interpolated fill and are not
+    % measurements of anything.
+    sCore.rowRange=[1 Inf];
+    sCore.pixelSize=fieldOr(rec,'pixelSize',[]);
 
     meas=cellstr(s.diameterMeasures);
     for k=1:1:numel(results.intervals)
-        fr=frameRange(results.intervals(k));
-        if isempty(fr), continue; end
+        d=fieldOr(results.intervals(k),'diameter',[]);
+        if ~isstruct(d) || ~isfield(d,'lines') || ~isfield(d,'measured'), continue; end
         p=struct();
         for j=1:1:numel(meas)
-            m=myographMeasureIndex(meas{j},source.measures);
-            m=min(m,size(source.data,3));
+            [~,nm]=myographMeasureIndex(meas{j},measuresOf(rec));
+            if ~isfield(d.lines,nm), continue; end
             p.(meas{j})=trim(getMyographPropagation(sCore, ...
-                double(source.data(fr,:,m)),source.time(fr), ...
-                source.mask(fr,:),source.valid(fr)));
+                double(d.lines.(nm)),d.time, ...
+                logical(d.measured),logical(d.valid)));
         end
         results.intervals(k).propagation=p;
     end
@@ -130,7 +155,7 @@ for fidx=1:1:numel(fNames)
     settings.runMyographPropagation=reportSettings(sFile);
 
     reportWriting(rep);
-    myographProduct('save',fName,[],results,settings);   % SOURCE untouched
+    myographProduct('save',fName,results,settings);
     reportSaved(rep);
 end
 reportClose(rep);
@@ -140,18 +165,30 @@ end
 function prop=trim(prop)
 %trim  What is KEPT of an estimate.  getMyographPropagation returns a .diag holding
 %   the whole [frames x lines] fluctuation matrix it worked on - tens of megabytes
-%   per interval per measure, and re-derivable from source in a second - so the
-%   stored tree is the answer and the evidence for it, not the working.
+%   per interval per measure, and re-derivable from the window's own arrays in a
+%   second - so the stored tree is the answer and the evidence for it, not the
+%   working.
 if isfield(prop,'diag'), prop=rmfield(prop,'diag'); end
 end
 
 % =====================================================================
-function fr=frameRange(iv)
-%frameRange  The interval's own frames into source, or [] when it has none.
-fr=[];
-if ~isfield(iv,'frames') || numel(iv.frames)~=2, return; end
-if iv.frames(2)<iv.frames(1), return; end
-fr=iv.frames(1):iv.frames(2);
+function tf=hasArrays(results)
+%hasArrays  Which windows carry the per-line diameter this step reads.  A window
+%   written with s.keepArrays false has its trace and nothing else, and a travelling
+%   wave is precisely the disagreement BETWEEN the lines - an average over them has
+%   none of it left, so there is nothing here to fall back on.
+tf=false;
+ivs=fieldOr(results,'intervals',[]);
+if isempty(ivs) || ~isstruct(ivs), return; end
+tf=arrayfun(@(iv) isstruct(fieldOr(iv,'diameter',[])) && ...
+    isfield(iv.diameter,'lines') && isfield(iv.diameter,'measured'),ivs);
+end
+
+% =====================================================================
+function meas=measuresOf(rec)
+%measuresOf  The measures, and their order.  results.recording is the one authority
+%   on it, written by the diameter step in the same breath as the windows.
+meas=reshape(cellstr(fieldOr(rec,'measures',{})),1,[]);
 end
 
 % =====================================================================

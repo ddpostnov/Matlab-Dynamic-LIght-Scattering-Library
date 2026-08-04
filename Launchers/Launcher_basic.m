@@ -5,6 +5,14 @@
 %   for most research projects.  Run STEP 0 once per MATLAB session, then run the
 %   step cells (%%) in order.
 %
+%   WHERE THE RESULTS GO.  STEP 0 names two folders: rootFolder, where the recordings
+%   are, and resultsFolder, where everything this pipeline writes goes - the _d/_r/_s
+%   triplets, the report pages and the PDFs - under the same subfolders the recording
+%   had.  They start out as one folder, which writes beside the recordings exactly as
+%   before; point resultsFolder elsewhere to leave the raw data untouched.  A file you
+%   list by hand with its full path is left where it is and writes beside itself,
+%   whatever the two folders say - which is what STEP 2 of this launcher does.
+%
 % Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
 % script formatting were done with Claude Code.
 
@@ -13,12 +21,15 @@
 libraryFolder = 'C:\Data\Martin\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
+rootFolder    = 'C:\Dropbox\Work\Data'; %where the RECORDINGS are
+resultsFolder = rootFolder;             %where the RESULTS go. Point it elsewhere to keep the raw data untouched
 
 
 %% STEP 1 Process .rls files to get the contrast
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
+s.rootFolder=rootFolder; s.resultsFolder=resultsFolder; %only the step that reads the recording needs these - every step after it is already in the results tree
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.contrastType='temporal'; %'temporal' or 'spatial'
@@ -42,23 +53,22 @@ runContrastFromRLS(s,fNames); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 
-%A wrapper writes one <recording>_rep_<page>.jpg beside each recording and stops
-%there - the document is assembled HERE, between the steps, so a 60-file step is one
-%thing to page through instead of 60 files.  COPY THIS CELL after any step whose
+%A wrapper writes one <recording>_rep_<page>.jpg where that recording's results go and
+%stops there - the document is assembled HERE, between the steps, so a 60-file step is
+%one thing to page through instead of 60 files.  COPY THIS CELL after any step whose
 %pages you want together and change the tail and the output name: after setRegions
 %it is '_rep_regions.jpg', after runSegmentation '_rep_categories.jpg' and
 %'_rep_segments.jpg', after runRegistration '_rep_registration.jpg', after
 %setVesselTypes '_rep_vesseltypes.jpg'.
 tail='_rep_contrast.jpg'; %the page STEP 1 writes, one per recording
-pdfFolder=fileparts(char(fNames{find(~cellfun(@isempty,fNames(:)),1)}));
-D=dir(fullfile(pdfFolder,['*',tail]));
-makeReportPdf(fullfile({D.folder}',{D.name}'),fullfile(pdfFolder,'report_contrast.pdf')); %ASSEMBLES THE DOCUMENT
+D=getFileNamesList(resultsFolder,['*',tail]); %EVERY page under the results folder, subfolders included
+makeReportPdf(D,fullfile(resultsFolder,'report_contrast.pdf')); %ASSEMBLES THE DOCUMENT
 
 %% STEP 2 Convert contrast to blood flow index
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED IF NECESSARY - DELETE ORIGINAL FILES

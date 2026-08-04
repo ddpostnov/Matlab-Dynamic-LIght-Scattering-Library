@@ -189,10 +189,12 @@ function requireSDK()
 %   warning and not a fall-back: a LabChart file cannot be read any other way,
 %   so continuing without the SDK could only produce an empty answer that looked
 %   like a recording.
-%   IT ASKS 'which', NOT 'exist'.  exist('adi.readFile','file') answers 0 for a
-%   PACKAGE function that is perfectly reachable, so the obvious test would refuse
-%   to read a file on a machine that has the SDK installed correctly.
-if ~isempty(which('adi.readFile')), return; end
+%   THE QUESTION ITSELF LIVES IN hasLabChartSDK, because other steps ask it without
+%   wanting to read anything - the intervals step tells the operator what to do about
+%   a missing recording, and that depends on whether reading it back is possible at
+%   all here.  It asks 'which' and not 'exist': exist('adi.readFile','file') answers
+%   0 for a PACKAGE function that is perfectly reachable.
+if hasLabChartSDK(), return; end
 error('readLabChart:noSDK', ...
     ['Reading LabChart files needs the ADInstruments SDK for MATLAB ' ...
      '(https://github.com/JimHokanson/adinstruments_sdk_matlab), which belongs ' ...

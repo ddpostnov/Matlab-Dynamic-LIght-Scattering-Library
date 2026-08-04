@@ -599,9 +599,14 @@ for fidx=1:1:numel(fNames)
         %is single-threaded and cost 13.2 s of the 14.2 s spent writing this step's
         %0.6 GB cube, for 19% of the disk.  Measured here first, now applied to every
         %save in the library - so do not "restore" the default on one file.
-        save(strrep(s.fName,'.rls','_c_K_d.mat'),'source','-v7.3','-nocompression');
-        save(strrep(s.fName,'.rls','_c_K_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(s.fName,'.rls','_c_K_s.mat'),'settings','-v7.3','-nocompression');
+        %This is the ENTRY step, so this is where a raw path becomes a product path, and
+        %the only place that has to know a project may keep its results apart from its
+        %recordings.  s.fName is NOT reassigned - it stays the raw recording.  With no
+        %results folder set the name comes back verbatim.
+        outBase=getResultsPath(s.fName,s);
+        save(strrep(outBase,'.rls','_c_K_d.mat'),'source','-v7.3','-nocompression');
+        save(strrep(outBase,'.rls','_c_K_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(outBase,'.rls','_c_K_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

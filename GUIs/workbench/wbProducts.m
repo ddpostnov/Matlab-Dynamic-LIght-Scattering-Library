@@ -233,10 +233,10 @@ function [files, unattributable] = filesBelow(reg, model, stepId, stage)
 %   whole (no -append anywhere in the library, and every producer clears its
 %   variables per file), so the thing being recomputed overwrites itself.
 %
-%   Nothing outside the recording's own folder is ever named.
+%   Nothing outside the recording's own results folder is ever named.
 files = cell(1,0); unattributable = cell(1,0);
 if isempty(model) || ~isstruct(model), return; end
-if isempty(model.folder) || ~isfolder(model.folder), return; end
+if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
 stage = char(stage);
 if isempty(stage), return; end     % no stage to scope by: nothing is attributable
 
@@ -246,13 +246,16 @@ if isempty(sigs), return; end
 
 % ---- 3. this recording's own files, matched against them ----------------------
 base = [model.roiPrefix model.stem];
-d = dir(fullfile(model.folder,[base '*']));
+d = dir(fullfile(model.resultsFolder,[base '*']));
 victims = cell(1,0);
 for i = 1:numel(d)
     if d(i).isdir, continue; end
     fp = fullfile(d(i).folder, d(i).name);
     m  = wbFileModel(fp);
-    if ~strcmp(m.identity, model.identity), continue; end
+    % the BASE, not the identity - the folder half of an identity comparison is a
+    % tautology within one listing, and a false negative once that listing is the
+    % results folder and the model came from the raw tree
+    if ~strcmp([m.roiPrefix m.stem], base), continue; end
     if isempty(m.product), continue; end        % the raw recording, or a page
     [hit, sure] = matchesSignature(sigs, m, stage);
     if hit && sure
@@ -264,7 +267,7 @@ end
 if isempty(victims), return; end
 
 % ---- 4. a doomed product takes its own report pages with it -------------------
-files = [victims, pagesOf(model.folder, victims)];
+files = [victims, pagesOf(model.resultsFolder, victims)];
 end
 
 % =====================================================================

@@ -108,6 +108,12 @@
 %                         wrapper is handed are the ones the derived monitor table
 %                         lists and nothing else.  Consumed by wbBatchPlan, not
 %                         here.  Omit the field and nothing is fenced.
+%       .rootFolder       -> OPTIONAL.  Where the project's RECORDINGS are.
+%       .resultsFolder    -> OPTIONAL.  Where its RESULTS go, when it keeps them
+%                         apart from the recordings.  The two ride into every
+%                         wrapper's s (getResultsPath), which is the GUI's whole
+%                         equivalent of the two lines in a launcher's STEP 0.  Omit
+%                         them, or make them equal, and nothing is mapped.
 %       .refFile(ai,step) -> OPTIONAL.  Which FILE of an animal's pinned
 %                         reference RECORDING this step takes as its template /
 %                         paint target - the registry's refBranch resolved by
@@ -209,6 +215,15 @@ for i = 1:numel(batches)
     s = b.s;
     s.stageFcn  = @(~,d) ctx.log(['  ' hookLabel(d)]);
     s.cancelFcn = @() ctx.isCancelled();
+    % WHERE THE RESULTS GO.  This is the GUI's whole equivalent of the two lines a
+    % launcher carries in its STEP 0: one place, every step, every wrapper.  The
+    % entry wrappers map their OUTPUT NAME through getResultsPath off these two
+    % fields, and the report pages follow for free because reportOpen reads the same
+    % two off s.  NEVER s.fName - the name of the recording is not the name of the
+    % product, and rewriting it makes a wrapper complete normally and write in the
+    % wrong place, which is the one failure here that nothing reports.
+    s.rootFolder    = ctxFolder(ctx,'rootFolder');
+    s.resultsFolder = ctxFolder(ctx,'resultsFolder');
 
     % ONE HEADER PER CALL, and the wrapper's own per-file banners are the indented
     % lines under it.  The step comes first because that is what the column is; the
@@ -230,6 +245,16 @@ if stopped
 else
     ctx.log('=== RUN complete ===');
 end
+end
+
+% =====================================================================
+function v = ctxFolder(ctx, name)
+%ctxFolder  One of the host's two project folders, '' when it does not name it.
+%   An OPTIONAL ctx field, like .admits and .refFile: a headless caller that says
+%   nothing about the two folders gets '' for both, which is getResultsPath's rule 1
+%   and therefore no mapping at all - exactly the run every project has today.
+v = '';
+if isstruct(ctx) && isfield(ctx,name) && ~isempty(ctx.(name)), v = char(ctx.(name)); end
 end
 
 % =====================================================================

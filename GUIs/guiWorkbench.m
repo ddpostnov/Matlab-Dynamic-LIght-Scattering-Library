@@ -199,6 +199,7 @@ app.animalNames   = {};
 % ---- the curated working set (Files tab) ----
 app.files        = emptyFiles();                   % ONE ENTRY PER FILE (rows dedup by identity)
 app.root         = '';                             % scan root
+app.resultsRoot  = '';                             % where the results go ('' = beside them)
 app.glob         = '*.rls';                        % scan glob: the raw recordings
 app.patterns     = wbTypeModel('emptyPatterns');   % animal/type/index/expGroup regexps
 app.patterns.ref = '';                             % + the reference regexp (not a label axis)
@@ -294,7 +295,8 @@ api = struct( ...
     'setLabel',    @(p,axis,v) setLabel(fig,p,axis,v), ...
     'labelValues', @(axis) labelValues(getApp(fig),axis), ...
     'renameRecording',@(p,stem) renameRecording(fig,p,stem), ...
-    'renamePlan',  @(p,stem) wbRename('plan',wbFileModel(p),stem), ...
+    'renamePlan',  @(p,stem) wbRename('plan', ...
+                        wbFileModel(p,getApp(fig).root,getApp(fig).resultsRoot),stem), ...
     'setModality', @(p,v) setModality(fig,p,v), ...
     'quickAssign', @(p,field,v) quickAssign(fig,p,field,v), ...
     'selectRows',  @(p) selectRows(fig,p), ...
@@ -502,14 +504,26 @@ uilabel(lp,'Text',['Collect the recordings you want to process - scan a folder, 
     'one reference recording for each animal.  Typing over a file name renames that ' ...
     'recording on your disk.'],'FontWeight','bold','WordWrap','on');
 
-% -- source row: root + glob + the loaders --
-sp = uigridlayout(lp,[1 9], ...
-    'ColumnWidth',{'fit','2x','fit','fit','0.9x','fit','fit','fit','fit'},'Padding',[0 0 0 0]);
+% -- source row: root + results root + glob + the loaders --
+%   TWO FOLDERS, and the second one is optional: leave 'results go in' matching
+%   'look in' and everything is written beside the recordings, which is what this
+%   library has always done.  Point it somewhere else and the recordings are never
+%   written to - the subfolders inside it mirror the ones inside 'look in'.
+sp = uigridlayout(lp,[1 11], ...
+    'ColumnWidth',{'fit','2x','fit','fit','2x','fit','fit','0.9x','fit','fit','fit'}, ...
+    'Padding',[0 0 0 0]);
 uilabel(sp,'Text','look in');
 c.root = uieditfield(sp,'text','Value','','Tooltip', ...
     'The folder to search.  Every subfolder inside it is searched too.', ...
     'ValueChangedFcn',ui(fig,@(s,~)onSourceEdit(fig)));
 uibutton(sp,'Text','Browse...','ButtonPushedFcn',ui(fig,@(~,~)uiBrowseRoot(fig)));
+uilabel(sp,'Text','results go in');
+c.resultsRoot = uieditfield(sp,'text','Value','','Tooltip', ...
+    ['Where the processed files and the reports are written.  It follows the folder ' ...
+     'you search until you change it; set it elsewhere to leave your recordings ' ...
+     'untouched, and the subfolders inside it will match.'], ...
+    'ValueChangedFcn',ui(fig,@(s,~)onSourceEdit(fig)));
+uibutton(sp,'Text','Browse...','ButtonPushedFcn',ui(fig,@(~,~)uiBrowseResults(fig)));
 uilabel(sp,'Text','for files named');
 c.glob = uieditfield(sp,'text','Value',app.glob,'ValueChangedFcn',ui(fig,@(s,~)onSourceEdit(fig)), ...
     'Tooltip',tipGlob());
@@ -1046,7 +1060,7 @@ function f = rowFlagFor(app,type,branch)
 %   a '_t_BFI' was over-specified.
 %
 %   UNLESS THERE IS NO STAGE.  A product that carries only a product token and no
-%   stage flag ('_MYO': one triplet per recording, appended to in place) would come
+%   stage flag ('_MYO': one PAIR per recording, appended to in place) would come
 %   out of the stage rule as a bare '_', so the product token stands for it.  Same
 %   rule, one fall-back, and it is what keeps this from being contrast-specific.
 %
@@ -1059,7 +1073,7 @@ pid = wbTypeSelection('producer', reg, branch);
 if isempty(pid), return; end
 step = stepById(reg,pid);
 if isempty(step.outSuffix), return; end
-m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t, '_MYO_d' -> product MYO
+m  = wbFileModel(['x' step.outSuffix{1} '.mat']);   % '_t_K_d' -> stage t, '_MYO_r' -> product MYO
 st = m.stage;
 alt = settingStage(app,type,step);
 if ~isempty(alt), st = alt; end
@@ -1405,7 +1419,10 @@ if isempty(identity), return; end
 for i = 1:numel(app.files)
     if strcmp(app.files(i).model.identity, identity), m = app.files(i).model; return; end
 end
-m = wbFileModel(identity);          % not loaded, but the identity still locates it
+% not loaded, but the identity still locates it - and it is given the two project
+% folders like any other model, or the reference lookup below it would go hunting
+% for products in the raw tree
+m = wbFileModel(identity, app.root, app.resultsRoot);
 end
 
 function lines = animalPlanLines(app)
@@ -2005,7 +2022,7 @@ t = ['What to show: everything, only the report images, or only the PDFs.  This 
      'all still there.'];
 end
 function t = tipWipeAll()
-t = ['Delete every processed file - _d.mat, _r.mat and _s.mat - belonging to the ' ...
+t = ['Delete every processed file belonging to the ' ...
      'recordings listed on the Files tab, so you can process the whole set again ' ...
      'from scratch.  Your raw recordings are never touched, nothing outside the ' ...
      'listed recordings is touched, and you are shown how many files it is and ' ...
@@ -2083,10 +2100,11 @@ end
 
 %% ===================== loaders ===================================== %%
 function onSourceEdit(fig)
-%onSourceEdit  Remember the root/glob boxes (they are session state, not just UI).
+%onSourceEdit  Remember the root/results/glob boxes (session state, not just UI).
 app = getApp(fig); c = app.c.files;
-app.root = strtrim(c.root.Value);
-app.glob = strtrim(c.glob.Value);
+app.root        = strtrim(c.root.Value);
+app.resultsRoot = strtrim(c.resultsRoot.Value);
+app.glob        = strtrim(c.glob.Value);
 setApp(fig,app);
 end
 function onPatternEdit(fig,axis,value)
@@ -2122,10 +2140,21 @@ function s = oneLine(msg)
 %oneLine  A multi-line MATLAB error message folded onto one status line.
 s = strtrim(regexprep(char(msg),'\s+',' '));
 end
-function setSource(fig,root,glob)
+function setSource(fig,root,glob,resultsRoot)
+%setSource  Set the two folders and the glob.  THE RESULTS FOLDER FOLLOWS THE ROOT
+%   UNTIL IT IS TOLD OTHERWISE: while the two are equal there is no mapping at all
+%   (getResultsPath rule 1), which is the default and what every existing project
+%   gets, so a user who never thinks about it never sees a difference.  Once they
+%   point it somewhere else the two differ and it stops following - retyping the
+%   root would otherwise silently throw their answer away.
 app = getApp(fig);
-if nargin>=2 && ~isempty(root), app.root = char(root); end
+followed = ~resultsApart(app);
+if nargin>=2 && ~isempty(root)
+    app.root = char(root);
+    if followed, app.resultsRoot = app.root; end
+end
 if nargin>=3 && ~isempty(glob), app.glob = char(glob); end
+if nargin>=4 && ~isempty(resultsRoot), app.resultsRoot = char(resultsRoot); end
 setApp(fig,app); syncFilesControls(fig);
 end
 
@@ -2134,6 +2163,26 @@ app = getApp(fig);
 d = uigetdir(defaultDir(app.root),'Pick the root folder to scan recursively');
 if isequal(d,0), return; end
 setSource(fig,d,'');
+end
+function uiBrowseResults(fig)
+app = getApp(fig);
+d = uigetdir(defaultDir(resultsDirOf(app)),'Pick the folder the results should go in');
+if isequal(d,0), return; end
+setSource(fig,'','',d);
+end
+function d = resultsDirOf(app)
+%resultsDirOf  Where the results browser opens: the results folder if one is set,
+%   otherwise the root, so the pick starts beside the recordings rather than at
+%   whatever MATLAB's working folder happens to be.
+if ~isempty(app.resultsRoot), d = app.resultsRoot; else, d = app.root; end
+end
+function tf = resultsApart(app)
+%resultsApart  Do the results live somewhere other than the recordings?  This is
+%   getResultsPath's rule 1 asked from the window's side, written down ONCE so the
+%   two places that care - the results folder following the root, and the rename
+%   confirmation saying what will not move - cannot disagree about whether anything
+%   is being mapped at all.
+tf = ~isempty(app.resultsRoot) && ~strcmp(app.resultsRoot, app.root);
 end
 function uiScan(fig)
 app = getApp(fig);
@@ -2152,9 +2201,9 @@ function n = doScan(fig)
 app = getApp(fig);
 p = app.patterns;
 if isempty(p.ref)
-    disc = wbDiscoverFiles('folder', app.root, app.glob, p.animal, p.type, p.expGroup);
+    disc = wbDiscoverFiles('folder', app.root, app.glob, p.animal, p.type, p.expGroup, app.resultsRoot);
 else
-    disc = wbDiscoverFiles('structured', app.root, app.glob, p.animal, p.ref, p.type, p.expGroup);
+    disc = wbDiscoverFiles('structured', app.root, app.glob, p.animal, p.ref, p.type, p.expGroup, app.resultsRoot);
 end
 paths = gridPaths(disc);
 app.autoRef = autoRefsFor(app, paths);
@@ -2174,7 +2223,7 @@ app = getApp(fig);
 d = uigetdir(defaultDir(app.root),'Pick a folder to scan recursively and ADD');
 if isequal(d,0), return; end
 disc = wbDiscoverFiles('folder', d, app.glob, app.patterns.animal, ...
-    app.patterns.type, app.patterns.expGroup);
+    app.patterns.type, app.patterns.expGroup, app.resultsRoot);
 addPaths(fig, gridPaths(disc));
 end
 function n = addPaths(fig,paths)
@@ -2287,7 +2336,7 @@ end
 app.animalRef = pruneRefs(app.animalRef, paths);     % a ref whose file is gone is no ref
 
 % ---- the animal grid + the deduped matrix rows -----------------------------
-disc = wbDiscoverFiles('curated', paths, app.labels, app.animalRef);
+disc = wbDiscoverFiles('curated', paths, app.labels, app.animalRef, app.root, app.resultsRoot);
 disc.patterns = app.patterns;
 app.files = buildFileEntries(app, paths, disc);
 setApp(fig,app);
@@ -2325,7 +2374,7 @@ for r = 1:size(disc.models,1)
 end
 for i = 1:numel(paths)
     p = paths{i};
-    if isKey(byPath,p), m = byPath(p); else, m = wbFileModel(p); end
+    if isKey(byPath,p), m = byPath(p); else, m = wbFileModel(p, app.root, app.resultsRoot); end
     isRef = isKey(app.animalRef, m.animal) && strcmp(app.animalRef(m.animal), m.identity);
     files(end+1) = struct('model',m,'path',p,'name',m.name, ...
         'animal',m.animal,'type',m.type,'index',m.index,'expGroup',m.expGroup, ...
@@ -2808,17 +2857,28 @@ end
 function tf = confirmRename(fig, model, newStem, list)
 %confirmRename  Show EVERY file that will move, before any of them does (D4).  A
 %   headless window (the tests, an API caller) has nobody to ask and proceeds.
+%
+%   IT IS ALSO THE ONLY WARNING THERE IS when the results are kept in a folder of
+%   their own.  A rename then covers the recording's own folder and nothing else
+%   (wbRename), so the closing sentence has to say what stays behind rather than
+%   what travels - the two are opposite answers and only one of them can be shown.
+%   There is no second dialog and no banner afterwards: this is where it is said.
 tf = true;
 if ~isvalid(fig) || ~strcmp(fig.Visible,'on'), return; end
 lines = cell(1,numel(list));
 for i = 1:numel(list)
     lines{i} = ['    ' list(i).oldName '   ->   ' list(i).newName];
 end
-msg = sprintf(['Rename the recording %s to %s?\n\n%d %s move together:\n\n%s\n\n' ...
-    'A recording is renamed as a whole - everything computed from it, and its report ' ...
-    'images, move with it, because the processing steps find them by name.'], ...
+if resultsApart(getApp(fig))
+    note = ['Results and reports already computed for this recording keep their old ' ...
+        'name and will no longer be linked to it.'];
+else
+    note = ['A recording is renamed as a whole - everything computed from it, and its ' ...
+        'report images, move with it, because the processing steps find them by name.'];
+end
+msg = sprintf('Rename the recording %s to %s?\n\n%d %s move together:\n\n%s\n\n%s', ...
     [model.roiPrefix model.stem], [model.roiPrefix newStem], ...
-    numel(list), plural(numel(list),'file'), strjoin(lines,newline));
+    numel(list), plural(numel(list),'file'), strjoin(lines,newline), note);
 sel = uiconfirm(fig,msg,'Rename recording','Options',{'Rename','Cancel'}, ...
     'DefaultOption',2,'CancelOption',2,'Icon','question');
 tf = strcmp(sel,'Rename');
@@ -3238,11 +3298,12 @@ function s = stageLabel(m)
 if m.isRaw, s = 'raw'; elseif isempty(m.flags), s = m.product; else, s = [strjoin(m.flags,'_') '_' m.product]; end
 end
 function syncFilesControls(fig)
-%syncFilesControls  Push root/glob/patterns back into their boxes (session load).
+%syncFilesControls  Push root/results/glob/patterns back into their boxes (session load).
 app = getApp(fig);
 if ~isfield(app,'c') || ~isfield(app.c,'files'), return; end
 c = app.c.files;
 if isgraphics(c.root), c.root.Value = app.root; end
+if isgraphics(c.resultsRoot), c.resultsRoot.Value = app.resultsRoot; end
 if isgraphics(c.glob), c.glob.Value = app.glob; end
 f = fieldnames(c.pat);
 for i = 1:numel(f)
@@ -3314,7 +3375,7 @@ for i = 1:numel(app.rows)
     id = app.rows(i).identity;
     ty = typeOfIdentity(app, id);
     for b = 1:numel(brs)
-        bm = branchModelOf(id, brs{b});
+        bm = branchModelOf(app, app.rows(i).model, brs{b});
         if isempty(bm), continue; end                % that pipeline has no file yet
         app.branchState([id '||' brs{b}]) = statesOf(app, bm, ty);
     end
@@ -3340,17 +3401,26 @@ bs = struct();
 for k = 1:numel(st), bs.(st(k).id) = st(k).state; end
 end
 
-function m = branchModelOf(identity, branch)
+function m = branchModelOf(app, model, branch)
 %branchModelOf  ANY data file of one recording sitting on one pipeline ([] if the
 %   pipeline has produced nothing yet).  Which file does not matter: wbStateEngine
 %   unions the settings ALONG the pipeline, so '_t_K_r' and '_t_BFI_r' give the
 %   same answer - and asking for a fixed one would break the moment a step deleted
 %   its original (runBFI's deleteOriginal).
+%
+%   IT TAKES THE ROW'S MODEL, NOT ITS IDENTITY.  The files it is looking for are
+%   PRODUCTS, so they are in the results folder, and an identity only ever names
+%   the tree the recording was scanned from.  The one it hands back is given the
+%   two project folders for the same reason: a branch model with no raw folder
+%   sends every needsRaw step of that pipeline looking for the recording among the
+%   results.
 m = [];
-d = dir([identity '*_r.mat']);
+if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
+base = [model.roiPrefix model.stem];
+d = dir(fullfile(model.resultsFolder,[base '*_r.mat']));
 for i = 1:numel(d)
-    cm = wbFileModel(fullfile(d(i).folder, d(i).name));
-    if strcmp(cm.identity, identity) && strcmp(cm.branch, branch), m = cm; return; end
+    cm = wbFileModel(fullfile(d(i).folder, d(i).name), app.root, app.resultsRoot);
+    if strcmp([cm.roiPrefix cm.stem], base) && strcmp(cm.branch, branch), m = cm; return; end
 end
 end
 
@@ -4182,6 +4252,7 @@ function saveSessionInto(app, session, pth)
 %   definition of what a session contains, used by both the explicit Save and the
 %   autosave, so the two can never drift apart.
 session.root          = app.root;
+session.resultsRoot   = app.resultsRoot;
 session.glob          = app.glob;
 session.patterns      = app.patterns;
 session.paths         = {app.files.path};
@@ -4216,6 +4287,7 @@ session = wbSession('load', pth);
 app = getApp(fig);
 % ---- curation state ---------------------------------------------------------
 app.root         = session.root;
+app.resultsRoot  = session.resultsRoot;
 if ~isempty(session.glob), app.glob = session.glob; end
 app.patterns     = session.patterns;
 app.overrides    = session.overrides;
@@ -4775,6 +4847,12 @@ function ctx = buildExecContext(fig)
 %buildExecContext  The callback bundle wbExecutor drives the figure through.
 ctx = struct();
 ctx.reg           = getApp(fig).reg;
+% THE TWO PROJECT FOLDERS, and this is the only place the run is told about them:
+% wbExecutor puts them on every wrapper's s, which is the GUI's equivalent of the
+% two lines a launcher carries in its STEP 0.  The report pages follow for free -
+% reportOpen reads the same two fields (results-folder plan, session 1).
+ctx.rootFolder    = getApp(fig).root;
+ctx.resultsFolder = getApp(fig).resultsRoot;
 ctx.modelOf       = @(id) modelByIdentity(fig,id);
 ctx.animalModels   = @(gi) animalModelArr(fig,gi);
 % the run must use the SAME layers the staleness fingerprint compares against
@@ -5046,13 +5124,13 @@ files = cell(1,0);
 seen = containers.Map('KeyType','char','ValueType','logical');
 for i = 1:numel(app.files)
     m = app.files(i).model;
-    if isempty(m.folder) || ~isfolder(m.folder), continue; end
+    if isempty(m.resultsFolder) || ~isfolder(m.resultsFolder), continue; end
     base = [m.roiPrefix m.stem];
     rx = ['^' regexptranslate('escape',base) '(_.*)?_[drs]\.mat$'];
-    d = dir(fullfile(m.folder,[base '*.mat']));
+    d = dir(fullfile(m.resultsFolder,[base '*.mat']));
     for k = 1:numel(d)
         if d(k).isdir || isempty(regexp(d(k).name,rx,'once')), continue; end
-        p = fullfile(m.folder,d(k).name);
+        p = fullfile(m.resultsFolder,d(k).name);
         if isKey(seen,p), continue; end
         seen(p) = true; files{end+1} = p; %#ok<AGROW>
     end
@@ -5077,7 +5155,7 @@ if isempty(victims)
     setLog(fig,{'Wipe all: the listed recordings have no processed files on disk.'}); return
 end
 msg = sprintf(['Delete %d processed %s produced from the %d %s listed on the Files tab?\n\n' ...
-    'This removes every _d.mat / _r.mat / _s.mat of those recordings - including any ' ...
+    'This removes every processed file of those recordings - including any ' ...
     'listed .mat product itself.  The raw recordings are NOT touched.\n\n' ...
     'It cannot be undone.'], numel(victims), plural(numel(victims),'file'), ...
     numel(app.files), plural(numel(app.files),'recording'));
@@ -5546,12 +5624,15 @@ setApp(fig,app);
 end
 
 function root = pdfReportRoot(app, files)
-%pdfReportRoot  Where a column's PDF lands: the SCAN ROOT when there is one, so a
-%   project keeps all of its reports together; otherwise the folder of that
-%   column's first artifact - which is what keeps a working set assembled by hand
-%   out of several folders writing beside the images each report is made of.
+%pdfReportRoot  Where a column's PDF lands: THE RESULTS ROOT when there is one, so
+%   a project keeps all of its reports together and its recordings untouched;
+%   otherwise the folder of that column's first artifact - which is what keeps a
+%   working set assembled by hand out of several folders writing beside the images
+%   each report is made of.  A document is a result like any other, so it goes
+%   where the pages it is made of went.
 root = '';
-if ~isempty(app.root) && isfolder(app.root), root = app.root; return; end
+r = resultsDirOf(app);
+if ~isempty(r) && isfolder(r), root = r; return; end
 if ~isempty(files), root = fileparts(files{1}); end
 end
 

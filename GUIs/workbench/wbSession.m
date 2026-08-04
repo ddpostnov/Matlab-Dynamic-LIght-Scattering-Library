@@ -46,7 +46,7 @@
 %   reportSettings discipline) - a session must never serialise a closure over a
 %   dead figure.
 %
-%   SCHEMA.  wbSessionData.schema names the layout version (currently 7; a file
+%   SCHEMA.  wbSessionData.schema names the layout version (currently 9; a file
 %   without the field is the unversioned Phase-3 layout, read as 1).  Loading an
 %   older session is supported: the fields it predates come back at their empty
 %   defaults, so an old sidecar still restores its file set and settings - a
@@ -71,7 +71,11 @@
 %   step-scoped override of the old name is moved to the new one on load - see
 %   migrateMaskLimits.  It is the one kind of change that MUST bump the schema even
 %   though the layout is untouched: the same number under the same key would
-%   otherwise keep being applied to a completely different parameter.
+%   otherwise keep being applied to a completely different parameter.  Schema 9
+%   added .resultsRoot, the folder a project sends its results to.  A schema-8
+%   sidecar has no such field and reads '' - which is both the empty default and
+%   the right answer, because a project written before this existed kept its
+%   results beside its recordings and that is exactly what '' means.
 %
 % Syntax:
 %    wbSession('save', path, session)      % write the sidecar
@@ -86,6 +90,9 @@
 %    session - struct with fields:
 %       schema        double, the layout version (set by 'save').
 %       root          char, the scanned root folder ('' if none).
+%       resultsRoot   char, where this project's RESULTS go ('' - or the same
+%                     folder as .root - means beside the recordings, which is the
+%                     default and what every project written before schema 9 has).
 %       glob          char, the scan glob ('*.rls', '*_K_r.mat', ...).
 %       patterns      struct of regexps: animal/type/index/expGroup/ref.
 %       paths         cellstr, the curated working set in table order.
@@ -159,7 +166,7 @@ end
 end
 
 % =====================================================================
-function v = schemaVersion(), v = 8; end
+function v = schemaVersion(), v = 9; end
 
 % =====================================================================
 function s = emptySession()
@@ -167,6 +174,7 @@ function s = emptySession()
 s = struct();
 s.schema        = schemaVersion();
 s.root          = '';
+s.resultsRoot   = '';
 s.glob          = '';
 s.patterns      = refPatterns();
 s.paths         = {};
@@ -247,6 +255,7 @@ session = fillDefaults(session, emptySession());
 wbSessionData = struct();
 wbSessionData.schema        = schemaVersion();
 wbSessionData.root          = session.root;
+wbSessionData.resultsRoot   = session.resultsRoot;
 wbSessionData.glob          = session.glob;
 wbSessionData.patterns      = session.patterns;
 wbSessionData.paths         = session.paths;
@@ -298,7 +307,7 @@ p = S.wbSessionData;
 session = emptySession();
 if isfield(p,'schema'), session.schema = p.schema; else, session.schema = 1; end
 
-plain = {'root','glob','patterns','paths','fNames','referenceMode', ...
+plain = {'root','resultsRoot','glob','patterns','paths','fNames','referenceMode', ...
          'animalNames','modality','rowOrder','bag','stepOverrides','presetRef', ...
          'reprocess'};
 for i = 1:numel(plain)
@@ -388,7 +397,7 @@ tf = false; why = '';
 if ~isstruct(session) || ~isscalar(session)
     why = 'not a scalar session struct'; return
 end
-need = {'schema','root','glob','patterns','paths','files','completed', ...
+need = {'schema','root','resultsRoot','glob','patterns','paths','files','completed', ...
         'overrides','animalRef','typeSel','animalSel','bag'};
 miss = need(~isfield(session, need));
 if ~isempty(miss)

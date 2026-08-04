@@ -104,14 +104,16 @@ end
 function c = candidatesFor(model, step)
 %candidatesFor  Every file of THIS recording matching the step's input glob.
 c = {};
-if isempty(model.folder) || ~isfolder(model.folder), return; end
+if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
 tail = globTail(step);
 base = [model.roiPrefix model.stem];
-d = dir(fullfile(model.folder,[base '*' tail]));
+d = dir(fullfile(model.resultsFolder,[base '*' tail]));      % the candidates are PRODUCTS
 for i = 1:numel(d)
     fp = fullfile(d(i).folder, d(i).name);
     cm = wbFileModel(fp);
-    if ~strcmp(cm.identity, model.identity), continue; end   % a name-prefix sibling
+    % the BASE, not the identity: within one listing the folder half says nothing,
+    % and it says the wrong thing once the listing is the results folder
+    if ~strcmp([cm.roiPrefix cm.stem], base), continue; end  % a name-prefix sibling
     c{end+1} = fp; %#ok<AGROW>
 end
 end

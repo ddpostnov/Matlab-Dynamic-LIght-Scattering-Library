@@ -26,7 +26,7 @@
 %   by default.
 %
 %   A myograph product carries NO stage flag, only the product token: both
-%   myograph modalities write one '_MYO' triplet per recording and every later
+%   myograph modalities write one '_MYO' PAIR per recording and every later
 %   step appends to it, so there is no stage for a name to carry.  It is still on a
 %   BRANCH, though - 'myograph', the one its registry steps declare - because the
 %   branch is the pipeline a file belongs to and a flagless name does not make it
@@ -61,10 +61,11 @@
 %   which of the two wrote it and the guess is simply PMYO.  Nothing may depend on
 %   that: a workbench row is a RAW RECORDING whose modality the user set on the
 %   Files tab, and anything that genuinely needs a product's modality reads
-%   source.modality out of the file.
+%   results.recording.modality out of the file.
 %
 % Syntax:
 %    model = wbFileModel(path)                         % decompose one path
+%    model = wbFileModel(path, rootFolder, resultsFolder)  % ... knowing the two roots
 %    name  = wbFileModel('compose', model, chain, role)% build a sibling .mat name
 %    p     = wbFileModel('identity', model)            % [RoiN_]stem (no flags)
 %    b     = wbFileModel('branch', stage, product)     % the pipeline a file sits on
@@ -74,6 +75,9 @@
 %
 % Inputs:
 %    path   - char/string full path (or bare name) of a recording or product.
+%    rootFolder    - (optional) where the RECORDINGS are.
+%    resultsFolder - (optional) where the RESULTS go.  Empty, or equal to
+%                    rootFolder, means the two trees are one.
 %    model  - a struct returned by the decompose form.
 %    chain  - flag chain to compose, e.g. '_t_K', '_c_BFI', '_e_K' or '' .
 %    role   - 'd' | 'r' | 's' (SOURCE/RESULTS/SETTINGS).
@@ -81,12 +85,30 @@
 %    product- a product token: 'K' | 'BFI' | 'I' | 'g' | 'MYO' | '' .
 %
 % Outputs:
-%    model - struct with fields: path, folder, name, ext, modality, roi (double
-%            or []), roiPrefix, stem, identity, flags (cellstr, name order),
-%            stage, branch, product, role, isRaw, isReference, animal, type,
-%            index, expGroup.  branch is derived from stage: t|s -> 'contrast',
-%            c -> 'cardiac', e -> 'epoch', b -> 'bolus'; a stage-less product falls
-%            back to its product token, so 'MYO' -> 'myograph'.
+%    model - struct with fields: path, folder, rawFolder, resultsFolder, name,
+%            ext, modality, roi (double or []), roiPrefix, stem, identity, flags
+%            (cellstr, name order), stage, branch, product, role, isRaw,
+%            isReference, animal, type, index, expGroup.  branch is derived from
+%            stage: t|s -> 'contrast', c -> 'cardiac', e -> 'epoch',
+%            b -> 'bolus'; a stage-less product falls back to its product token,
+%            so 'MYO' -> 'myograph'.
+%
+%   THREE FOLDERS, AND A NAME ALONE ONLY SETTLES ONE.  '.folder' is where the file
+%   itself is, which is all a name says.  '.rawFolder' is where this recording's
+%   raw container is and '.resultsFolder' is where its products go - and when a
+%   project keeps its results apart from its recordings (getResultsPath) those are
+%   two different trees.  Which they are cannot be read off the name, so the caller
+%   supplies the two ROOTS and this function maps the path in each direction:
+%
+%       m = wbFileModel(path, rootFolder, resultsFolder)
+%
+%   Give it no roots - every caller that predates the results folder, and every
+%   project that never names one - and all three folders are the same, which is why
+%   nothing downstream branches on whether a results folder was set.  A consumer
+%   looking for products reads .resultsFolder, one looking for the recording reads
+%   .rawFolder, and both are .folder until they are not.  wbDiscoverFiles forwards
+%   the roots it was given, so every model of a working set carries the answer and
+%   no consumer re-derives it.
 %
 %   LABEL AXES.  'animal' is the SUBJECT id (what getFileNamesList calls the
 %   animalIdentifier) - the scope of registration / vessel typing / the reference
@@ -144,12 +166,14 @@ if nargin>=1 && (ischar(varargin{1}) || (isstring(varargin{1}) && isscalar(varar
     end
 end
 
-% default: decompose a single path
-out = decompose(varargin{1});
+% default: decompose a single path, optionally knowing the two roots
+out = decompose(varargin{:});
 end
 
 % =====================================================================
-function model = decompose(pth)
+function model = decompose(pth, rootFolder, resultsFolder)
+if nargin<2, rootFolder = ''; end
+if nargin<3, resultsFolder = ''; end
 pth = char(pth);
 [folder,name,ext] = fileparts(pth);
 
@@ -196,9 +220,21 @@ end
 stage = '';
 if ~isempty(flags), stage = flags{end}; end      % flag adjacent to the product
 
+% THE TWO TREES (see the header).  getResultsPath owns the rule and is asked in
+% each direction; with no roots, or a project that never named a results folder, it
+% returns the path verbatim and all three folders agree.  It is asked for the NAME
+% and not for the room: a model is built once per file on every repaint of the Files
+% tab, and making a folder here would leave one empty folder per scanned recording,
+% cost a disk stat per file per repaint and let an unreachable results folder throw
+% out of an edit box.  The wrapper that writes there makes its own room.
+rawOf     = fileparts(getResultsPath(pth, rootFolder, resultsFolder, 'root'));
+resultsOf = fileparts(getResultsPath(pth, rootFolder, resultsFolder, 'results', 'name'));
+
 model = struct( ...
     'path',        pth, ...
     'folder',      folder, ...
+    'rawFolder',   rawOf, ...
+    'resultsFolder', resultsOf, ...
     'name',        [name ext], ...
     'ext',         ext, ...
     'modality',    modalityOf(ext,product), ...
@@ -222,10 +258,13 @@ end
 % =====================================================================
 function name = composeName(model,chain,role)
 %composeName  Build fullfile for a sibling triplet member of this recording.
+%   IN THE RESULTS FOLDER, which is where a triplet member is: this composes an
+%   OUTPUT name, and .resultsFolder is .folder itself unless a results folder was
+%   set (see the header), so the ordinary project reads exactly as it always did.
 if nargin<3 || isempty(role), role='d'; end
 chain = char(chain);
 if ~isempty(chain) && chain(1)~='_', chain = ['_' chain]; end
-name = fullfile(model.folder,[model.roiPrefix model.stem chain '_' role '.mat']);
+name = fullfile(model.resultsFolder,[model.roiPrefix model.stem chain '_' role '.mat']);
 end
 
 % =====================================================================
@@ -236,8 +275,11 @@ stage = char(stage); product = char(product);
 %   filtered and keyed by.
 %
 %   THE STAGE FLAG SAYS IT, EXCEPT WHEN THERE IS NO STAGE FLAG.  A myograph
-%   recording writes ONE '_MYO' triplet and every step of the pipeline appends to
-%   it, so the name carries a product token and no flag at all - and the file is
+%   recording writes ONE '_MYO' PAIR - _r and _s, and no source member - and every
+%   step of the pipeline appends to it, so the name carries a product token and no
+%   flag at all.  The name GRAMMAR is unchanged by that: 'd' is still a legal role
+%   letter here, because a speckle product still writes one and an old myograph
+%   '_MYO_d.mat' still sitting on disk must still parse.  And the file is
 %   nonetheless on the myograph pipeline, which is the branch its registry steps
 %   declare.  Left empty, nothing keyed by (recording, pipeline) could find it: the
 %   run expansion's resume test asks for a file of the row's branch, found none, and
@@ -313,7 +355,7 @@ if strcmpi(ext,'.mat')
         case 'I',   m = 'EPFL';
         case 'g',   m = 'DLSI';
         case 'BFI', m = 'LSCI';   % BFI is produced from _K in the LSCI path
-        case 'MYO', m = 'PMYO';   % one token, two modalities: source.modality decides
+        case 'MYO', m = 'PMYO';   % one token, two modalities: results.recording.modality decides
         otherwise,  m = 'LSCI';
     end
     return

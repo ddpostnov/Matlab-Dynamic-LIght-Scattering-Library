@@ -156,5 +156,25 @@ per-edit path by accident.
 - User-visible strings are written for biologists: no bracketed explanations, no
   wrapper or settings-field names, registry labels rather than ids.
 - Retire a file by renaming it `OBSOLETE<name>.m`, never by deleting it.
-- Data model: `_d` / `_r` / `_s` triplets; wrappers are `run<X>` / `set<X>`, cores are
+
+- **THE CUT IS ALWAYS CLEAN. No code in this library exists to read a file it no longer
+  writes.** When a shape changes, the already-processed files are migrated or re-processed
+  — they are not a constraint on the design. So: no fallback that reads an old field name,
+  no second spelling of a setting, no "a file written before X was added is read off Y".
+  Every such fallback is a second way for a file to disagree with itself, it can never be
+  exercised once the data has moved, and it quietly outlives the reason it was written.
+  When a revision is planned, migrating the data is part of the revision.
+
+  Two things this rule does **not** cover, because they are not back-compatibility:
+  a **setting** that produces a smaller product on purpose (`s.keepArrays false`) is a
+  live choice and the code that reads its shape stays; and a field that is legitimately
+  in one of **two current states** (a wire channel's samples, whole before the intervals
+  step and inside the windows after it) has one reader for both, by design.
+
+- Data model: `_d` / `_r` / `_s` triplets — **except the myograph, which is the PAIR
+  `_MYO_r` + `_MYO_s`.** A myograph recording is not changed by the analysis and
+  re-reading it is seconds, so the product describes the recording (`results.recording`)
+  and keeps the measurement (`results.intervals(k)`), and copies neither. The speckle
+  branch still has three members and that is not changing — sweep on `_MYO_d`, never on
+  `_d.mat`. Wrappers are `run<X>` / `set<X>`, cores are
   `get<X>` / `fit<X>`.

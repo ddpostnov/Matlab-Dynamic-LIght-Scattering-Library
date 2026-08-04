@@ -3,12 +3,12 @@
 %   setMyographPresetIntervals(s,fNames) opens the interval editor on every
 %   *_MYO_r.mat recording in fNames while nothing has been measured yet, and writes
 %   the windows the operator picks - names and times, nothing else - into that
-%   recording's own _MYO triplet.  ONE WINDOW PER RECORDING, blocking, no file
+%   recording's own _MYO pair.  ONE WINDOW PER RECORDING, blocking, no file
 %   dropdown: the wrapper loops the files, exactly as setRegions does.
 %
-%   WHY BEFORE.  The diameter step then measures ONLY inside these windows, and
-%   source.time and source.data come back only that long (see runMyographDiameter's
-%   order of precedence).  Measuring four 5-minute windows of a two-hour recording
+%   WHY BEFORE.  The diameter step then measures ONLY inside these windows, and each
+%   window stores only its own frames (see runMyographDiameter's order of
+%   precedence).  Measuring four 5-minute windows of a two-hour recording
 %   costs twenty minutes of work and twenty minutes of memory rather than two hours
 %   of both.  Everything outside them is never read.
 %
@@ -34,7 +34,7 @@
 %                  of the recording.
 %     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     fNamesRaw (optional) the matching raw recordings.  Omitted, each recording's
-%              own source.fName is used.
+%              own results.recording.fName is used.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
 %     and s.cancelFcn()->tf (checked between files).
 %
@@ -59,7 +59,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 03-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -86,12 +86,12 @@ for fidx=1:1:numel(fNames)
     if isempty(fNames{fidx}), continue; end
     fName=char(fNames{fidx});
     reportFile(rep,fidx,fName);
-    clearvars source results settings
+    clearvars results settings
 
-    [source,results,settings]=myographProduct('open',fName);
+    [results,settings]=myographProduct('open',fName);
     sFile=s; sFile.fName=fName;
 
-    data=getMyographTrace(source,sFile,rawRecording(fNamesRaw,fidx));
+    data=getMyographTrace(results,sFile,rawRecording(fNamesRaw,fidx));
     [ivT,names]=editMyographIntervals(data,editorOptions(results,fName));
 
     results.intervals=windowsOnly(ivT,names);
@@ -101,7 +101,7 @@ for fidx=1:1:numel(fNames)
     settings.setMyographPresetIntervals=reportSettings(sFile);
 
     reportWriting(rep);
-    myographProduct('save',fName,[],results,settings);   % SOURCE untouched
+    myographProduct('save',fName,results,settings);
     reportSaved(rep);
 end
 reportClose(rep);
@@ -155,7 +155,8 @@ end
 % =====================================================================
 function raw=rawRecording(fNamesRaw,fidx)
 %rawRecording  The raw path the caller passed for this file, if any.  Empty falls
-%   back to the one the entry step recorded (getMyographTrace resolves it).
+%   back to the one the entry step recorded (getMyographTrace resolves it from
+%   results.recording.fName).
 raw='';
 if numel(fNamesRaw)>=fidx && ~isempty(fNamesRaw{fidx}), raw=char(fNamesRaw{fidx}); end
 end

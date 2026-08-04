@@ -119,7 +119,13 @@
 %   results and shows a wall that wandered as a stripe and a lost wall as a band; and
 %   'fraction of frames measured' / 'fraction of frames accepted', which carry the
 %   same fact as numbers that can go on an axis.  The place to LOOK at a frame of the
-%   recording is the interval editor, which owns the recording and is built for it.
+%   recording is the interval editor, which owns the recording and is built for it -
+%   and it now does, through getMyographWallFrame (Core/Myograph), which re-opens the
+%   recording and returns one frame with that frame's own walls on it.  THAT IS NOT
+%   THIS VIEW COMING BACK.  The rule here is about what a results file contains, not
+%   about whether the picture is worth having: a step already holding the recording
+%   open is not reading a sibling of the results, and a variable here that quietly
+%   opened an '.avi' still would be.
 %
 % WHEN TO USE IT
 %   After processing recordings to *_r.mat results, to look at single-recording
@@ -3102,7 +3108,11 @@ function v = sortVars(v)
 %sortVars  Menu order: the families in the order a user thinks about them, and a
 %   SUSPECT leaf last - offered, but not offered first.
 if isempty(v), return; end
-fam = {'Flow','Pulsatility','Vasomotion','Diameter','Propagation','Maps','Metrics','Other'};
+% Recording comes FIRST: it is the trace as it was recorded, and everything else in
+% a wire myograph file is derived from it.  A family missing from this list sorts
+% after Other, which is how a new one announces itself rather than hiding.
+fam = {'Recording','Flow','Pulsatility','Vasomotion','Diameter','Propagation', ...
+       'Maps','Metrics','Other'};
 [~,fi] = ismember({v.family}, fam); fi(fi==0) = numel(fam)+1;
 % one element per row even when a row left .suspect unset - a shorter column here
 % would not sort wrongly, it would fail to concatenate at all

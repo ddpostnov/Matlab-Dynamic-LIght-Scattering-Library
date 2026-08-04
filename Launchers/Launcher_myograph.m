@@ -7,12 +7,36 @@
 %
 %   Run STEP 0 once per MATLAB session, then run the step cells (%%) in order.
 %
-%   WHAT A MYOGRAPH RUN LEAVES BEHIND.  One triplet per recording -
-%   <name>_MYO_d.mat (SOURCE), _MYO_r.mat (RESULTS), _MYO_s.mat (SETTINGS) - and
-%   three lines of text per step in the command window.  It writes NO report images:
-%   the figures come from guiExplore and the numbers from exportToExcel, both at the
-%   end of this file.  A user coming from the speckle pipeline should not go looking
-%   for pages that were never written.
+%   WHAT A MYOGRAPH RUN LEAVES BEHIND, AND WHERE.  One PAIR per recording -
+%   <name>_MYO_r.mat (RESULTS) and _MYO_s.mat (SETTINGS) - and three lines of text
+%   per step in the command window.  The pair goes in resultsFolder, under the same
+%   subfolders the recording had under rootFolder.  STEP 0 starts the two out as one
+%   folder, which writes beside the recording exactly as before; point resultsFolder
+%   elsewhere and the recordings are never written to at all.  Only STEP 1 has to be
+%   told - every step after it is handed a product that is already there.  It writes
+%   NO report images: the figures come from guiExplore and the numbers from
+%   exportToExcel, both at the end of this file.  A user coming from the speckle
+%   pipeline should not go looking for pages that were never written.
+%
+%   WHY THERE IS NO SOURCE MEMBER, WHICH IS THE ONE THING THAT DIFFERS FROM THE REST
+%   OF THE LIBRARY.  Everywhere else a '_d.mat' is load-bearing: a contrast cube is
+%   not the '.rls' it came from, re-deriving it costs minutes to hours, and the raw
+%   file is often not kept.  A myograph recording is the opposite on all three counts.
+%   The analysis does not change it, re-reading it is seconds, and it is a '.avi' or
+%   an '.adicht' sitting in the same folder.  So the library DESCRIBES the recording
+%   and KEEPS THE MEASUREMENT, and copies neither: what the recording is lives in
+%   results.recording, what was measured of it lives per window in results.intervals,
+%   and everything outside the analysed windows is discarded rather than stored with
+%   holes in it.  On the reference recording - three windows of 97 433 frames - that
+%   is 1.83 GB down to 287 MB.
+%
+%   TWO CONSEQUENCES WORTH KNOWING BEFORE YOU START.  Narrowing a window (steps 2 and
+%   3) throws away the measurement outside it and cannot be undone from the results,
+%   so those steps refuse to cut when the recording is not beside them.  And a picture
+%   of the detected walls re-opens the recording rather than reading a stored copy:
+%   getMyographWallFrame is where it lives, the interval editor already draws it, and
+%   guiExplore deliberately does not offer it because the explorer reads results and
+%   only results.
 %
 %   STEPS 2, 3 AND 5 OPEN A WINDOW and wait for you, one recording at a time.  All
 %   three are optional and they are the only interactive steps here; everything else
@@ -25,10 +49,20 @@
 %   diameter step reads it from there.  So the same s can be applied to a whole
 %   folder whose recordings were each cropped differently.
 %
+%   THE HELPERS A READER OF THIS FILE MAY WANT BY NAME.  getMyographWallFrame is the
+%   wall picture above.  myographChannelSamples reads a wire recording's samples
+%   whichever of the two shapes it is in - whole on the channel before the windows are
+%   chosen, inside the windows afterwards - and is what every consumer asks instead of
+%   testing .data itself.  myographRecordingPath is where all these steps look for the
+%   '.avi' or '.adicht', so they cannot disagree about whether it is there.  And
+%   hasLabChartSDK answers whether the ADInstruments reader is installed, which is the
+%   one question about the SDK that anything but readLabChart is allowed to ask.
+%
 % See also: guiWorkbench, guiExplore, guiExport, exportToExcel, runMyographVideo,
 %           runMyographDiameter, runMyographPropagation, runMyographVasomotion,
 %           setMyographCrop, setMyographPresetIntervals, setMyographIntervals,
-%           runLabChart
+%           runLabChart, getMyographWallFrame, myographChannelSamples,
+%           myographRecordingPath, hasLabChartSDK, myographProduct
 %
 % Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
 % script formatting were done with Claude Code.
@@ -38,14 +72,16 @@
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
-rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
+rootFolder    = 'C:\Dropbox\Work\Data'; %where the RECORDINGS are
+resultsFolder = rootFolder;             %where the RESULTS go. Point it elsewhere to keep the raw data untouched
 
 
 
-%% STEP 1 Read the recordings and create one _MYO triplet per recording
+%% STEP 1 Read the recordings and create one _MYO pair per recording
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
+s.rootFolder=rootFolder; s.resultsFolder=resultsFolder; %only the step that reads the recording needs these - every step after it is already in the results tree
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CALIBRATION AND GEOMETRY
 s.pixelSize=0.62; %um per px. Leave empty or 0 for an uncalibrated recording - results are then reported in px
@@ -58,19 +94,19 @@ fNamesRaw=getFileNamesList(rootFolder,'*.avi'); %the RAW recordings
 runMyographVideo(s,fNamesRaw(:));
 
 %from here on every step takes the PRODUCT, not the recording
-fNames=getFileNamesList(rootFolder,'*_MYO_r.mat');
+fNames=getFileNamesList(resultsFolder,'*_MYO_r.mat');
 
 %WIRE MYOGRAph VARIANT - a LabChart recording instead of a video:
 % s.records=[]; %which LabChart records to read; [] reads all of them
 % s.channels={}; %names of the channels to keep; {} keeps every channel with samples
 % fNamesRaw=getFileNamesList(rootFolder,'*.adicht');
 % runLabChart(s,fNamesRaw(:));
-% fNames=getFileNamesList(rootFolder,'*_MYO_r.mat');
+% fNames=getFileNamesList(resultsFolder,'*_MYO_r.mat');
 
 
 %% STEP 2 (OPTIONAL, INTERACTIVE) Crop the recording in time
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %One window per recording, showing a brightness profile of the whole file. Drag a
 %band over the part worth analysing and press Done. NOTHING IS MEASURED YET, so the
@@ -87,7 +123,7 @@ setMyographCrop(s,fNames(:),fNamesRaw(:));
 
 %% STEP 3 (OPTIONAL, INTERACTIVE) Pre-set the analysis windows
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %Same window as step 2, but every band you draw becomes an analysed window with its
 %own name. The diameter step then measures INSIDE them and nowhere else, so ten
@@ -102,7 +138,7 @@ setMyographPresetIntervals(s,fNames(:),fNamesRaw(:));
 
 %% STEP 4 Measure the diameter
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %MANDATORY for a pressure myograph, and the step everything else reads. It measures
 %all THREE diameters - outer, wall-centre and luminal - within whichever span steps
@@ -125,7 +161,7 @@ s.ySpan=31; %along-vessel outlier-rejection window, rows
 s.outlierK=3; %outlier rejection threshold, in standard deviations
 
 %ADJUSTED IF NECESSARY - WHAT IS KEPT
-s.keepLines=true; %keep every line's own diameter beside the averaged trace, so the diameter can be looked at position by position. false keeps the trace alone and makes the results file far smaller
+s.keepArrays=true; %keep every line's own diameter and the wall positions beside the averaged trace, so the diameter can be looked at position by position. false keeps the trace alone and makes the results file far smaller - but propagation and per-line vasomotion then have nothing to read
 
 %RUN THE PROCESSING ROUTINE
 runMyographDiameter(s,fNames(:),fNamesRaw(:));
@@ -133,7 +169,7 @@ runMyographDiameter(s,fNames(:),fNamesRaw(:));
 
 %% STEP 5 (OPTIONAL, INTERACTIVE) Define the analysis windows on the measured diameter
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %One window per recording, on the diameter trace this time, with the Y-vs-time map
 %below it and a video preview with the detected walls overlaid. This is the ordinary
@@ -155,7 +191,7 @@ setMyographIntervals(s,fNames(:),fNamesRaw(:));
 
 %% STEP 6 Propagation along the vessel
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %How fast, and in which direction, the oscillation travels along the vessel -
 %estimated from the lag at maximum correlation between locations, reported with R2,
@@ -183,7 +219,7 @@ runMyographPropagation(s,fNames(:));
 
 %% STEP 7 Vasomotion
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %THE SAME ANALYSIS THE SPECKLE PIPELINE RUNS, on the diameter instead of the flow -
 %one <VSM> tree per analysed window per signal, so guiExplore and exportToExcel treat
@@ -216,7 +252,7 @@ runMyographVasomotion(s,fNames(:));
 
 %% STEP 8 Export the numbers to Excel
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %A bare call writes every sheet the recording is about, chosen from the data:
 %settings, comments (wire myograph only - the LabChart operator log), intervals,
@@ -228,7 +264,7 @@ exportToExcel(fNames(:));
 %ONE MERGED WORKBOOK FOR STATISTICS instead, with each row labelled by animal, type
 %and experimental group:
 % opts.merge=true;
-% opts.outFile=fullfile(rootFolder,'myograph_summary.xlsx');
+% opts.outFile=fullfile(resultsFolder,'myograph_summary.xlsx');
 % exportToExcel(fNames(:),opts);
 
 %OR do it interactively, which is the same exportToExcel behind a window:
@@ -237,7 +273,7 @@ exportToExcel(fNames(:));
 
 %% STEP 9 Look at the results
 close all
-clearvars -except fNames fNamesRaw libraryFolder rootFolder
+clearvars -except fNames fNamesRaw libraryFolder rootFolder resultsFolder
 
 %THE ONLY PLACE A MYOGRAPH FIGURE COMES FROM - no step above writes an image.
 %Two views are worth opening on every recording before you believe any number:

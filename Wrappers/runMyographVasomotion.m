@@ -2,7 +2,7 @@
 %
 %   runMyographVasomotion(s,fNames) runs the vasomotion analysis on every interval
 %   of every *_MYO_r.mat recording in fNames and writes the result into the
-%   recording's own _MYO triplet.  fNames is a cell array of *_MYO_r.mat paths; the
+%   recording's own _MYO pair.  fNames is a cell array of *_MYO_r.mat paths; the
 %   wrapper iterates them itself, so there is no launcher for-loop.
 %
 %   IT IS THE SAME ANALYSIS THE SPECKLE PIPELINE RUNS.  getMyographVasomotion calls
@@ -16,7 +16,11 @@
 %   is what a pressure myograph is set up to measure.  With s.perLine the analysis
 %   runs on every measured image row instead, giving one unit per line: the exact
 %   shape of a per-segment speckle result, and the same tree either way, so anything
-%   that reads one reads the other.
+%   that reads one reads the other.  BOTH ARE READ OUT OF THE WINDOW ITSELF -
+%   results.intervals(k).diameter, the trace and the per-line array the diameter
+%   step wrote - so a window is analysed on exactly the numbers stored under it.
+%   Per line needs those arrays: a window written with s.keepArrays false has only
+%   its trace, and this step says so rather than quietly answering with one unit.
 %
 %   WHICH DIAMETER IS ANALYSED.  The diameter step measures three (outer wall, wall
 %   centre, lumen); s.diameterMeasures names the ones analysed here, wall centre by
@@ -29,7 +33,8 @@
 %       results.channel(i).name
 %       results.channel(i).intervals(k).vasomotion.<channel>
 %   Each window is cut out of ITS CHANNEL'S OWN samples by time - the channels may be
-%   sampled at different rates, so there is no shared frame index.  The tree's own
+%   sampled at different rates, so there is no shared frame index, and the samples
+%   sit in results.channel(i) beside the windows they belong to.  The tree's own
 %   field is the channel's name made into a legal one, and the real name is kept
 %   beside it as .channelName so nothing is lost to the renaming; that keeps the
 %   <VSM> shape identical to the speckle pipeline's results.vasomotion.<signal>,
@@ -62,7 +67,6 @@
 %                        averaged, nY units per line).
 %                        WIRE: results.channel(i).intervals(k).vasomotion.<channel>
 %     <name>_MYO_s.mat   settings.runMyographVasomotion = s
-%     The SOURCE file is not rewritten: this step reads it and adds nothing to it.
 %
 %   EXAMPLE
 %     s.diameterMeasures = {'mid'};
@@ -72,9 +76,9 @@
 %     runMyographVasomotion(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
-%     getMyographVasomotion, myographMeasureIndex, myographProduct
-%     (Core/Myograph), the shared vasomotion core (Core/Vasomotion) and
-%     Core/Reporting.  Needs the Wavelet Toolbox.
+%     getMyographVasomotion, myographMeasureIndex, myographChannelSamples,
+%     myographProduct (Core/Myograph), the shared vasomotion core (Core/Vasomotion)
+%     and Core/Reporting.  Needs the Wavelet Toolbox.
 %
 % See also: runMyographVideo, runLabChart, runMyographDiameter,
 %           runMyographPropagation, getMyographVasomotion, runVasomotion,
@@ -83,7 +87,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 03-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -116,50 +120,52 @@ for fidx=1:1:numel(fNames)
     if isempty(fNames{fidx}), continue; end
     fName=char(fNames{fidx});
     reportFile(rep,fidx,fName);
-    clearvars source results settings
+    clearvars results settings
 
-    [source,results,settings]=myographProduct('open',fName);
+    [results,settings]=myographProduct('open',fName);
     sFile=s; sFile.fName=fName;
 
-    if ~isempty(fieldOr(source,'channels',[]))
-        results=analyseChannels(sFile,source,results,fName);
+    if isWire(results)
+        results=analyseChannels(sFile,results,fName);
     else
-        if isempty(source.data)
+        if ~anyDiameter(results)
             error('runMyographVasomotion:noDiameter', ...
                 'No diameter has been measured for %s yet - run the Diameter step first.',fName);
         end
-        results=analyseDiameters(sFile,source,results);
+        results=analyseDiameters(sFile,results,fName);
     end
 
     settings.runMyographVasomotion=reportSettings(sFile);
 
     reportWriting(rep);
-    myographProduct('save',fName,[],results,settings);   % SOURCE untouched
+    myographProduct('save',fName,results,settings);
     reportSaved(rep);
 end
 reportClose(rep);
 end
 
 % =====================================================================
-function results=analyseDiameters(s,source,results)
-%analyseDiameters  THE PRESSURE MYOGRAPH: one result per analysed diameter measure.
-rows=measuredRows(fieldOr(source,'rowRange',[1 Inf]),size(source.data,2));
+function results=analyseDiameters(s,results,fName)
+%analyseDiameters  THE PRESSURE MYOGRAPH: one result per analysed diameter measure,
+%   read out of the window's own diameter block.
+rec=fieldOr(results,'recording',struct());
 meas=cellstr(s.diameterMeasures);
 for k=1:1:numel(results.intervals)
-    fr=frameRange(results.intervals(k));
-    if isempty(fr), continue; end
+    d=fieldOr(results.intervals(k),'diameter',[]);
+    if ~isstruct(d) || isempty(fieldOr(d,'time',[])), continue; end
     v=struct();
     for j=1:1:numel(meas)
-        sig=analysedSignal(source,results.intervals(k),fr,rows,meas{j},s.perLine);
+        [~,nm]=myographMeasureIndex(meas{j},measuresOf(rec));
+        sig=analysedSignal(d,nm,s.perLine,fName,results.intervals(k).name);
         if isempty(sig), continue; end
-        v.(meas{j})=getMyographVasomotion(s,sig,source.time(fr));
+        v.(meas{j})=getMyographVasomotion(s,sig,double(d.time));
     end
     results.intervals(k).vasomotion=v;
 end
 end
 
 % =====================================================================
-function results=analyseChannels(s,source,results,fName)
+function results=analyseChannels(s,results,fName)
 %analyseChannels  THE WIRE MYOGRAPH: the CHANNEL is the outer axis, so the loop is
 %   channel then window rather than window then channel.  Everything inside it is
 %   the same analysis - the same core, the same bands, the same tree - which is what
@@ -178,8 +184,14 @@ function results=analyseChannels(s,source,results,fName)
 %
 %   s.perLine DOES NOT APPLY HERE and is ignored: a channel is one trace, so there
 %   are no lines to run it on.
-ch=source.channels;
-if ~isfield(results,'channel') || isempty(results.channel)
+%
+%   THE WINDOW CARRIES ITS OWN SAMPLES.  The intervals step cut each channel to the
+%   windows it was given and discarded the rest, so a window and the samples it is
+%   analysed on are ONE element and there is no second list to match it against by
+%   name.  A recording that has not been through that step yet still has the samples
+%   whole on the channel, and intervalSamples reads either shape.
+if ~isfield(results,'channel') || isempty(results.channel) || ...
+        ~any(arrayfun(@(c) ~isempty(fieldOr(c,'intervals',[])),results.channel))
     warning('runMyographVasomotion:noWindows', ...
         ['No analysis windows are defined for %s, so nothing was analysed - ' ...
          'run the Intervals step on it first.'],fName);
@@ -187,16 +199,17 @@ if ~isfield(results,'channel') || isempty(results.channel)
 end
 for i=1:1:numel(results.channel)
     nm=char(fieldOr(results.channel(i),'name',''));
-    src=findChannel(ch,nm);
     ivs=fieldOr(results.channel(i),'intervals',[]);
-    if isempty(src)
-        warning('runMyographVasomotion:noSuchChannel', ...
-            'This recording has no channel called "%s", so its windows were not analysed.',nm);
+    [chData,~]=myographChannelSamples(results.channel(i));
+    if isempty(chData)
+        warning('runMyographVasomotion:noSamples', ...
+            'Channel "%s" of %s carries no samples, so its windows were not analysed.', ...
+            nm,fName);
         continue
     end
     fld=safeFields({nm});
     for k=1:1:numel(ivs)
-        [sig,tt]=intervalSamples(ch(src),ivs(k));
+        [sig,tt]=intervalSamples(results.channel(i),ivs(k));
         why=tooShortFor(sig,tt,s);
         if ~isempty(why)
             % A WINDOW CAN BE TOO SHORT TO MEAN ANYTHING, and a window on 'all
@@ -233,9 +246,34 @@ fld=matlab.lang.makeUniqueStrings(fld,{},namelengthmax);
 end
 
 % =====================================================================
-function i=findChannel(ch,name)
-%findChannel  The channel with this name, matched the way the editor listed it.
-i=find(strcmpi(strtrim({ch.name}),strtrim(char(name))),1);
+function tf=isWire(results)
+%isWire  A wire recording is one that has a CHANNEL AXIS.  The modality is written in
+%   results.recording, but the test that decides what this wrapper can DO is what the
+%   file holds, so it is asked of the data.  It is asked of the axis and not of the
+%   samples: the intervals step moves the samples off the channel and into its
+%   windows, and a recording that has been through it would otherwise be read as a
+%   pressure myograph with nothing measured.
+tf=false;
+ch=fieldOr(results,'channel',[]);
+if isempty(ch) || ~isstruct(ch), return; end
+tf=true;
+end
+
+% =====================================================================
+function tf=anyDiameter(results)
+%anyDiameter  Has anything been measured on this pressure recording yet?
+tf=false;
+ivs=fieldOr(results,'intervals',[]);
+if isempty(ivs) || ~isstruct(ivs), return; end
+tf=any(arrayfun(@(iv) isstruct(fieldOr(iv,'diameter',[])) && ...
+    ~isempty(fieldOr(iv.diameter,'time',[])),ivs));
+end
+
+% =====================================================================
+function meas=measuresOf(rec)
+%measuresOf  The measures, and their order.  results.recording is the one authority
+%   on it, written by the diameter step in the same breath as the windows.
+meas=reshape(cellstr(fieldOr(rec,'measures',{})),1,[]);
 end
 
 % =====================================================================
@@ -262,9 +300,20 @@ end
 
 % =====================================================================
 function [sig,tt]=intervalSamples(c,iv)
-%intervalSamples  This channel's own samples inside this window.
+%intervalSamples  This channel's own samples inside this window.  THE WINDOW CARRIES
+%   THEM once the intervals step has run: it cut the channel to the windows and threw
+%   the rest away, so a window's samples are the window's own and nothing has to be
+%   selected out of anything.  A recording that has not been through that step yet
+%   still has them whole on the channel, and is cut here by TIME - the channels may
+%   be sampled at different rates, so there is no shared index to cut by.
 sig=[]; tt=[];
-t=double(c.time(:));
+sm=fieldOr(iv,'samples',[]);
+if isstruct(sm) && isscalar(sm) && ~isempty(fieldOr(sm,'data',[]))
+    sig=double(sm.data(:));
+    tt=double(sm.time(:));
+    return
+end
+t=double(fieldOr(c,'time',[])); t=t(:);
 t0=double(fieldOr(iv,'tStart',[])); t1=double(fieldOr(iv,'tEnd',[]));
 if isempty(t) || isempty(t0) || isempty(t1), return; end
 idx=t>=min(t0,t1) & t<=max(t0,t1);
@@ -294,44 +343,33 @@ end
 end
 
 % =====================================================================
-function sig=analysedSignal(source,iv,fr,rows,name,perLine)
-%analysedSignal  THE trace this interval is analysed on.
+function sig=analysedSignal(d,name,perLine,fName,ivName)
+%analysedSignal  THE trace this interval is analysed on, out of its own diameter
+%   block.
 %   Line-averaged, it is the trace the diameter step already wrote - read back
 %   rather than recomputed, so the spectrum belongs to exactly the curve the
-%   diameter page plotted.  Per line, it is the measured rows of the source cube:
-%   the rows outside the measured band carry an interpolated fill and are not
-%   oscillations of anything.
-m=myographMeasureIndex(name,fieldOr(source,'measures',{}));
-m=min(m,size(source.data,3));
+%   diameter page plotted.  Per line, it is .lines.<measure>, which holds the
+%   measured rows and only those: the rows outside the measured band carry an
+%   interpolated fill and are not oscillations of anything.
+%
+%   PER LINE NEEDS THE ARRAYS, and a window written with s.keepArrays false has
+%   none - there is no source copy to fall back on any more.  Said out loud and
+%   passed over: silently answering with the pooled trace instead would report one
+%   unit where the protocol asked for one per line, which is a different result
+%   wearing the right shape.
+sig=[];
 if perLine
-    sig=double(source.data(fr,rows,m));
+    if ~isfield(d,'lines') || ~isfield(d.lines,name)
+        warning('runMyographVasomotion:noPerLineDiameter', ...
+            ['Window "%s" of %s has no per-line diameter stored, so it could not be ' ...
+             'analysed per line.  Run the Diameter step on it with ''Keep every ' ...
+             'line''''s diameter'' switched on.'],char(ivName),fName);
+        return
+    end
+    sig=double(d.lines.(name));
     return
 end
-d=fieldOr(iv,'diameter',[]);
-if isstruct(d) && isfield(d,name) && numel(d.(name))==numel(fr)
-    sig=double(d.(name)(:));
-else
-    sig=mean(double(source.data(fr,rows,m)),2,'omitnan');
-end
-end
-
-% =====================================================================
-function rows=measuredRows(rowRange,nY)
-%measuredRows  The image rows the vessel was measured on.  Rows outside them carry
-%   an interpolated fill, so nothing that analyses along the vessel may include them.
-if numel(rowRange)~=2, rowRange=[1 Inf]; end
-r0=max(1,round(rowRange(1)));
-r1=min(nY,round(rowRange(2)));
-if ~(r1>=r0), rows=1:nY; else, rows=r0:r1; end
-end
-
-% =====================================================================
-function fr=frameRange(iv)
-%frameRange  The interval's own frames into source, or [] when it has none.
-fr=[];
-if ~isfield(iv,'frames') || numel(iv.frames)~=2, return; end
-if iv.frames(2)<iv.frames(1), return; end
-fr=iv.frames(1):iv.frames(2);
+if isfield(d,name), sig=double(d.(name)(:)); end
 end
 
 % =====================================================================

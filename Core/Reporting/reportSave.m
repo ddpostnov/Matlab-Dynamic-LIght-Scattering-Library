@@ -1,9 +1,17 @@
-%reportSave - Export a report page beside its recording, then delete the figure.
+%reportSave - Export a report page where its results go, then delete the figure.
 %
-%   The image is written next to the data file it describes, named from that
-%   file's stem plus _rep_<tag>.  Keeping it beside the recording is what keeps a
-%   report with its data when a folder is copied, and it is how wbArtifacts finds
-%   report images at all - it globs on the stem and matches by tail.
+%   The image is written where this recording's RESULTS go, named from the data
+%   file's stem plus _rep_<tag>.  That is next to the data file itself unless the
+%   project names a results folder, in which case it is the mirrored location under
+%   that folder - one getResultsPath call.  Either way the page lands in the same
+%   folder as the product it describes, which is what keeps a report with its data
+%   when a folder is copied, and it is how wbArtifacts finds report images at all -
+%   it globs on the stem and matches by tail.
+%
+%   THIS IS THE ONLY PLACE THE PIPELINE WRITES A REPORT PAGE, which is why one line
+%   here moves the _rep_*.jpg of all eighteen narrating wrappers.  For a downstream
+%   step, whose fName is already a product path, the map is a no-op: the two paths
+%   agree, so nothing has to know which kind of step it is.
 %
 %   AND THE PAGE SAYS WHICH RECORDING IT IS.  The same stem is written across the
 %   top of the page, so a PDF column assembled from ten steps is a stack of NAMED
@@ -66,12 +74,13 @@
 %    reportSave(rep,fh,'segments');            % -> Mouse1_t_K_r_rep_segments.jpg
 %    reportSave(rep,fh,'regions',targetName);  % -> the SIBLING's _rep_regions.jpg
 %
-% See also: reportFigure, reportOpen, reportClose, makeReportPdf, exportgraphics
+% See also: reportFigure, reportOpen, reportClose, makeReportPdf, getResultsPath,
+%           exportgraphics
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 03-August-2026
 
 %------------- BEGIN CODE --------------
 function reportSave(rep, fh, tag, fName)
@@ -94,10 +103,12 @@ if isempty(fName)
     return                      % nothing to name the page after - silently, see above
 end
 
-[fPath,stem] = fileparts(char(fName));
-outFile      = fullfile(fPath, [stem '_rep_' tag '.jpg']);
-
 try
+    % INSIDE the try, with the export: getResultsPath creates the folder it names,
+    % and a results folder that cannot be written to costs a page and nothing more.
+    [fPath,stem] = fileparts(getResultsPath(char(fName), rep));
+    outFile      = fullfile(fPath, [stem '_rep_' tag '.jpg']);
+
     titlePage(fh, stem);
     anchorPage(fh);
     exportgraphics(fh, outFile, 'ContentType','image', 'Resolution', min(DPI,DPI_MAX));

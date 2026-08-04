@@ -63,15 +63,11 @@
 %                                the centre measure only, and never affects outer/inner.
 %                • wallContrast  min local (bright-dark) contrast for a row to count as
 %                                a wall (relative, so faint walls are still measured)
-%                • wall2Frac     2nd wall peak must be >= this fraction of the 1st to be
-%                                taken as a distinct wall (else the region is 'constricted')
-%                • tau           legacy absolute wall threshold (kept for compatibility)
 %                • brightPrctile per-row percentile used as the bright level
 %                • smoothSigma   Gaussian pre-smoothing, px
 %                • dustRadius    vertical half-extent (px) of dust blobs removed by
 %                                a vertical-line close; keep < wall height (0 = off)
 %                • dustContrast  min bottom-hat response to treat a pixel as dust
-%                • colDarkFrac   (legacy, unused by the current centreline detector)
 %                • rowRange      [lo hi] rows to measure (others are filled)
 %                • minWallGap    minimum valid diameter, px (enforces non-negativity)
 %                • tSpan         temporal outlier window, frames (0 = off)
@@ -95,6 +91,13 @@
 %                • name      interval name
 %                • measures  {'outer','mid','inner'} - the order of the 3rd dimension
 %                • time      [nFrames x 1] frame times, s
+%                • frames    [first last] THE INTERVAL'S FRAME RANGE IN THE ORIGINAL
+%                            RECORDING, 1-based, empty when the interval holds no
+%                            frames.  This function is the only one that can say it:
+%                            it is the one that built the recording's frame axis, and
+%                            once the intervals are all that is stored, nothing else
+%                            can work out which frame of the file a row came from.
+%                            It is what finds the window in the video again.
 %                • idxL      [nFrames x nY x 3] left  wall position (x), px
 %                • idxR      [nFrames x nY x 3] right wall position (x), px
 %                • diameter  [nFrames x nY x 3] idxR - idxL, px (>= 0)
@@ -120,7 +123,6 @@
 % %ADJUSTED (OR VERIFIED) PER PROTOCOL - Wall detection
 % s.edgeMode='mid';       % default analysed measure: 'mid' | 'outer' | 'inner'
 %                         % ('min' = 'mid' measured as the darkest point instead)
-% s.tau=0.85;             % wall threshold on the row-normalised image
 % s.rowRange=[1 Inf];     % rows to measure (others are interpolated)
 % %ADJUSTED IF NECESSARY - Robustness / smoothing
 % s.smoothSigma=1;        % Gaussian pre-smoothing, px
@@ -140,14 +142,14 @@ nM=numel(MEASURES);
 iMid=2;                             %the wall-centre measure - the one whose mask is reported
 
 % ---- default parameters (filled if missing or empty) ----
-def.edgeMode='mid';       def.tau=0.85;          def.brightPrctile=90;
+def.edgeMode='mid';       def.brightPrctile=90;
 def.smoothSigma=1.2;      def.dustRadius=8;      def.dustContrast=0.06;
-def.colDarkFrac=0.2;      def.rowRange=[1 Inf];  def.minWallGap=3;
+def.rowRange=[1 Inf];     def.minWallGap=3;
 def.tSpan=25;             def.ySpan=31;          def.outlierK=3;
 def.subpixel=true;        def.smoothSpan=15;     def.intervals=[];
 def.intervalNames={};     def.timeCrop=[];       def.progressFcn=[];
-def.cancelFcn=[];         def.wallSep=[];        def.searchWin=[];
-def.wallContrast=0.05;    def.wall2Frac=0.15;    def.wallProm=0.25;
+def.cancelFcn=[];         def.searchWin=[];
+def.wallContrast=0.05;    def.wallProm=0.25;
 def.tSmoothHz=1;
 fnd=fieldnames(def);
 for i=1:numel(fnd)
@@ -237,7 +239,8 @@ if nProc>0
 end
 
 % ---- per-interval post-processing (INDEPENDENTLY PER MEASURE) and output ----
-intervals=struct('name',{},'measures',{},'time',{},'idxL',{},'idxR',{},'diameter',{},'mask',{},'valid',{});
+intervals=struct('name',{},'measures',{},'time',{},'frames',{},'idxL',{},'idxR',{}, ...
+    'diameter',{},'mask',{},'valid',{});
 [Lc,Rc,Dc,Mc]=deal(cell(1,nM));
 for iv=1:nIv
     fr=find(time>=ivT(iv,1) & time<=ivT(iv,2));         % this interval's OWN frames
@@ -252,6 +255,11 @@ for iv=1:nIv
     intervals(iv).name=char(ivNames{iv});
     intervals(iv).measures=MEASURES;
     intervals(iv).time=time(fr);
+    %WHERE THIS WINDOW SITS IN THE ORIGINAL RECORDING.  fr came from the file's own
+    %frame axis, so it is contiguous and 1-based, and it is the only chance to record
+    %it: after this the windows are all there is, and a stored row knows its absolute
+    %TIME but not which frame of the .avi it was read from.
+    if isempty(fr), intervals(iv).frames=[]; else, intervals(iv).frames=[fr(1) fr(end)]; end
     intervals(iv).idxL=cat(3,Lc{:});
     intervals(iv).idxR=cat(3,Rc{:});
     intervals(iv).diameter=cat(3,Dc{:});

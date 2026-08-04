@@ -1,12 +1,12 @@
 %runLabChart  Read a wire-myograph LabChart recording and create its data product
 %
 %   runLabChart(s,fNames) reads every LabChart '.adicht' recording in fNames and
-%   CREATES that recording's _MYO triplet:
+%   CREATES that recording's _MYO pair:
 %
-%       Rat3.adicht  ->  Rat3_MYO_d.mat   Rat3_MYO_r.mat   Rat3_MYO_s.mat
+%       Rat3.adicht  ->  Rat3_MYO_r.mat   Rat3_MYO_s.mat
 %
 %   It is the ENTRY STEP of the wire-myograph pipeline and the only function that
-%   creates the triplet for it - the pressure myograph's twin is runMyographVideo.
+%   creates the pair for it - the pressure myograph's twin is runMyographVideo.
 %   Everything after it (the intervals and the vasomotion) opens what is here and
 %   writes it back, see myographProduct.  fNames is a cell array of raw recording
 %   paths; the wrapper iterates them itself, so there is no launcher for-loop.
@@ -17,12 +17,20 @@
 %   narrowed to the runs that matter.  Everything the later steps need is in the
 %   product afterwards, and the '.adicht' is not opened again.
 %
-%   CHANNELS KEEP THEIR OWN SAMPLING RATES.  source.channels is the truth: one
-%   element per channel, each with its own .fs, .data and .time.  source.data and
-%   source.time - the flat [T x nCh] pair the generic consumers read - are filled
-%   ONLY when every channel shares one rate, which is the common case; when they
-%   differ the two are left EMPTY rather than resampled, because a rate that was
-%   chosen per channel is a decision about the measurement and not ours to undo.
+%   THE CHANNELS ARE THE MEASUREMENT, so they live in the RESULTS.  A myograph
+%   product has no SOURCE member: results.channel(i) carries .name .units .fs .data
+%   .time, and the interval step adds the .intervals analysed on it.  What the
+%   recording IS - its name, its modality, its shared rate, its length and the
+%   channels it holds by name - is results.recording, and that block holds no
+%   arrays.
+%
+%   CHANNELS KEEP THEIR OWN SAMPLING RATES.  results.channel is the truth: one
+%   element per channel, each with its own .fs, .data and .time.
+%   results.recording.fs - the one rate the generic consumers may address the
+%   recording by - is filled ONLY when every channel shares one, which is the common
+%   case; when they differ it is left EMPTY rather than resampled, because a rate
+%   that was chosen per channel is a decision about the measurement and not ours to
+%   undo.
 %
 %   TIMES ARE ABSOLUTE SECONDS from the start of the first record, never re-based,
 %   so a window can always be located back in the original recording and a comment
@@ -57,11 +65,12 @@
 %     and s.cancelFcn()->tf (checked between files).
 %
 %   SIDE-EFFECTS (per file)
-%     <name>_MYO_d.mat   SOURCE   .modality='WMYO', .channels, .blocks, .fs and -
-%                        when the rates agree - .data and .time
-%     <name>_MYO_r.mat   RESULTS  results.comments from the recording, an empty
-%                        results.intervals and results.channel, results.timeCrop = []
-%                        and results.meta
+%     <name>_MYO_r.mat   RESULTS  results.recording (.modality='WMYO', the shared
+%                        rate, the length and the channel names), results.channel
+%                        with one element per channel carrying its samples,
+%                        results.comments and results.blocks from the recording, an
+%                        empty results.intervals, results.timeCrop = [] and
+%                        results.meta
 %     <name>_MYO_s.mat   SETTINGS settings.runLabChart = s
 %     NO REPORT IMAGE.  Like every other myograph step, this one narrates the three
 %     ordinary lines per recording and writes no page (author, 2026-08-02).  What
@@ -88,7 +97,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 03-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -129,7 +138,7 @@ for fidx=1:1:numel(fNames)
     if isempty(fNames{fidx}), continue; end
     s.fName=char(fNames{fidx});
     reportFile(rep,fidx,s.fName);
-    clearvars source results settings
+    clearvars results settings
 
     [channels,comments,blocks]=readLabChart(s.fName,s.records,decim);
     channels=keepChannels(channels,s.channels);
@@ -138,32 +147,41 @@ for fidx=1:1:numel(fNames)
             'No channel of %s carries any samples - nothing to analyse.',s.fName);
     end
 
-    % ---- SOURCE: the channels, and the flat pair when they agree on a rate ----
-    source=struct();
-    source.fName=s.fName;
-    source.modality='WMYO';
-    source.channels=channels;
-    source.blocks=blocks;
-    [source.data,source.time,source.fs]=flatBase(channels);
-    source.measures={};                     % a wire myograph measures no diameter
-    [source.wallL,source.wallR,source.mask,source.valid]=deal([]);
-
-    % ---- RESULTS: the comments, and no windows yet ----
+    % ---- RESULTS: the identity card, the channels themselves, and no windows ----
+    [flatT,flatFS]=flatBase(channels);
     results=struct();
+    results.recording=struct( ...
+        'fName',s.fName, ...
+        'modality','WMYO', ...
+        'frameRate',flatFS, ...             % a wire recording has no frames: it is
+        'fs',flatFS, ...                    %   the shared rate, empty when they differ
+        'measures',{{}}, ...                % a wire myograph measures no diameter
+        'nFrames',numel(flatT), ...
+        'duration',spanOf(channels), ...
+        'channels',{reshape({channels.name},1,[])});
     results.timeCrop=[];
     results.comments=comments;
+    results.blocks=blocks;                  % the LabChart record boundaries
     results.intervals=myographProduct('intervals');
-    % The channel axis exists from the start, empty: a wire myograph stores its
-    % windows under it (see setMyographIntervals), and a field that appears only
-    % once a step has run is a field every consumer has to guard against.
-    results.channel=myographProduct('channels');
-    results.meta=struct('formatVersion',3,'codeVersion',codeVer, ...
+    % THE CHANNELS ARE THE MEASUREMENT, and with no source member this is where they
+    % live: one element per channel, each keeping its own rate, samples and times.
+    % The axis exists from the start - a wire myograph stores its windows under it
+    % too (see setMyographIntervals), and a field that appears only once a step has
+    % run is a field every consumer has to guard against.
+    results.channel=channelAxis(channels);
+    results.meta=struct('formatVersion',4,'codeVersion',codeVer, ...
         'createdTimestamp',timestamp());
 
     settings=struct('runLabChart',reportSettings(s));
 
     reportWriting(rep);
-    myographProduct('save',s.fName,source,results,settings);
+    % This is the ENTRY step, so this is where the recording's path becomes the pair's
+    % path - and the only place that has to know a project may keep its results apart
+    % from its recordings.  ONLY THE NAME OF THE PRODUCT MOVES: results.recording.fName
+    % above still holds the raw path, which is what myographRecordingPath looks the
+    % recording up by and the only pointer back to it.  With no results folder set the
+    % name comes back verbatim.
+    myographProduct('save',getResultsPath(s.fName,s),results,settings);
     reportSaved(rep);
 end
 reportClose(rep);
@@ -189,13 +207,44 @@ channels=channels(ismember(lower(strtrim(have)),lower(strtrim(wanted))));
 end
 
 % =====================================================================
-function [data,time,fs]=flatBase(channels)
-%flatBase  The [T x nCh] pair, or nothing.  It exists so a consumer that knows
-%   nothing about LabChart can read a wire myograph the way it reads any other
-%   recording, and it is filled ONLY when that reading would be true: one rate,
-%   one length, one time base.  Otherwise all three come back empty and
-%   source.channels is the only answer - see the header.
-[data,time,fs]=deal([]);
+function chs=channelAxis(channels)
+%channelAxis  results.channel, built from the prototype so every element carries
+%   every field the rest of the library expects - including the .intervals the
+%   interval step fills in later.  The samples are copied across as they were read:
+%   a channel keeps its own rate, and nothing here resamples anything.
+chs=myographProduct('channels');
+for i=1:1:numel(channels)
+    chs(i).name=char(channels(i).name);
+    chs(i).units=char(fieldOr(channels(i),'units',''));
+    chs(i).fs=double(fieldOr(channels(i),'fs',NaN));
+    chs(i).data=channels(i).data(:);
+    chs(i).time=channels(i).time(:);
+    chs(i).intervals=myographProduct('intervals');
+end
+end
+
+% =====================================================================
+function dur=spanOf(channels)
+%spanOf  How long the recording is: the UNION over the channels, because they may
+%   differ in length when they differ in rate, and the shortest of them is not the
+%   recording.
+lo=inf; hi=-inf;
+for i=1:1:numel(channels)
+    t=double(channels(i).time);
+    if isempty(t), continue; end
+    lo=min(lo,t(1)); hi=max(hi,t(end));
+end
+if isfinite(lo) && isfinite(hi), dur=hi-lo; else, dur=0; end
+end
+
+% =====================================================================
+function [time,fs]=flatBase(channels)
+%flatBase  The ONE time base every channel shares, or nothing.  It exists so a
+%   consumer that knows nothing about LabChart can address a wire myograph by
+%   sample index, and it is filled ONLY when that reading would be true: one rate,
+%   one length, one time base.  Otherwise both come back empty and the channels are
+%   the only answer - see the header.
+[time,fs]=deal([]);
 if isempty(channels), return; end
 rates=[channels.fs];
 n=arrayfun(@(c) numel(c.data),channels);
@@ -205,9 +254,13 @@ t=channels(1).time(:);
 for i=2:1:numel(channels)
     if max(abs(channels(i).time(:)-t))>0.5/max(rates(1),eps), return; end
 end
-data=zeros(n(1),numel(channels));
-for i=1:1:numel(channels), data(:,i)=channels(i).data(:); end
 time=t; fs=double(rates(1));
+end
+
+% =====================================================================
+function v=fieldOr(st,f,d)
+if nargin<3, d=[]; end
+if isstruct(st) && isfield(st,f), v=st.(f); else, v=d; end
 end
 
 % =====================================================================

@@ -63,7 +63,9 @@ if nargin < 3, flags = {}; end
 
 files = cell(1,0);
 if isempty(model) || ~isstruct(model), return; end
-if isempty(model.folder) || ~isfolder(model.folder), return; end
+% report pages are written by reportSave, which follows the results folder (session
+% 1 of the results-folder plan), so that is where they are listed from
+if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
 
 % collect the requested tails (one step, or every step in a registry array).  The
 % tails a run WRITES and the ones it used to write are asked for together, so a
@@ -77,7 +79,7 @@ tails = unique(tails,'stable');
 
 % one directory listing of everything named after this recording's base
 base = [model.roiPrefix model.stem];
-d = dir(fullfile(model.folder,[base '*']));
+d = dir(fullfile(model.resultsFolder,[base '*']));
 if isempty(d), return; end
 names = {d.name};
 
@@ -89,7 +91,7 @@ for t = 1:numel(tails)
         if ~endsWith(nm, tail) || isKey(seen, nm), continue; end
         seen(nm) = true;                              % judged once, whatever the verdict
         if ~isempty(flags) && ~wbProducts('admits', flags, nm), continue; end
-        files{end+1} = fullfile(model.folder, nm); %#ok<AGROW>
+        files{end+1} = fullfile(model.resultsFolder, nm); %#ok<AGROW>
     end
 end
 end

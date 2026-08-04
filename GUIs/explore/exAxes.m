@@ -26,8 +26,12 @@
 %   many rows across the vessel were measured), and both describe the window, not
 %   the diameters: propagation's lagByRow is indexed by the same rows and lives one
 %   branch over.  A wire recording has diameter as an empty placeholder, so nothing
-%   is absorbed and neither axis exists - which is correct, since a wire myograph
-%   measures no rows.
+%   is absorbed there and neither axis exists - which is correct, since a wire
+%   myograph measures no rows.  ITS TIME BASE COMES FROM .samples INSTEAD, absorbed
+%   at the same scope for the same reason: once the intervals step has cut the
+%   channels, a window's own times live in channel(i).intervals(k).samples.time and
+%   nowhere else.  Before that cut the channel still carries .time whole, and the
+%   ordinary scope rule picks it up at channel(i).
 %
 %   THERE ARE TWO PERCENTILE AXES AND ONLY ONE OF THEM IS IN THE RESULTS FILE.
 %   This is the trap that made the first draft of the shape model wrong:
@@ -40,8 +44,8 @@
 %   shorter BY CONSTRUCTION.  Treating them as one axis marks scalars.<band>.ampPct
 %   suspect on every file in the library.  The LENGTH of pctLevel therefore needs no
 %   file access at all - it is numel(pctCenters)+1 - and only the VALUES have to be
-%   fetched, from the sibling settings file the _d/_r/_s triplet guarantees is
-%   there:
+%   fetched, from the SETTINGS member beside the results.  Every product in this
+%   library has one, whether it is a _d/_r/_s triplet or the myograph's _r/_s pair:
 %
 %       h5read(<stem>_s.mat, '/settings/runVasomotion/pcts')  ->  [0 10 ... 100]
 %
@@ -60,9 +64,10 @@
 %   of that kind: pcts is a SETTING, not data.  It is the x-axis of
 %   scalars.<band>.ampPct and it is not written into the results at all, so without
 %   it a percentile curve is drawn on an assumed 0:10:100 and a non-default run is
-%   silently misread.  The _d/_r/_s triplet guarantees the file is there, one
-%   dataset is read out of it rather than the file, and the fallback above marks the
-%   axis inferred when it is not.  Do not delete it under the _r-only rule.
+%   silently misread.  Every product carries a SETTINGS member - the myograph pair no
+%   less than the speckle triplet - so the file is there; one dataset is read out of
+%   it rather than the file, and the fallback above marks the axis inferred when it is
+%   not.  Do not delete it under the _r-only rule.
 %
 %   SEG AND DVS ARE NOT COORDINATES.  A segment index is a label id: there is no
 %   meaningful "amplitude vs segment number" plot, and the tool must not offer one.
@@ -215,6 +220,15 @@ v = valueOf(R,join2(scope,'diameter.nY'));
 if isscalar(v) && v>0
     A.line = mkAxis((1:double(v))',double(v),true,'linear','position along the vessel');
 end
+
+% AND A WIRE WINDOW'S, declared one branch down on its SAMPLES - the same
+% arrangement, one modality over.  A wire recording measures no diameter, so once the
+% intervals step has cut the channels the window's own times live in .samples.time
+% and there is nowhere else for them to be; absorbing it here is what lets
+% .samples.data be sized against a time axis at all.  A window has one branch or the
+% other and never both, so the order of these two is not a precedence rule.
+v = valueOf(R,join2(scope,'samples.time'));
+if ~isempty(v), A.time = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
 end
 
 % =====================================================================

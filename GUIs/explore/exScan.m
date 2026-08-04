@@ -29,10 +29,16 @@
 %     BOOKKEEPING IS SKIPPED.  meta, comments, timeCrop, frames, channels,
 %     timeStamp, nY - and, added here for the same reason the spec skips `frames`,
 %     tStart and tEnd, which are that same window boundary written in seconds
-%     instead of frame numbers.  (comments is a 51-to-74 element event log on the
-%     wire files, with time / text / channel / record.  It is not a variable, but it
-%     IS the natural annotation overlay for any time-axis plot.  Deliberately out of
-%     scope; noted so it stays a decision.)
+%     instead of frame numbers.  THE WHOLE RECORDING BRANCH goes the same way:
+%     results.recording is the recording's identity card - frame rate, image size,
+%     pixel size, how many frames - and a pixel size is a fact about the microscope,
+%     not a measurement.  One entry skips the sub-tree, because the rule is asked of
+%     the field NAME during the walk.  So do `blocks` (the LabChart record
+%     boundaries, a window boundary like timeCrop) and `fs` (a channel's sampling
+%     rate).  (comments is a 51-to-74 element event log on the wire files, with
+%     time / text / channel / record.  It is not a variable, but it IS the natural
+%     annotation overlay for any time-axis plot.  Deliberately out of scope; noted so
+%     it stays a decision.)
 %
 %   AND A FOURTH, WHICH THE SHAPE MODEL IMPLIES RATHER THAN STATES: A COORDINATE IS
 %   NOT A VARIABLE.  time, gsTime, timeWT, timeDWT, f, pctCenters and harmonics are
@@ -80,8 +86,8 @@
 %                       A component is a struct-array INDEX only when it is
 %                       name(<digits>), which is why the metrics column
 %                       'std(diameter)' can never be mistaken for one
-%          .family      Flow | Pulsatility | Vasomotion | Diameter | Propagation |
-%                       Maps | Metrics | Other
+%          .family      Recording | Flow | Pulsatility | Vasomotion | Diameter |
+%                       Propagation | Maps | Metrics | Other
 %          .signal      sData | dvsData | dvsDiameter | gsData | ppx | outer | mid |
 %                       inner | <sanitised channel name> | ''
 %          .signalLabel the channel's real name, for the legend; '' when there is one
@@ -101,11 +107,12 @@
 %          .pairedWith  the leaf this one RIDES WITH, '' when it is a quantity of
 %                       its own.  A descriptor with this set is part of another
 %                       variable's answer - an interval, a fitted line, a caption,
-%                       or the pooled form of a per-item leaf - so a variable LIST
-%                       filters on isempty(.pairedWith)
-%          .pairRole    what it is for: 'interval' | 'fit' | 'caption' | 'pooled';
-%                       '' when .pairedWith is.  exSchema declares both, and 'pooled'
-%                       is dropped again here when the file carries no host to pool
+%                       the pooled form of a per-item leaf, or the quality record of
+%                       one - so a variable LIST filters on isempty(.pairedWith)
+%          .pairRole    what it is for: 'interval' | 'fit' | 'caption' | 'pooled' |
+%                       'mask'; '' when .pairedWith is.  exSchema declares both, and
+%                       'pooled' is dropped again here when the file carries no host
+%                       to pool
 %
 %   EXAMPLE
 %      S = load('LSCI_20240809_1ADCF08BP_c_BFI_r.mat');
@@ -213,14 +220,14 @@ d.yUnit      = r.yUnit;
 d.pairedWith = r.pairedWith;
 d.pairRole   = r.pairRole;
 
-% A POOLED FORM RIDES ONLY WHEN THE FILE CARRIES WHAT IT POOLS.  Every myograph
-% result written before runMyographDiameter stored the per-line arrays holds
-% diameter.<measure> and no diameter.lines: there the trace is the ONLY form of that
-% quantity in the file, and hiding it would lose the diameter outright.  The schema
-% cannot decide it - it reads nothing - so it is decided here, off the same tree the
-% leaf came out of.  Only this role is checked: the other three are written by the
-% same producer in the same breath as their host, and checking them would flag a
-% correct file whose propagation happened to fail.
+% A POOLED FORM RIDES ONLY WHEN THE FILE CARRIES WHAT IT POOLS.  runMyographDiameter
+% with s.keepArrays false stores the trace and its statistics alone - a real and
+% supported choice for a protocol that only ever compares traces - and there
+% diameter.<measure> is the ONLY form of that quantity in the file, so hiding it
+% would lose the diameter outright.  The schema cannot decide it - it reads nothing
+% - so it is decided here, off the same tree the leaf came out of.  Only this role is
+% checked: the other four are written by the same producer in the same breath as
+% their host, and checking them would flag a correct file whose propagation failed.
 if strcmp(d.pairRole,'pooled') && ~hasLeafAt(ctx, siblingPath(pth, d.pairedWith))
     d.pairedWith = ''; d.pairRole = '';
 end
@@ -438,10 +445,22 @@ function tf = isSkippedName(f)
 %isSkippedName  Bookkeeping, and the coordinates themselves.  See the header for
 %   why each group is here; tStart/tEnd are this module's addition, for the same
 %   reason the shape model skips `frames`.
+%
+%   IT IS ASKED OF THE FIELD NAME DURING THE WALK, so a name here skips its whole
+%   SUB-TREE.  That is what makes `recording` one entry rather than nine: it is the
+%   recording's identity card - the frame rate, the image size, the pixel size, how
+%   many frames there are - and not one of those is something anybody measured.  A
+%   pixel size is a fact about the microscope.
+%
+%   `blocks` is the same kind of thing one level up: the LabChart record boundaries,
+%   which is a window boundary in seconds and belongs beside timeCrop and tStart.
+%   And `fs` is a channel's sampling RATE - a property of how the recording was made,
+%   not a quantity it holds.  Neither appears in any speckle tree, so neither costs
+%   the contrast recordings a leaf.
 persistent S
 if isempty(S)
     S = { 'meta','comments','timeCrop','frames','channels','timeStamp','nY', ...
-          'tStart','tEnd', ...
+          'tStart','tEnd','recording','blocks','fs', ...
           'time','gsTime','timeWT','timeDWT','f','pctCenters','harmonics' };
 end
 tf = any(strcmp(f, S));

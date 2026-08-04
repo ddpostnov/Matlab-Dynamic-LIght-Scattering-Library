@@ -4,8 +4,9 @@
 %   the hook-resolving helper, so the contract had 36 definitions and no single
 %   place to change it.  reportOpen is that place.  It resolves the two optional
 %   workbench callbacks that may ride in s (s.stageFcn, s.cancelFcn) to no-ops
-%   when they are absent, starts the image ledger and the call timer, and hands
-%   back a context that every later report* call is passed.
+%   when they are absent, carries over the two optional folders that say where
+%   this project's results go, starts the image ledger and the call timer, and
+%   hands back a context that every later report* call is passed.
 %
 %   THREE LINES PER FILE, AND NOTHING ELSE.  A wrapper says what it started, that
 %   it is writing, and what it finished:
@@ -35,6 +36,11 @@
 %                  .cancelFcn()->tf          host cancel hook
 %                  .reportLevel      'normal' (default) or 'quiet' (nothing is
 %                                    printed and nothing reaches the host log)
+%                  .rootFolder       where the recordings are
+%                  .resultsFolder    where the results go.  Absent, empty or equal
+%                                    to .rootFolder means beside the recording,
+%                                    which is what a project that never names one
+%                                    gets - see getResultsPath.
 %    procLabel - human procedure name for this call ('Contrast', 'Vasomotion'),
 %                NEVER a function name; it is what the operator reads, and it is
 %                the same string in the Starting and the Finished line.
@@ -43,8 +49,8 @@
 %
 % Outputs:
 %    rep - the reporting context: .procLabel, .nFiles, .level, the two resolved
-%          hooks .stageFcn / .cancelFcn, the .emit(text) sink and the mutable
-%          .state Map.
+%          hooks .stageFcn / .cancelFcn, the two folders .rootFolder /
+%          .resultsFolder, the .emit(text) sink and the mutable .state Map.
 %
 % Example:
 %    rep = reportOpen(s,'Contrast',fNames);
@@ -59,12 +65,12 @@
 %    reportClose(rep);
 %
 % See also: reportFile, reportWriting, reportSaved, reportFigure, reportSave,
-%           reportClose, reportSettings, reportCancelled
+%           reportClose, reportSettings, reportCancelled, getResultsPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 03-August-2026
 
 %------------- BEGIN CODE --------------
 function rep = reportOpen(s, procLabel, fNames)
@@ -79,6 +85,13 @@ stageFcn=@(varargin)[]; cancelFcn=@()false;
 if isfield(s,'stageFcn')  &&~isempty(s.stageFcn),   stageFcn  =s.stageFcn;   end
 if isfield(s,'cancelFcn') &&~isempty(s.cancelFcn),  cancelFcn =s.cancelFcn;  end
 
+% ---- and where the results go, resolved ONCE the same way -------------------
+% Both optional, and empty means beside the recording.  reportSave hands rep
+% straight to getResultsPath, so the folders are read here and nowhere else.
+rootFolder=''; resultsFolder='';
+if isfield(s,'rootFolder')    &&~isempty(s.rootFolder),    rootFolder   =char(s.rootFolder);    end
+if isfield(s,'resultsFolder') &&~isempty(s.resultsFolder), resultsFolder=char(s.resultsFolder); end
+
 % ---- knobs ----------------------------------------------------------------
 level = 'normal';
 if isfield(s,'reportLevel') && ~isempty(s.reportLevel)
@@ -86,12 +99,14 @@ if isfield(s,'reportLevel') && ~isempty(s.reportLevel)
     if any(strcmp(v,{'normal','quiet'})), level = v; end
 end
 
-rep             = struct();
-rep.procLabel   = char(string(procLabel));
-rep.nFiles      = countFiles(fNames);
-rep.level       = level;
-rep.stageFcn    = stageFcn;
-rep.cancelFcn   = cancelFcn;
+rep               = struct();
+rep.procLabel     = char(string(procLabel));
+rep.nFiles        = countFiles(fNames);
+rep.level         = level;
+rep.stageFcn      = stageFcn;
+rep.cancelFcn     = cancelFcn;
+rep.rootFolder    = rootFolder;
+rep.resultsFolder = resultsFolder;
 
 % ---- the mutable half ------------------------------------------------------
 st = containers.Map('KeyType','char','ValueType','any');

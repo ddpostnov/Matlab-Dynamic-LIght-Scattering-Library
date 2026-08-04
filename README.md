@@ -47,7 +47,7 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 
 | Folder | Contents |
 |---|---|
-| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `readLabChart` (LabChart `.adicht`: channels on their own sampling rates, comments and record boundaries — the only file that touches the `+adi` package), `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles`, `getProductPath` (the `_d`/`_r`/`_s` member beside a product) |
+| `Core/Read files` | Readers & file utilities — `readRLS`, `readMRAW`, `readCXD`, `readDV`, `readLabChart` (LabChart `.adicht`: channels on their own sampling rates, comments and record boundaries — the only file that touches the `+adi` package), `cropRLS`, `fixMetaRLS`, `getPointerRLS`, `getFileNamesList`, `removeProcessedFiles`, `getProductPath` (the `_d`/`_r`/`_s` member beside a product), `getResultsPath` (where a file goes when the results are kept apart from the recordings — the one place that rule is written) |
 | `Core/Laser Speckle Contrast Imaging` | Contrast engine — `getK`, `getContrastFromRLS`, `getContrastFromMRAW`, `getSpeckleSize`, `getEdgeSizeSLSCI`; segmentation cores — `enhanceForDisplay`, `getPixelCategories` (5-level category mask), `getSegmentationLabels` (indexed vessel/parenchyma maps), `showSegmentsPreview` |
 | `Core/Dynamic Light Scattering Imaging` | g2 autocorrelation & DLSI/DCS model fitting — `getNormalizedG2`, `fitDLSI`, `getTauC` |
 | `Core/Registration` | Landmark / mask registration — `registerToReference`, `enhanceForRegistration`, `registerRetinaLSCI`, `manualByPointRegistration` |
@@ -136,7 +136,7 @@ sub-tree as `intervals(iv).vasomotion` (single signal; no `ppx` / `ppxs`).
 1. Clone the repository and keep **only one copy** on your machine — MATLAB caches paths and multiple versions cause conflicts.
 2. Put the library on the path: `addpath(genpath('<path to this repository>'))`.
 3. Run `guiWorkbench` — the [Processing Workbench](#processing-workbench). Scan and label your recordings (**Files**), tick the steps each recording **type** runs (**Constructor**), press **Run** (**Process**), then press **Export…** or **Explore…** to open `guiExport` / `guiExplore` on the session it just saved.
-4. Prefer a script? Copy a launcher from `Launchers/` to your own working location (**leave the originals unchanged**), set `libraryFolder` in your copy, and run the `%% STEP` cells in order (`STEP 0` once per MATLAB session). See [Launchers](#launchers).
+4. Prefer a script? Copy a launcher from `Launchers/` to your own working location (**leave the originals unchanged**), set `libraryFolder`, `rootFolder` and `resultsFolder` in your copy, and run the `%% STEP` cells in order (`STEP 0` once per MATLAB session). See [Launchers](#launchers) and [Where results are written](#where-results-are-written).
 5. Either way, read the header (comments at the top) and inline comments of each function you use — do not run steps blindly.
 
 The processing steps you run are dictated by your protocol, not by the entry point: the workbench and the launchers call the same `run…` / `set…` wrappers and write the same `_d` / `_r` / `_s` files, so you can move between them freely. A pressure-myograph `.avi` runs in the workbench too, from raw video to `results.intervals(k).vasomotion`, including the interactive steps — the intervals, the time crop and the pre-set intervals each open one window per recording and then move on to the next.
@@ -154,6 +154,29 @@ always an `_r.mat` glob, and the step names the `_d` and `_s` members from it wi
 `getProductPath`. Most users only touch `_BFI_r.mat` (results) and `_BFI_d.mat` (3-D data)
 files. File selection is often done with wildcards / regular expressions — see
 `getFileNamesList`.
+
+### Where results are written
+
+By default everything is written **beside the recording it came from** — the `_d`/`_r`/`_s`
+triplets, the `_rep_*.jpg` report pages and the PDFs assembled from them — and that is what
+a project which never says otherwise gets. You can instead keep the results in a folder of
+their own: name a **root folder** (where the recordings are) and a **results folder** (where
+the results go), and the subpath is mirrored whole, so `<root>\A\B\Mouse1.rls` produces
+`<results>\A\B\Mouse1_t_K_r.mat`. The raw recordings are then never written to at all.
+
+In the **workbench** it is the second box on the *Files* tab (**results go in**); it follows
+the folder you search until you point it elsewhere. In a **launcher** it is `resultsFolder`
+in `STEP 0`, which starts out equal to `rootFolder`. Either way **only the step that reads
+the recording has to be told** — every step after it is handed a product that is already in
+the results tree, so nothing downstream has to know which arrangement you chose.
+`getResultsPath` is the one place the rule lives.
+
+Two things worth knowing before you point it elsewhere. A file you list by hand with its
+full path is left where it is and writes beside itself, whatever the two folders say — that
+is deliberate, since inventing a subpath for it would collide two same-named recordings
+from two different disks into one folder. And **renaming a recording in the workbench
+renames the recording only**: results already computed from it keep their old name and are
+no longer linked to it. The confirmation dialog says so before anything moves.
 
 ### File format
 
@@ -245,10 +268,13 @@ addpath(genpath('<path to this repository>'))
 guiWorkbench
 ```
 
-1. **1 - Files** — build and curate the working set. Point **root** at a folder, put an
-   extension or glob in **files** (`*.rls`, `*_t_K_r.mat`) and press **Scan** to recurse
-   the whole tree; **Add files…** and **Add folder…** add more by hand without throwing
-   the scan away. The five regexp boxes (**Animal**, **Type**, **Rec. index**,
+1. **1 - Files** — build and curate the working set. Point **look in** at a folder, put an
+   extension or glob in **for files named** (`*.rls`, `*_t_K_r.mat`) and press **Scan** to
+   recurse the whole tree; **Add files…** and **Add folder…** add more by hand without
+   throwing the scan away. **results go in** is where everything the run writes is put; it
+   follows **look in** until you change it, so by default the products land beside the
+   recordings — set it elsewhere and your raw data is never written to (see [Where results
+   are written](#where-results-are-written)). The five regexp boxes (**Animal**, **Type**, **Rec. index**,
    **Group**, **Reference**) label what the scan finds — hover each for worked examples.
    The table below is editable: click a column header to sort, and edit `animal`,
    `type`, `index`, `group` or `modality` in place. To label many files at once — the
@@ -377,6 +403,10 @@ guiExplore                         % or guiExplore('<path to>/workbench_session.
 The launchers are the **scripted alternative** to the workbench — fully supported, and the
 right choice when you want a reproducible record of a pipeline, a headless/batch run, or a
 starting point to modify. Copy a launcher to your own location and edit it for your project.
+`STEP 0` is where the three folders are named — `libraryFolder`, `rootFolder` (your
+recordings) and `resultsFolder` (where the results go, equal to `rootFolder` until you
+change it; see [Where results are written](#where-results-are-written)) — and it is run once
+per MATLAB session.
 
 They are also the **reference implementation of every pipeline**: the workbench's step
 specs (`GUIs/workbench/wbStepRegistry`) are transcribed from these files — the same
@@ -406,7 +436,8 @@ each one needs. The launcher and the workbench call the same wrappers and write 
 
 **Text and result files, not report images.** Every step narrates three lines — Starting,
 Writing results, Finished — to the command window and the workbench log, and writes to the
-recording's `_MYO` triplet. It writes **no `_rep_*.jpg` pages**, deliberately: a myograph
+recording's `_MYO` files, wherever [the results go](#where-results-are-written). It writes
+**no `_rep_*.jpg` pages**, deliberately: a myograph
 check is worth looking at properly rather than as a thumbnail. A user who has processed
 LSCI first should not go looking for pages that were never written.
 

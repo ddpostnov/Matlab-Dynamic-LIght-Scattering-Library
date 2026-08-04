@@ -497,7 +497,7 @@ end
 
 tail = regexprep(step.inGlob,'^\*','');                  % '_K_r.mat' | '_BFI_r.mat' | '_c_BFI_r.mat'
 base = [model.roiPrefix model.stem];
-d = dir(fullfile(model.folder,[base '*' tail]));
+d = dir(fullfile(model.resultsFolder,[base '*' tail]));  % the input is a PRODUCT
 if isempty(d), return; end
 
 want = desiredStage(step, cstage);                       % 't'|'s'|'c' or '' (any)
@@ -505,7 +505,11 @@ exact = {}; rest = {}; mine = 0;
 for i = 1:numel(d)
     fp = fullfile(d(i).folder, d(i).name);
     cm = wbFileModel(fp);
-    if ~strcmp(cm.identity, model.identity), continue; end
+    % the BASE, not the identity: every candidate came out of one listing, so the
+    % folder half of an identity comparison was always a tautology - and it stops
+    % being one, and starts rejecting everything, when that listing is the results
+    % folder and the model was scanned from the raw tree
+    if ~strcmp([cm.roiPrefix cm.stem], base), continue; end
     mine = mine + 1;
     if ~admitted(ctx, model.identity, fp), continue; end  % not part of this session
     if ~isempty(want) && strcmp(cm.stage, want)
@@ -533,7 +537,7 @@ if isfield(model,'isRaw') && model.isRaw && ~isempty(model.path) && isfile(model
     p = {model.path};  return
 end
 [~,~,ext] = fileparts(step.inGlob);
-cand = fullfile(model.folder,[model.stem ext]);
+cand = fullfile(model.rawFolder,[model.stem ext]);       % a RAW container
 if isfile(cand), p = {cand}; end
 end
 
@@ -588,7 +592,9 @@ end
 
 % =====================================================================
 function r = rawPathFor(model)
-%rawPathFor  The raw recording beside a processed product (guided steps).  The
+%rawPathFor  The raw recording of a processed product (guided steps) - beside it in
+%   the ordinary project, and in the model's .rawFolder when the results live
+%   apart from the recordings.  The
 %   candidate extensions are the ones wbFileModel knows as raw containers, in its
 %   order - the modality vocabulary lives there and this list must not become a
 %   second copy of it that grows a modality late.
@@ -597,10 +603,10 @@ if isfield(model,'isRaw') && model.isRaw && ~isempty(model.path)
 end
 exts = wbFileModel('extensions');
 for i = 1:numel(exts)
-    cand = fullfile(model.folder,[model.stem exts{i}]);
+    cand = fullfile(model.rawFolder,[model.stem exts{i}]);
     if isfile(cand), r = cand; return; end
 end
-r = fullfile(model.folder,[model.stem '.rls']);          % derived default (may not exist yet)
+r = fullfile(model.rawFolder,[model.stem '.rls']);       % derived default (may not exist yet)
 end
 
 % =====================================================================

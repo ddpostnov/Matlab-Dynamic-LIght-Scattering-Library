@@ -4,6 +4,14 @@
 %   data are advised.  Run STEP 0 once per MATLAB session, then run the step
 %   cells (%%) in order.
 %
+%   WHERE THE RESULTS GO.  STEP 0 names two folders: rootFolder, where the recordings
+%   are, and resultsFolder, where everything this pipeline writes goes - the _d/_r/_s
+%   triplets, the report pages and the PDFs - under the same subfolders the recording
+%   had.  They start out as one folder, which writes beside the recordings exactly as
+%   before; point resultsFolder elsewhere to leave the raw data untouched.  Only the
+%   step that reads the recording has to be told; every step after it is handed a
+%   product that is already there.
+%
 % Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
 % script formatting were done with Claude Code.
 
@@ -12,14 +20,16 @@
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
-rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the files lookup
+rootFolder    = 'C:\Dropbox\Work\Data'; %where the RECORDINGS are
+resultsFolder = rootFolder;             %where the RESULTS go. Point it elsewhere to keep the raw data untouched
 
 
 
 %% STEP 1 Process .rls files to get the internal cycle data
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
+s.rootFolder=rootFolder; s.resultsFolder=resultsFolder; %only the step that reads the recording needs these - every step after it is already in the results tree
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.contrastKernelS=5; %contrast kernel for spatial (sLSCI) processing method
@@ -63,24 +73,23 @@ runInternalCycle(s,fNames(:));
 
 %% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 
-%A wrapper writes one <recording>_rep_<page>.jpg beside each recording and stops
-%there - the document is assembled HERE, between the steps, so a 60-file step is one
-%thing to page through instead of 60 files.  COPY THIS CELL after any step whose
+%A wrapper writes one <recording>_rep_<page>.jpg where that recording's results go and
+%stops there - the document is assembled HERE, between the steps, so a 60-file step is
+%one thing to page through instead of 60 files.  COPY THIS CELL after any step whose
 %pages you want together and change the tail and the output name: after setRegions
 %it is '_rep_regions.jpg', after runSegmentation '_rep_categories.jpg' and
 %'_rep_segments.jpg', after runRegistration '_rep_registration.jpg', after
 %setVesselTypes '_rep_vesseltypes.jpg'.
 %runInternalCycle also writes '_rep_cycle-average.jpg' - copy the cell for it too.
 tail='_rep_cycle-detect.jpg'; %the page STEP 1 writes, one per recording
-pdfFolder=fileparts(char(fNames{find(~cellfun(@isempty,fNames(:)),1)}));
-D=dir(fullfile(pdfFolder,['*',tail]));
-makeReportPdf(fullfile({D.folder}',{D.name}'),fullfile(pdfFolder,'report_cycle-detect.pdf')); %ASSEMBLES THE DOCUMENT
+D=getFileNamesList(resultsFolder,['*',tail]); %EVERY page under the results folder, subfolders included
+makeReportPdf(D,fullfile(resultsFolder,'report_cycle-detect.pdf')); %ASSEMBLES THE DOCUMENT
 
 %% STEP 2 Define segmentation regions (interactive ROI editor; optional - whole window if skipped)
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %REGION SELECTION - setRegions is fully interactive: it opens an ROI editor per file
@@ -92,14 +101,14 @@ s.libraryFolder=libraryFolder;
 %whole window (no region mask is written).
 
 %SET FILE NAMES HERE - GROUPED (rows = animal/FOV) so ROIs can carry within a group
-fNames=getFileNamesList(rootFolder,'*_c_K_r.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat','[A-Z]+\d+'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE (setRegions iterates the groups itself - no for-loop)
 setRegions(s,fNames);
 
 %% STEP 3 Perform segmentation (categories + labels + per-segment traces; fully automatic)
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
@@ -128,28 +137,28 @@ s.simR=0.3; % minimal similarity ratio between branches to be considered the sam
 s.difR=0.4; % minimal difference ratio to be considered different vessels
 
 %SET FILE NAMES HERE - FLAT (order-independent; grouping was setRegions' job in STEP 2)
-fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 runSegmentation(s, fNames(:));
 
 %% STEP 4 (OPTIONAL. Only use if 1 or more regions were defined in STEP 2) Split the regions.
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED IF NECESSARY - DELETE THE ORIGINAL FILES
 s.deleteOriginal=false; %true or false. USE TRUE IF YOU DO NOT PLAN TO RE-DEFINE REGIONS
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE (crops each file by its own regionsMask -> RoiN_ files)
 splitRegions(s,fNames(:));
 
 %% STEP 5 (OPTIONAL) Dynamic segmentation - per-frame vessel diameter / flow (heavy)
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - LABELLING (MUST MATCH THE SEGMENTATION STEP 3)
@@ -174,14 +183,14 @@ s.minOverlapSelf=0.2; %minimum size of segmented area compared to the initial RO
 s.pInterpF=4; % leave as is
 
 %SET FILE NAMES HERE (after STEP 4 this pattern also matches the RoiN_ crops)
-fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
 runDynamicSegmentation(s, fNames(:));
 
 %% STEP 6 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED IF NECESSARY - REGISTRATION SETTINGS
@@ -192,7 +201,7 @@ s.matchSegmentation=true;
 s.prchNSize=30; % Parenchymal pixels neighbourhoud.
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_K_r.mat','[A-Z]+\d+');
+fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat','[A-Z]+\d+');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -202,7 +211,7 @@ end
 
 %% STEP 7 Convert contrast to blood flow index
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 
 s.libraryFolder=libraryFolder;
 %ADJUSTED IF NECESSARY - DELETE ORIGINAL FILES
@@ -211,13 +220,13 @@ s.deleteOriginal=true; %true or false
 s.method="basic"; %only "basic" is avaliable
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 runBFI(s,fNames(:));  %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 8 Perform pulsatility analysis (strictly after conversion to BFI)
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 
 s.libraryFolder=libraryFolder;
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - Harmonic model
@@ -233,26 +242,26 @@ s.ppxPulsReturn={'markers'};  % NON-EMPTY = per-pixel marker maps ON
                         % also fit every masked pixel (large full-resolution cubes).
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 runPulsatility(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 9 Assign vessel types and regions of interest
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 
 s.libraryFolder=libraryFolder;
 
 %%IF DOING IT FILE BY FILE
 % s.useReference=false;
 % s.refFName=''; %use '' instead of " "
-%fNames=getFileNamesList(rootFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%fNames=getFileNamesList(resultsFolder,'*_c_K_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 %setVesselTypes(s,fNames(:));
 
 %%IF using a reference
 s.useReference=true; %Assumes PRE-registered files
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat','[A-Z]+\d+','1BP_c_BFI_r\.mat');
+fNames=getFileNamesList(resultsFolder,'*_c_BFI_r.mat','[A-Z]+\d+','1BP_c_BFI_r\.mat');
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -262,7 +271,7 @@ end
 
 %% STEP 10 (OPTIONAL) Export key results to an excel table
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+fNames=getFileNamesList(resultsFolder,'*_c_BFI_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 %INTERACTIVE ALTERNATIVE: run guiExport - the standalone export tool in front of this
 %same routine (pick files / a folder / a workbench session, choose the parameters and
 %the averaging, write one workbook per recording or one merged workbook for statistics)

@@ -187,13 +187,21 @@ if isfield(opts,'sData') && ~isempty(opts.sData)
     return
 end
 
-if isempty(model.folder) || ~isfolder(model.folder), return; end
+% the SETTINGS files are products, so they are in the results folder - which is the
+% recording's own folder unless the project keeps its results apart (wbFileModel)
+if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
 rawBr = rawBranches(reg);
-d = dir(fullfile(model.folder,'*_s.mat'));
+base  = [model.roiPrefix model.stem];
+d = dir(fullfile(model.resultsFolder,'*_s.mat'));
 for i = 1:numel(d)
     cand = wbFileModel(fullfile(d(i).folder, d(i).name));
     if ~strcmp(cand.role,'s'), continue; end
-    if ~strcmp(cand.identity, model.identity), continue; end   % same recording only
+    % THE BASE, NOT THE IDENTITY.  An identity carries the folder, and the folder is
+    % a tautology here - every candidate came out of this one listing - so comparing
+    % it only ever asked whether the roiPrefix and stem agreed.  It stops being a
+    % tautology the moment the listing is the RESULTS folder and the model was
+    % scanned from the raw one, and then it would reject every settings file there.
+    if ~strcmp([cand.roiPrefix cand.stem], base), continue; end   % same recording only
     if ~samePipeline(model, cand, rawBr), continue; end        % same pipeline only
     try
         S = load(fullfile(d(i).folder, d(i).name),'settings');
@@ -274,7 +282,7 @@ if isempty(step.requires)
     if isempty(ext)
         tf = requiresDone;
     else
-        tf = isfile(fullfile(model.folder,[model.stem ext]));
+        tf = isfile(fullfile(model.rawFolder,[model.stem ext]));   % the RAW really is there
     end
 else
     tf = requiresDone;                            % the prereq's output IS the input
@@ -285,28 +293,31 @@ end
 
 % =====================================================================
 function tf = rawBeside(model)
-%rawBeside  Is the recording this product came from still next to it?  The
-%   candidate extensions are the ones wbFileModel knows as raw containers, in its
+%rawBeside  Is the recording this product came from still where it was?  In the
+%   ordinary project that is beside the product, and when the results live apart
+%   from the recordings it is the model's .rawFolder - one word, and the question
+%   is unchanged.  The candidate extensions are the ones wbFileModel knows as raw
+%   containers, in its
 %   order - the modality vocabulary lives THERE and a second copy of it here would
 %   silently stop recognising a modality the moment one is added.  It did: the pair
 %   this replaced named '.rls' and '.cxd' only, so every needsRaw step of a video
 %   modality read 'no input file' however plainly the video sat beside it.
 tf = false;
-if isempty(model.folder), return; end
+if isempty(model.rawFolder), return; end
 exts = wbFileModel('extensions');
 for i = 1:numel(exts)
-    if isfile(fullfile(model.folder,[model.stem exts{i}])), tf = true; return; end
+    if isfile(fullfile(model.rawFolder,[model.stem exts{i}])), tf = true; return; end
 end
 end
 
 % =====================================================================
 function tf = outputExists(model)
 %outputExists  Whether the recording already has an exported workbook on disk.
-%   exportToExcel writes '<input>_r.mat' -> '<input>.xlsx', so any
-%   '<identity>*.xlsx' next to the recording means export has run.
+%   exportToExcel writes '<input>_r.mat' -> '<input>.xlsx', and its input is a
+%   product, so any '<identity>*.xlsx' in the RESULTS folder means export has run.
 tf = false;
-if isempty(model.folder) || ~isfolder(model.folder), return; end
-d = dir(fullfile(model.folder,[model.roiPrefix model.stem '*.xlsx']));
+if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
+d = dir(fullfile(model.resultsFolder,[model.roiPrefix model.stem '*.xlsx']));
 tf = ~isempty(d);
 end
 
@@ -331,8 +342,12 @@ cur = curSettings.(step.id);
 if ~isstruct(cur), return; end
 
 fields = stepFields(step);
+% WHERE things are is not WHAT was computed.  rootFolder/resultsFolder ride into a
+% settings file as provenance, so a project copied to another disk - or one that
+% simply starts sending its results elsewhere - would otherwise read as a settings
+% change and flip every finished step to stale.
 ignore = {'libraryFolder','fNamesCopyTo','optimizer','metric','categories', ...
-          'refFName','fName','stageFcn','cancelFcn'};
+          'refFName','fName','stageFcn','cancelFcn','rootFolder','resultsFolder'};
 for i = 1:numel(fields)
     f = fields{i};
     if ismember(f, ignore), continue; end

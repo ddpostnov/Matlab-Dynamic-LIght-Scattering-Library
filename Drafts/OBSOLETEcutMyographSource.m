@@ -1,3 +1,14 @@
+%OBSOLETEcutMyographSource  RETIRED 2026-08-03 - superseded by cutMyographIntervals
+%
+%   It cut a myograph SOURCE struct, and a myograph product no longer has one: the
+%   measurement lives per window in results.intervals(k).diameter, and the span this
+%   used to slice is assembled from those windows.  Its replacement is
+%   Core/Myograph/cutMyographIntervals, which takes the RESULTS instead and builds
+%   the diameter block through the shared myographDiameterBranch.
+%
+%   Kept for reference only.  Nothing calls it and nothing should.
+%
+% =====================================================================
 %cutMyographSource  Cut a measured myograph recording into its analysis intervals
 %
 %   intervals = cutMyographSource(source,ivT,names) turns a set of time windows into

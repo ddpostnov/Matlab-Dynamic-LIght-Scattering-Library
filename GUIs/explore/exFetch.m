@@ -677,6 +677,7 @@ switch r
     case 'fit',      s = 'fitted line';
     case 'caption',  s = 'caption';
     case 'pooled',   s = 'pooled form';
+    case 'mask',     s = 'quality record';
     otherwise,       s = 'companion';
 end
 end

@@ -13,6 +13,12 @@
 %                             model fit(s) (results.mMDSN, results.mDSN, ...)
 %       *_g_s.mat  SETTINGS - settings.getNormalizedG2, settings.fitDLSI
 %
+%   The triplet goes in resultsFolder, under the same subfolders the .mraw had under
+%   rootFolder.  STEP 0 starts the two out as one folder, which writes beside the
+%   recordings exactly as before; point resultsFolder elsewhere to leave the raw data
+%   untouched.  Only STEP 1 has to be told - STEP 2 and STEP 3 are handed a triplet
+%   that is already there.
+%
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
 % script formatting were done with Claude Code.
@@ -22,13 +28,15 @@
 libraryFolder = 'C:\Dropbox\Work\GitHub\Matlab-Dynamic-LIght-Scattering-Library';
 addpath(genpath(libraryFolder));
 setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - they SHADOW the library
-rootFolder = 'C:\Dropbox\Work\Data'; %root folder for the raw .mraw files lookup
+rootFolder    = 'C:\Dropbox\Work\Data'; %where the RECORDINGS are (the .mraw files)
+resultsFolder = rootFolder;             %where the RESULTS go. Point it elsewhere to keep the raw data untouched
 
 
 %% STEP 1 Process raw .mraw recordings into the normalized autocorrelation g2
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
+s.rootFolder=rootFolder; s.resultsFolder=resultsFolder; %only the step that reads the recording needs these - every step after it is already in the results tree
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - AUTOCORRELATION
 s.lagMax=151; %number of lags (g2 has lagMax+1 points spanning lags 0..lagMax)
@@ -83,7 +91,12 @@ for i=1:1:size(fNames,1)
     %save the three-file triplet (base name = recording without the .mraw extension)
     s.fps=fps; s.fileName=fName;
     settings=struct(); settings.getNormalizedG2=s;
-    base=regexprep(fName,'\.mraw$','','ignorecase');
+    %This is the ENTRY step - the one place a raw path becomes a product path, and so
+    %the only place that has to know a project may keep its results apart from its
+    %recordings.  fName is NOT reassigned: it stays the recording that was read above
+    %and that settings.getNormalizedG2.fileName records.  With no results folder set
+    %the name comes back verbatim and STEP 2, already relative to its input, follows.
+    base=regexprep(getResultsPath(fName,s),'\.mraw$','','ignorecase');
     save([base '_g_d.mat'],'source','-v7.3','-nocompression');   %heavy data
     save([base '_g_r.mat'],'results','-v7.3','-nocompression');  %maps
     save([base '_g_s.mat'],'settings','-v7.3','-nocompression'); %settings
@@ -92,7 +105,7 @@ disp('STEP 1 complete');
 
 %% STEP 2 Fit every pixel of each g2 stack to a DLSI model
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - MODEL
@@ -108,7 +121,7 @@ s.spatialDS=1;      %>1 (e.g. 2 or 4) spatially downsamples for a quick test - f
 s.parforFit=true;   %false fits the pixels one at a time in this MATLAB and starts no parallel pool
 
 %SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*_g_r.mat'); %the g2 products written by STEP 1
+fNames=getFileNamesList(resultsFolder,'*_g_r.mat'); %the g2 products written by STEP 1
 
 %RUN THE PROCESSING ROUTINE
 for i=1:1:size(fNames,1)
@@ -154,10 +167,10 @@ disp('STEP 2 complete');
 
 %% STEP 3 See the results - initial and fitted parameter maps for one recording
 close all
-clearvars -except fNames libraryFolder rootFolder
+clearvars -except fNames libraryFolder rootFolder resultsFolder
 
 %SET FILE NAME HERE (defaults to the first g2 source found)
-fNames=getFileNamesList(rootFolder,'*_g_r.mat');
+fNames=getFileNamesList(resultsFolder,'*_g_r.mat');
 rName=fNames{1,1};
 load(rName,'results');
 load(getProductPath(rName,'s'),'settings');

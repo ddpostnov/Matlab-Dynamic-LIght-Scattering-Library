@@ -67,7 +67,7 @@ if ~all( cellfun(@(x) isempty(x) || contains(x,'_r.mat'), fNames(:)) )
         'getFileNamesList(rootFolder,''*_I_r.mat'').']);
 end
 if nargin<3 || isempty(fNamesRaw)
-    fNamesRaw=deriveRawNames(fNames);
+    fNamesRaw=deriveRawNames(fNames,s);
 end
 if ~isfield(s,'memoryCoef') || isempty(s.memoryCoef), s.memoryCoef=0.25; end
 
@@ -154,12 +154,16 @@ reportClose(rep);
 end
 
 %------------- LOCAL FUNCTIONS --------------
-function fNamesRaw=deriveRawNames(fNames)
-% Map each segmented *_r.mat name to its raw recording in the same folder.
+function fNamesRaw=deriveRawNames(fNames,s)
+% Map each segmented *_r.mat name to its raw recording: back out of the results tree
+% first, then swap the extension.  The two are separate steps because only the FOLDER
+% ever moved - the stem is the recording's own in both trees.  With no results folder
+% set the first step is a no-op and the raw sits beside the product, as it always did.
 fNamesRaw=cell(size(fNames));
 for i=1:1:numel(fNames)
     f=fNames{i};
     if isempty(f), fNamesRaw{i}=''; continue; end
+    f=getResultsPath(f,s,'root');
     if contains(f,'_I_r.mat')
         fNamesRaw{i}=regexprep(f,'_I_r\.mat$','.cxd');   % intensity pipeline -> .cxd
     else

@@ -30,7 +30,7 @@
 %      [iv,channels]   = myographIntervals(results)
 %
 %   INPUTS
-%     results  the RESULTS member of a _MYO triplet.
+%     results  the RESULTS member of a _MYO pair.
 %
 %   OUTPUTS
 %     iv        1 x n struct array of window elements, each with .channelName.  Empty
@@ -42,7 +42,7 @@
 %   DEPENDS ON
 %     myographProduct (Core/Myograph) for the interval prototype.
 %
-% See also: cutMyographSource, setMyographIntervals, runMyographVasomotion,
+% See also: cutMyographIntervals, setMyographIntervals, runMyographVasomotion,
 %           myographProduct, exportToExcel, guiExplore
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
@@ -76,8 +76,9 @@ end
 % =====================================================================
 function iv=append(iv,src,channelName)
 %append  One channel's windows onto the flat list, with the channel written on each.
-%   The prototype is grown field by field rather than by concatenation, so a tree
-%   written before a branch existed still reads back.
+%   The prototype is grown field by field rather than by concatenation, because the
+%   flat list carries a field the stored windows do not - .channelName - and two
+%   struct arrays with different fields cannot be concatenated at all.
 if isempty(src) || ~isstruct(src), return; end
 fn=fieldnames(iv);
 for k=1:1:numel(src)

@@ -742,9 +742,11 @@ end
 % ---------------------------------------------------------------------------
 function [meas,stats] = diameterAxes(iv)
 %diameterAxes  The diameter MEASURES and the STATISTIC names this recording actually
-%   carries, unioned over its intervals in the order the tree lists them.  Read from
-%   the data rather than assumed, so a result written before a measure existed reads
-%   back with the measures it has.
+%   carries, unioned over its intervals in the order the tree lists them.  READ OFF
+%   d.stats AND NEVER OFF fieldnames(d), which is what keeps the diameter branch's
+%   arrays - the walls, the per-line diameters, the quality flags - out of a sheet:
+%   a sheet is what a protocol is compared on, and a [frames x lines] array is not
+%   that.  Adding a statistic adds a column; adding an array adds nothing.
 meas = {}; stats = {};
 for k = 1:numel(iv)
     d = subStruct(iv(k),'diameter');
@@ -863,13 +865,28 @@ if isfield(v,'channelName') && ~isempty(v.channelName), nm = char(string(v.chann
 end
 
 function n = frameCount(ivk,d)
-%frameCount  How many samples the window holds: its frame range into the recording,
-%   or the length of the trace measured in it.
+%frameCount  How many samples the window holds, asked of the three places that can
+%   answer, in this order: its range into the ORIGINAL recording, the diameter
+%   measured in it, and - for a wire recording - the samples it kept.
+%
+%   THE THIRD IS NOT REDUNDANT.  A wire window carries a frame range only when every
+%   channel of the file shares one sampling rate: with two rates there is no single
+%   sample index that would be true for both, and a wrong one would be worse than
+%   none, so cutMyographIntervals leaves it empty.  Such a window has no diameter
+%   branch either - a wire myograph measures none - so without this last fallback a
+%   mixed-rate recording would report an empty count for every window, which is the
+%   one shape of file where the count is least guessable by hand.
 n = NaN;
-if isfield(ivk,'frames') && numel(ivk.frames)==2
-    n = double(ivk.frames(2)) - double(ivk.frames(1)) + 1;
-elseif isfield(d,'time')
-    n = numel(d.time);
+fr = double(fieldOrEmpty(ivk,'frames'));
+if numel(fr) == 2
+    n = fr(2) - fr(1) + 1; return
+end
+if isfield(d,'time') && ~isempty(d.time)
+    n = numel(d.time); return
+end
+sm = subStruct(ivk,'samples');
+if isfield(sm,'time') && ~isempty(sm.time)
+    n = numel(sm.time);
 end
 end
 

@@ -1,28 +1,33 @@
 %runMyographVideo  Register a pressure-myograph recording and create its data product
 %
 %   runMyographVideo(s,fNames) opens every pressure-myograph video in fNames, reads
-%   its header and its first frame, and CREATES the recording's _MYO triplet:
+%   its header, and CREATES the recording's _MYO pair:
 %
-%       Mouse1.avi  ->  Mouse1_MYO_d.mat   Mouse1_MYO_r.mat   Mouse1_MYO_s.mat
+%       Mouse1.avi  ->  Mouse1_MYO_r.mat   Mouse1_MYO_s.mat
 %
 %   It is the ENTRY STEP of the pressure-myograph pipeline and the only function
-%   that creates the triplet.  Everything after it - the time crop, the intervals,
+%   that creates the pair.  Everything after it - the time crop, the intervals,
 %   the diameter, the propagation and the vasomotion - opens what is here and writes
 %   it back (see myographProduct).  fNames is a cell array of raw recording paths;
 %   the wrapper iterates them itself, so there is no launcher for-loop.
 %
-%   IT IS CHEAP ON PURPOSE.  Only the container header and one frame are read, so
-%   registering a folder of two-hour recordings costs seconds.  source.data is left
-%   EMPTY here: the diameter step fills it, and only for the span that is actually
-%   analysed - a crop or a set of pre-set intervals makes the recording shorter,
-%   everywhere.  This step therefore writes the WHOLE file's time base, which is the
-%   only span that exists before a crop or an interval has been chosen, and the
-%   diameter step replaces it with the analysed one.  Nothing may cache a frame
-%   index across the two.
+%   IT IS CHEAP ON PURPOSE.  Only the container header is read, so registering a
+%   folder of two-hour recordings costs seconds.  What it writes is
+%   results.recording, THE RECORDING'S IDENTITY CARD - what the file is, not what is
+%   in it - and it holds no arrays at all.  The diameter step is what measures, and
+%   what it measures lives per window in results.intervals(k).diameter.
+%
+%   NOTHING COPIES THE RECORDING.  A myograph video is not changed by the analysis
+%   and re-reading it is fast, so the product describes it and keeps the
+%   MEASUREMENT, and copies neither.  There is no _MYO_d.mat.
+%
+%   THERE IS NO WHOLE-RECORDING TIME BASE, on purpose.  What a later step needs to
+%   address the recording is .nFrames and .frameRate, which is what setMyographCrop
+%   and setMyographPresetIntervals use; a window's own times are its
+%   .diameter.time, and the stretches between windows are not stored at all.
 %
 %   TIMES ARE ABSOLUTE SECONDS from the start of the recording, never re-based to
 %   zero, so an interval can always be located back in the original footage.
-%   source.time is a [T x 1] COLUMN, the library-wide orientation.
 %
 %   INPUTS
 %     s        parameter structure.  Carried through into settings.runMyographVideo.
@@ -30,7 +35,7 @@
 %                   recording is uncalibrated and results are reported in px.  It is
 %                   fixed ONCE, here, because it is a property of the microscope and
 %                   not of an analysis; the propagation step reads it back from
-%                   source rather than asking for it again.
+%                   results.recording rather than asking for it again.
 %       .rowRange   (optional, default [1 Inf]) [lo hi] image rows that hold the
 %                   vessel.  Rows outside it are not measured.
 %     fNames   cell array of raw pressure-myograph recording paths (any container
@@ -40,10 +45,10 @@
 %     and s.cancelFcn()->tf (checked between files).
 %
 %   SIDE-EFFECTS (per file)
-%     <name>_MYO_d.mat   SOURCE   the frame time base, frame rate, image size, row
-%                        range and pixel size; the diameter arrays are empty
-%     <name>_MYO_r.mat   RESULTS  results.timeCrop = [], an empty results.intervals
-%                        and results.meta
+%     <name>_MYO_r.mat   RESULTS  results.recording (the file name, the modality,
+%                        the frame rate, the image size, the row range, the pixel
+%                        size, the frame count and the duration), results.timeCrop
+%                        = [], an empty results.intervals and results.meta
 %     <name>_MYO_s.mat   SETTINGS settings.runMyographVideo = s
 %
 %   EXAMPLE
@@ -62,7 +67,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 03-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -89,37 +94,41 @@ for fidx=1:1:numel(fNames)
     if isempty(fNames{fidx}), continue; end
     s.fName=char(fNames{fidx});
     reportFile(rep,fidx,s.fName);
-    clearvars source results settings
+    clearvars results settings
 
-    % ---- the container header: the time base, the frame rate and the size ----
+    % ---- the container header: the frame count, the frame rate and the size ----
     v=VideoReader(s.fName);
     nFrames=frameCount(v);
     frameRate=v.FrameRate;
 
-    % ---- SOURCE: the whole file's time base; the diameter arrays come later ----
-    source=struct();
-    source.fName=s.fName;
-    source.modality='PMYO';
-    source.time=(0:nFrames-1)'/frameRate;   % [T x 1] column, absolute seconds
-    source.fs=frameRate;
-    source.frameRate=frameRate;
-    source.size=[v.Height v.Width];
-    source.rowRange=s.rowRange;
-    source.pixelSize=s.pixelSize;
-    source.measures={};                     % filled by the diameter step
-    [source.data,source.wallL,source.wallR,source.mask,source.valid]=deal([]);
-
-    % ---- RESULTS: no crop, no intervals yet ----
+    % ---- RESULTS: the recording's identity card, no crop, no intervals yet ----
     results=struct();
+    results.recording=struct( ...
+        'fName',s.fName, ...
+        'modality','PMYO', ...
+        'frameRate',frameRate, ...
+        'fs',frameRate, ...
+        'size',[v.Height v.Width], ...
+        'rowRange',s.rowRange, ...
+        'pixelSize',s.pixelSize, ...
+        'measures',{{}}, ...                % filled by the diameter step
+        'nFrames',nFrames, ...
+        'duration',nFrames/max(frameRate,eps));
     results.timeCrop=[];
     results.intervals=myographProduct('intervals');
-    results.meta=struct('formatVersion',3,'codeVersion',codeVer, ...
+    results.meta=struct('formatVersion',4,'codeVersion',codeVer, ...
         'createdTimestamp',timestamp());
 
     settings=struct('runMyographVideo',reportSettings(s));
 
     reportWriting(rep);
-    myographProduct('save',s.fName,source,results,settings);
+    % This is the ENTRY step, so this is where the recording's path becomes the pair's
+    % path - and the only place that has to know a project may keep its results apart
+    % from its recordings.  ONLY THE NAME OF THE PRODUCT MOVES: results.recording.fName
+    % above still holds the raw path, which is what myographRecordingPath looks the
+    % video up by and the only pointer back to it.  With no results folder set the name
+    % comes back verbatim.
+    myographProduct('save',getResultsPath(s.fName,s),results,settings);
     reportSaved(rep);
 end
 reportClose(rep);

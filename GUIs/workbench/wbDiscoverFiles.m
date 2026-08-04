@@ -19,14 +19,32 @@
 %   wbTypeModel, which derives all four label axes and which this function calls
 %   to stamp .animal / .type / .index / .expGroup onto every model.
 %
+%   IT IS ALSO THE LAYER THAT KNOWS THE TWO ROOTS.  A project may keep its RESULTS
+%   somewhere other than its RECORDINGS (getResultsPath), and then "where is this
+%   recording's raw container" and "where do its products go" have two different
+%   answers that no reading of a file NAME can separate.  Discovery holds both
+%   roots, so it forwards them to wbFileModel, which owns the mapping and fills in
+%   .rawFolder and .resultsFolder - and every consumer downstream reads one of the
+%   two rather than re-deriving it.  Omit the roots (every caller that predates the
+%   results folder, and every project that never names one) and both come back as
+%   the file's own folder, which is the same picture the workbench has always had.
+%
 % Syntax:
-%    disc = wbDiscoverFiles('structured', root, glob, animalRegexp, refRegexp, typeRegexp, groupRegexp)
-%    disc = wbDiscoverFiles('folder',     root, glob, animalRegexp, typeRegexp, groupRegexp)
-%    disc = wbDiscoverFiles('manual',     pathList, animalRegexp, typeRegexp, groupRegexp)
-%    disc = wbDiscoverFiles('curated',    pathList, labels, animalRefMap)
+%    disc = wbDiscoverFiles('structured', root, glob, animalRegexp, refRegexp, typeRegexp, groupRegexp, resultsRoot)
+%    disc = wbDiscoverFiles('folder',     root, glob, animalRegexp, typeRegexp, groupRegexp, resultsRoot)
+%    disc = wbDiscoverFiles('manual',     pathList, animalRegexp, typeRegexp, groupRegexp, rootFolder, resultsRoot)
+%    disc = wbDiscoverFiles('curated',    pathList, labels, animalRefMap, rootFolder, resultsRoot)
 %
 % Inputs:
-%    root         - folder searched recursively (structured/folder).
+%    root         - folder searched recursively (structured/folder).  It is also
+%                   the ROOT folder of the results-folder rule, so these two modes
+%                   need only the other half of the pair.
+%    rootFolder   - (manual/curated, optional) where the RECORDINGS are.  These two
+%                   modes scan nothing, so they are told the root rather than
+%                   searching it.
+%    resultsRoot  - (optional) where the RESULTS go.  Empty, or equal to the root,
+%                   means the two trees are one and every model's .rawFolder and
+%                   .resultsFolder are its own .folder.
 %    glob         - dir() glob, e.g. '*_c_K_r.mat'.
 %    animalRegexp - regexp extracting the animal id (e.g. '[A-Z]+\d+'); empty ->
 %                   a single animal row.
@@ -56,7 +74,8 @@
 %    them produces.  The regexps only fill in label fields that would otherwise
 %    hold their no-match bucket.
 %
-% See also: getFileNamesList, wbFileModel, wbTypeModel, removeProcessedFiles
+% See also: getFileNamesList, wbFileModel, wbTypeModel, removeProcessedFiles,
+%           getResultsPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -74,13 +93,15 @@ refMap        = containers.Map('KeyType','char','ValueType','char');
 
 switch mode
     case 'structured'
-        [root, glob, animalRegexp, refRegexp, typeRegexp, groupRegexp] = parseArgs(varargin, 6);
+        [root, glob, animalRegexp, refRegexp, typeRegexp, groupRegexp, resultsRoot] = parseArgs(varargin, 7);
+        rootFolder = root;
         fNames = getFileNamesList(root, glob, animalRegexp, refRegexp);
         referenceMode = ~isempty(refRegexp);
         patterns = setPatterns(patterns, animalRegexp, typeRegexp, groupRegexp, refRegexp);
 
     case 'folder'
-        [root, glob, animalRegexp, typeRegexp, groupRegexp] = parseArgs(varargin, 5);
+        [root, glob, animalRegexp, typeRegexp, groupRegexp, resultsRoot] = parseArgs(varargin, 6);
+        rootFolder = root;
         if isempty(animalRegexp)
             flat = getFileNamesList(root, glob);        % N-by-1 flat list
             fNames = reshape(flat, 1, []);              % one animal row
@@ -90,7 +111,7 @@ switch mode
         patterns = setPatterns(patterns, animalRegexp, typeRegexp, groupRegexp, '');
 
     case 'manual'
-        [pathList, animalRegexp, typeRegexp, groupRegexp] = parseArgs(varargin, 4);
+        [pathList, animalRegexp, typeRegexp, groupRegexp, rootFolder, resultsRoot] = parseArgs(varargin, 6);
         pathList = cleanPaths(pathList);
         if isempty(animalRegexp)
             fNames = reshape(pathList, 1, []);          % one animal row
@@ -100,7 +121,7 @@ switch mode
         patterns = setPatterns(patterns, animalRegexp, typeRegexp, groupRegexp, '');
 
     case 'curated'
-        [pathList, labels, refMapIn] = parseArgs(varargin, 3);
+        [pathList, labels, refMapIn, rootFolder, resultsRoot] = parseArgs(varargin, 5);
         pathList = cleanPaths(pathList);
         if isa(refMapIn,'containers.Map'), refMap = refMapIn; end
         [fNames, labels, referenceMode] = gridFromLabels(pathList, labels, refMap);
@@ -128,7 +149,7 @@ end
 % ---- build the parallel model grid ------------------------------------------
 [nr, nc] = size(fNames);
 models = cell(nr, nc);
-flat   = struct('path',{},'folder',{},'name',{},'ext',{},'modality',{}, ...
+flat   = struct('path',{},'folder',{},'rawFolder',{},'resultsFolder',{},'name',{},'ext',{},'modality',{}, ...
                 'roi',{},'roiPrefix',{},'stem',{},'identity',{},'flags',{}, ...
                 'stage',{},'branch',{},'product',{},'role',{}, ...
                 'isRaw',{},'isReference',{},'animal',{},'type',{},'index',{},'expGroup',{});
@@ -139,7 +160,7 @@ for r = 1:nr
     animals(r) = struct('name',aname,'rowIndex',r);
     for c = 1:nc
         if isempty(fNames{r,c}), continue; end
-        m = wbFileModel(fNames{r,c});
+        m = wbFileModel(fNames{r,c}, rootFolder, resultsRoot);
         L = labelOf(fNames{r,c});
         m.animal      = L.animal;
         m.type        = L.type;

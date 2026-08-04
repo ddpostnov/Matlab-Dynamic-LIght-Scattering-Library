@@ -139,9 +139,15 @@ for fidx=1:1:numel(fNames)
         reportWriting(rep);
         settings.runContrastFromRLS=reportSettings(s);
         results.time=source.time;
-        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3','-nocompression');
-        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3','-nocompression');
-        save(strrep(s.fName,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3','-nocompression');
+        % This is the ENTRY step, so this is where a raw path becomes a product path -
+        % and the only place that has to know a project may keep its results apart from
+        % its recordings.  s.fName is NOT reassigned: it stays the raw recording that
+        % reportSettings records.  With no results folder set the name comes back
+        % verbatim and every downstream step, already relative to its input, follows.
+        outBase=getResultsPath(s.fName,s);
+        save(strrep(outBase,'.rls',['_',s.contrastType(1),'_K_d.mat']),'source','-v7.3','-nocompression');
+        save(strrep(outBase,'.rls',['_',s.contrastType(1),'_K_r.mat']),'results','-v7.3','-nocompression');
+        save(strrep(outBase,'.rls',['_',s.contrastType(1),'_K_s.mat']),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

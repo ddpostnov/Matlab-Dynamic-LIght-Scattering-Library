@@ -14,6 +14,16 @@
 %   reconstructed from gsData + sMap).  Everything runs on the test data with no
 %   editing required.
 %
+%   WHERE THE RESULTS GO.  STEP 0 names two folders: rootFolder, where the recordings
+%   are - the bundled test data, here - and resultsFolder, where everything this
+%   pipeline writes goes: the _d/_r/_s triplets, the report pages, and the overview,
+%   trace and perfusion movie of STEP 5-7, under the same subfolders the recording
+%   had.  They start out as one folder, which writes beside the recording exactly as
+%   before; point resultsFolder elsewhere to leave the test data untouched.  THIS
+%   LAUNCHER NAMES ITS PRODUCT FROM THE RECORDING'S NAME rather than from a file
+%   list, so every step from 2 onwards maps that name across as well - it is the one
+%   launcher where more than the first step has to know the two folders.
+%
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.  Header generation and
 % script formatting were done with Claude Code.
@@ -27,15 +37,17 @@ setLibraryPath(libraryFolder); %keeps .claude/ tooling copies OFF the path - the
 
 % The demo runs on the bundled test recording.  Point rawName at your own .rls
 % (or .cxd) file to use the guided step on your data.
-rootFolder = fullfile(libraryFolder,'Test data');
-rawName    = fullfile(rootFolder,'mouseBrain_crop512x512x1000.rls');
+rootFolder    = fullfile(libraryFolder,'Test data'); %where the RECORDINGS are
+resultsFolder = rootFolder; %where the RESULTS go. Point it elsewhere to keep the raw data untouched
+rawName       = fullfile(rootFolder,'mouseBrain_crop512x512x1000.rls');
 
 % Use the GPU for contrast if one is available, otherwise the CPU.
 procType = 'cpu'; if gpuDeviceCount>0, procType = 'gpu'; end
 
 %% STEP 1 Process the raw recording into temporally decimated contrast
-clearvars -except libraryFolder rootFolder rawName procType
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 s.libraryFolder=libraryFolder;
+s.rootFolder=rootFolder; s.resultsFolder=resultsFolder; %only the step that reads the recording needs these - every step after it is already in the results tree
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CONTRAST CALCULATION
 s.contrastType='temporal'; %'temporal' or 'spatial'
@@ -56,23 +68,22 @@ runContrastFromRLS(s,{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
 close all
-clearvars -except libraryFolder rootFolder rawName procType
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 
-%A wrapper writes one <recording>_rep_<page>.jpg beside each recording and stops
-%there - the document is assembled HERE, between the steps, so a 60-file step is one
-%thing to page through instead of 60 files.  COPY THIS CELL after any step whose
+%A wrapper writes one <recording>_rep_<page>.jpg where that recording's results go and
+%stops there - the document is assembled HERE, between the steps, so a 60-file step is
+%one thing to page through instead of 60 files.  COPY THIS CELL after any step whose
 %pages you want together and change the tail and the output name: after setRegions
 %it is '_rep_regions.jpg', after runSegmentation '_rep_categories.jpg' and
 %'_rep_segments.jpg', after runRegistration '_rep_registration.jpg', after
 %setVesselTypes '_rep_vesseltypes.jpg'.
 tail='_rep_contrast.jpg'; %the page STEP 1 writes, one per recording
-pdfFolder=fileparts(rawName);
-D=dir(fullfile(pdfFolder,['*',tail]));
-makeReportPdf(fullfile({D.folder}',{D.name}'),fullfile(pdfFolder,'report_contrast.pdf')); %ASSEMBLES THE DOCUMENT
+D=getFileNamesList(resultsFolder,['*',tail]); %EVERY page under the results folder, subfolders included
+makeReportPdf(D,fullfile(resultsFolder,'report_contrast.pdf')); %ASSEMBLES THE DOCUMENT
 
 %% STEP 2 (OPTIONAL) Define segmentation regions - this demo uses the WHOLE window
 close all
-clearvars -except libraryFolder rootFolder rawName procType
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 s.libraryFolder=libraryFolder;
 
 % Segmentation runs on the whole field of view by default, so the demo does nothing
@@ -82,12 +93,12 @@ s.libraryFolder=libraryFolder;
 % however many you draw - draw nothing, or skip this step entirely (as here), to keep
 % the whole window.  Uncomment to try it:
 %
-% rName=strrep(rawName,'.rls','_t_K_r.mat');
+% rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 % setRegions(s,{rName}); %LAUNCHES THE INTERACTIVE ROI EDITOR
 
 %% STEP 3 Perform segmentation (categories + labels; builds results.sMap / sMetrics / sData)
 close all
-clearvars -except libraryFolder rootFolder rawName procType
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 s.libraryFolder=libraryFolder;
 
 %ADJUSTED (OR VERIFIED) PER PROTOCOL - CATEGORIZATION
@@ -114,15 +125,15 @@ s.correctNodes=true; % Branching correction
 s.simR=0.3;          % minimal similarity ratio between branches to be the same vessel
 s.difR=0.4;          % minimal difference ratio to be considered different vessels
 
-rName=strrep(rawName,'.rls','_t_K_r.mat');
+rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 runSegmentation(s,{rName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 4 GUIDED STEP - full-resolution per-segment contrast from the raw file
 close all
-clearvars -except libraryFolder rootFolder rawName procType
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 s.libraryFolder=libraryFolder;
 
-rName=strrep(rawName,'.rls','_t_K_r.mat');
+rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 
 % Pass the raw file explicitly (it is also auto-detected if omitted).  Use
 % runGuidedIntensity instead for per-segment mean intensity (e.g. fluorescence).
@@ -130,8 +141,8 @@ runGuidedContrast(s,{rName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 5 See the results - segmentation overview
 close all
-clearvars -except libraryFolder rootFolder rawName procType
-rName=strrep(rawName,'.rls','_t_K_r.mat');
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
+rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 load(rName,'results');
 
 sMap=single(results.sMap); sMap(sMap==0)=NaN;
@@ -157,8 +168,8 @@ drawnow
 print(f,strrep(rName,'_r.mat','_guided_overview.jpg'),'-djpeg','-r200');
 
 %% STEP 6 See the results - one vessel at full vs decimated resolution
-clearvars -except libraryFolder rootFolder rawName procType
-rName=strrep(rawName,'.rls','_t_K_r.mat');
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
+rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 load(rName,'results');
 
 % Pick the largest lumen (vessel) segment
@@ -207,8 +218,8 @@ drawnow
 print(f,strrep(rName,'_r.mat','_guided_trace.jpg'),'-djpeg','-r200');
 
 %% STEP 7 See the results - dynamic perfusion movie (from gsData + sMap)
-clearvars -except libraryFolder rootFolder rawName procType
-rName=strrep(rawName,'.rls','_t_K_r.mat');
+clearvars -except libraryFolder rootFolder resultsFolder rawName procType
+rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 load(rName,'results');
 
 %EDIT THESE IF YOU LIKE
@@ -269,7 +280,7 @@ if saveVideo, close(vw); fprintf('Saved perfusion movie to %s\n',vidFile); end
 % % STEP 6-7 read gsType, so re-running them now shows intensity (not 1/K^2) correctly.
 % % Re-run STEP 4 to restore the contrast/BFI perfusion movie.
 % close all
-% clearvars -except libraryFolder rootFolder rawName procType
+% clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 % s.libraryFolder=libraryFolder;
-% rName=strrep(rawName,'.rls','_t_K_r.mat');
+% rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 % runGuidedIntensity(s,{rName},{rawName}); %LAUNCHES THE PROCESSING ROUTINE

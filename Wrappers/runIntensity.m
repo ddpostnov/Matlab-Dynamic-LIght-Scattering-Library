@@ -111,13 +111,18 @@ for fidx=1:1:numel(fNames)
 
         % Save the settings and results
         reportWriting(rep);
+        % This is the ENTRY step, so this is where a raw path becomes a product path -
+        % and the only place that has to know a project may keep its results apart from
+        % its recordings.  s.fName is NOT reassigned: it stays the raw recording.  With
+        % no results folder set the name comes back verbatim.
+        outBase=getResultsPath(s.fName,s);
         if s.saveSource
             source.data=data;
             source.time=time;
-            save(strrep(s.fName,'.cxd','_I_d.mat'),'source','-v7.3','-nocompression');
+            save(strrep(outBase,'.cxd','_I_d.mat'),'source','-v7.3','-nocompression');
         end
-        save(strrep(s.fName,'.cxd','_I_r.mat'),'results','-v7.3','-nocompression');
-        save(strrep(s.fName,'.cxd','_I_s.mat'),'settings','-v7.3','-nocompression');
+        save(strrep(outBase,'.cxd','_I_r.mat'),'results','-v7.3','-nocompression');
+        save(strrep(outBase,'.cxd','_I_s.mat'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
     end
 end

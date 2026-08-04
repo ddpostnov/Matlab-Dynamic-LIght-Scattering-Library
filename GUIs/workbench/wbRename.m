@@ -9,9 +9,19 @@
 %   anything runs.  This module renames the identity, and everything named after it
 %   moves together (author decision D4, 2026-07-31).
 %
-%   THE NAME GRAMMAR IS wbFileModel'S, and it is never re-parsed here.  The identity
-%   is read off the model (.folder, .roiPrefix, .stem), the recording's folder is
-%   listed ONCE, and each new name is the old one with that identity prefix replaced
+%   IT RENAMES THE RAW DATA, AND ONLY THAT.  A project may keep its results in a
+%   folder of their own, and then a recording has two folders - the one it sits in
+%   and the one its results go to.  This plans over the first of them alone
+%   (.rawFolder).  Renaming a recording therefore BREAKS THE LINK to whatever has
+%   already been computed from it: those files keep the old name and nothing will
+%   look for them under the new one (author decision, 2026-08-03).  The caller's
+%   confirmation is where that is said - see guiWorkbench>confirmRename.  In the
+%   ordinary arrangement, where the results sit beside the recordings, the two
+%   folders are one folder and there is nothing to choose.
+%
+%   THE NAME GRAMMAR IS wbFileModel'S, and it is never re-parsed here.  The base is
+%   read off the model (.roiPrefix, .stem), the recording's raw folder is listed
+%   ONCE, and each new name is the old one with that identity prefix replaced
 %   - no name is invented any other way.  What belongs to the recording is decided
 %   twice over:
 %     * a '.mat' belongs when wbFileModel parses it to the SAME identity, so a
@@ -38,7 +48,11 @@
 %
 % Inputs:
 %    model   - a wbFileModel struct of ANY file of the recording; it supplies the
-%              folder and the identity ([roiPrefix stem]) the plan is built from.
+%              RAW folder (.rawFolder) and the identity ([roiPrefix stem]) the plan
+%              is built from.  BUILD IT KNOWING THE TWO ROOTS - a model made from a
+%              path alone has no results folder to tell the raw one apart from, so
+%              .rawFolder is simply its own folder and a project that keeps its
+%              results elsewhere would be planned over the wrong one.
 %    newStem - char, the new stem.  The 'RoiN_' crop prefix is part of the identity
 %              and is KEPT - what is being replaced is the stem alone.
 %    list    - the struct array returned by 'plan'.
@@ -59,16 +73,16 @@
 %             .why        one line, '' when .ok.
 %
 % Example:
-%    m    = wbFileModel('D:\data\PSY01_a1_t_K_r.mat');
+%    m    = wbFileModel('D:\data\PSY01_a1_t_K_r.mat', 'D:\data', 'D:\results');
 %    list = wbRename('plan', m, 'PSY01_a2');
 %    if wbRename('check', list), out = wbRename('apply', list); end
 %
-% See also: wbFileModel, wbArtifacts, guiWorkbench, wbSession
+% See also: wbFileModel, getResultsPath, wbArtifacts, guiWorkbench, wbSession
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 03-August-2026
 
 %------------- BEGIN CODE --------------
 function varargout = wbRename(action, varargin)
@@ -92,9 +106,11 @@ end
 function list = planOf(model, newStem)
 %planOf  What would move, and where to.  ONE directory listing of everything named
 %   after the recording, filtered by belongsTo, with the identity prefix swapped.
+%   THE FOLDER IS THE RECORDING'S OWN - the raw one - and it is the only one listed
+%   (see the header); when the results sit beside the recordings it is also theirs.
 list = emptyPlan();
-if isempty(model) || ~isstruct(model) || ~isfield(model,'folder'), return; end
-folder = char(model.folder);
+if isempty(model) || ~isstruct(model) || ~isfield(model,'rawFolder'), return; end
+folder = char(model.rawFolder);
 if isempty(folder) || ~isfolder(folder), return; end
 
 base    = [char(model.roiPrefix) char(model.stem)];

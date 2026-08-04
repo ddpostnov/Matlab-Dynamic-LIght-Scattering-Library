@@ -14,10 +14,20 @@
 %   one value per row across the vessel per frame - so the index finds it like any
 %   other leaf and nothing has to be read from a sibling.  The wall frame cannot be
 %   rescued the same way and is not: it is a frame of the RECORDING, and a video
-%   frame is source by definition.  What is lost is the "did it find the right edges"
-%   picture; what survives is the position-time kymograph, which still shows a wall
-%   that wandered as a stripe, and .stats.<measure>.measuredFraction / .validFraction,
-%   which carry the same fact as numbers.
+%   frame is source by definition.  What is lost HERE is the "did it find the right
+%   edges" picture; what survives here is the position-time kymograph, which still
+%   shows a wall that wandered as a stripe, and .stats.<measure>.measuredFraction /
+%   .validFraction, which carry the same fact as numbers.
+%
+%   THE PICTURE ITSELF STILL EXISTS - getMyographWallFrame (Core/Myograph) re-opens
+%   the recording and hands back one frame with that frame's own walls on it - and
+%   this module deliberately does not offer it.  The argument above was never that
+%   the picture is worthless; it is that THIS tool reads a results file and a video
+%   frame is not in one.  A step that is already holding the recording open is in a
+%   different position, so the interval editor draws it while the operator decides
+%   where the windows go, which is where that check belongs anyway.  Adding a
+%   variable here that quietly opened an '.avi' would undo the rule this whole
+%   module is built on.
 %
 %   THE NAMES.  ADDRESSING A WINDOW AND NAMING IT ARE TWO DIFFERENT JOBS, and this
 %   module keeps them apart.  myographIntervals flattens a wire recording's
@@ -57,7 +67,8 @@
 %      nm    = exMyograph('measure', fieldName)
 %
 %   INPUTS
-%     results      the RESULTS member of a myograph triplet, loaded.
+%     results      the RESULTS member of a myograph PAIR, loaded.  There is no source
+%                  member: a myograph product is _MYO_r + _MYO_s and nothing else.
 %     k            an index into the FLAT window list, as 'names' returns it.
 %     dottedPath   a descriptor path, e.g. 'channel(2).intervals(1).vasomotion.Near'.
 %     fieldName    a diameter measure's struct field: 'outer' | 'mid' | 'inner'.

@@ -2,10 +2,18 @@
 %
 %   runMyographDiameter(s,fNames) measures the outer, wall-centre and luminal
 %   diameter of every *_MYO_r.mat recording in fNames by reading its video, and
-%   writes the measured arrays into the recording's own _MYO triplet.  fNames is a
+%   writes the measured arrays into the recording's own windows.  fNames is a
 %   cell array of *_MYO_r.mat paths; the wrapper iterates them itself, so there is
 %   no launcher for-loop.  The video is found beside the product, or handed over as
 %   the optional third argument.
+%
+%   THE MEASUREMENT LIVES PER WINDOW, and there is no copy of the recording.  Each
+%   analysed window carries its own wall positions, per-line diameters, trace and
+%   statistics in results.intervals(k).diameter; nothing outside the windows is
+%   written at all, so a protocol that analyses three windows of a two-hour file
+%   keeps three windows and not two hours.  The recording itself is re-opened when
+%   a frame is wanted - it is not changed by the analysis, and copying it was the
+%   whole of the 1.7 GB the _MYO_d.mat used to be.
 %
 %   WHAT IS MEASURED - the analysed span, in this order of precedence:
 %     1. PRE-SET INTERVALS.  Windows chosen on the video before any diameter existed
@@ -20,24 +28,24 @@
 %
 %   A CROP OR A SET OF INTERVALS MAKES THE RECORDING SHORTER, EVERYWHERE.  The
 %   diameter is measured in ONE pass over the analysed span ("detect once, then
-%   slice"), and source.time is REPLACED by that span: the crop, the pre-set
-%   intervals concatenated, or the whole file.  Frames outside it are never read,
-%   never stored and never returned - measuring 200 s of a two-hour recording costs
-%   200 s of memory.  Two consequences:
+%   slice"), and that span is the crop, the pre-set intervals, or the whole file.
+%   Frames outside it are never read, never stored and never returned - measuring
+%   200 s of a two-hour recording costs 200 s of memory.  Two consequences:
 %     * TIMES STAY ABSOLUTE seconds from the start of the recording.  They are not
 %       re-based to zero, per file or per interval, so an interval can always be
 %       located back in the original footage.
-%     * WITH DISJOINT INTERVALS source.time HAS GAPS.  It is the intervals
-%       concatenated, so the sampling is uniform WITHIN an interval and jumps
-%       between them.  Every analysis reads one interval's contiguous .frames slice,
-%       so nothing ever runs across a jump - but source.fs is the authority on the
-%       sampling rate, and diff(source.time) is not.
+%     * WITH DISJOINT INTERVALS THE ANALYSED STRETCHES ARE SEPARATE, and what lies
+%       between them is not stored at all - not as a hole, not as a run of NaN.
+%       Each window carries its own contiguous .diameter.time and nothing else.
+%     * .frames IS THE WINDOW'S FRAME RANGE IN THE ORIGINAL RECORDING, [first last],
+%       1-based.  It is the only thing that can find the window in the .avi again,
+%       which is what getMyographWallFrame does with it.
 %
 %   THREE DIAMETERS, ALWAYS.  Each wall is a dark band rather than a line, so
 %   getMyographDiameter returns all three of its edges - outer, wall centre and
-%   lumen - in the third dimension of source.data, ordered like source.measures.
-%   s.edgeMode names the one this step PLOTS and the later steps analyse by default;
-%   it no longer selects what is measured.
+%   lumen - and all three are stored per window, ordered like
+%   results.recording.measures.  s.edgeMode names the one this step PLOTS and the
+%   later steps analyse by default; it no longer selects what is measured.
 %
 %   THE PER-LINE DIAMETER IS A RESULT, AND THE TRACE IS ITS POOLED FORM.  An
 %   interval's diameter block carries both, over the measured rows only (s.rowRange -
@@ -61,12 +69,24 @@
 %   The name is .lines because it reads as what it is beside its two siblings - the
 %   pooled trace .<measure> and the summary .stats.<measure> - and because 'line' is
 %   already the word the rest of the library uses for a row across the vessel.
+%   Beside them the window keeps the two WALL POSITIONS the diameter is the
+%   difference of (.wallL / .wallR, same shape), the per-point .measured flag and
+%   the per-frame .valid flag - see myographDiameterBranch, which builds the block.
 %
-%   s.keepLines false stores the trace alone, which is what every myograph result
-%   written before this step is.  It is a size decision and nothing else: the arrays
-%   are the bulk of the file (three measures over a 5000-frame, 480-line window are
-%   ~90 MB, against ~2 MB without them), and a protocol that only ever compares
-%   traces never reads them.
+%   s.keepArrays false stores the trace alone.  IT IS NOT ONLY A SIZE DECISION:
+%   there is no source copy, so a window written without its arrays can be compared
+%   as a trace and can never be analysed for propagation or per line.  The
+%   arrays are the bulk of the file (three measures of lines and two walls over a
+%   5000-frame, 480-line window are ~270 MB, against ~2 MB without them), so a
+%   protocol that only ever compares traces may still say so - knowingly.
+%
+%   HOW MUCH SMALLER THE PRODUCT IS DEPENDS ON THE PROTOCOL, and it is worth saying
+%   which way round.  The saving is the footage OUTSIDE the analysed windows, which
+%   used to be kept whole: on the reference recording, three windows of 15 946
+%   frames out of 97 433, that is 1.83 GB down to ~285 MB.  A protocol that measures
+%   the WHOLE file as one window with the default rowRange saves nothing on the
+%   arrays - it stores the same numbers in a different place - and the file grows by
+%   the wall positions.  Both are correct; only the first is a 6x.
 %
 %   INPUTS
 %     s        parameter structure - everything getMyographDiameter takes.  Carried
@@ -78,23 +98,23 @@
 %                .dustRadius   size of the dark specks removed before detection, px
 %                .tSmoothHz    how fast the diameter is allowed to change, Hz
 %                .minWallGap   smallest diameter that can be real, px
-%                .keepLines    store every line's own diameter in the results as
-%                              well as the trace (default true)
+%                .keepArrays   store every line's own diameter and the two wall
+%                              positions in the results, beside the trace (default
+%                              true)
 %              s.intervals / s.intervalNames / s.timeCrop are NOT read: the analysed
 %              span comes from the recording's own results (see above).
 %     fNames   cell array of *_MYO_r.mat paths.  Empty cells are skipped.
 %     fNamesRaw (optional) the matching raw recordings.  Omitted, each recording's
-%              own source.fName is used, and then the video sitting beside the
-%              product with the same stem.
+%              own results.recording.fName is used, and then the video sitting
+%              beside the product with the same stem.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail)
 %     and s.cancelFcn()->tf (checked between files and inside the frame loop).
 %
 %   SIDE-EFFECTS (per file)
-%     <name>_MYO_d.mat   source.time replaced by the analysed span; source.data,
-%                        .wallL, .wallR (all [T x nY x 3]), .mask [T x nY],
-%                        .valid [T x 1], .measures and .rowRange written
-%     <name>_MYO_r.mat   results.intervals(k).frames and .diameter (.time, .nY,
-%                        .lines.<measure>, .outer, .mid, .inner, .stats.<measure>)
+%     <name>_MYO_r.mat   results.recording .measures and .rowRange written;
+%                        results.intervals(k).frames and .diameter (.time, .nY,
+%                        .wallL.<measure>, .wallR.<measure>, .lines.<measure>,
+%                        .measured, .valid, .stats.<measure>, .outer, .mid, .inner)
 %     <name>_MYO_s.mat   settings.runMyographDiameter = s
 %
 %   EXAMPLE
@@ -104,8 +124,8 @@
 %     runMyographDiameter(s, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
-%     getMyographDiameter, myographMeasureIndex, myographProduct (Core/Myograph),
-%     Core/Reporting, and MATLAB's base VideoReader.
+%     getMyographDiameter, myographDiameterBranch, myographRecordingPath,
+%     myographProduct (Core/Myograph), Core/Reporting, and MATLAB's base VideoReader.
 %
 % See also: runMyographVideo, runMyographPropagation, runMyographVasomotion,
 %           getMyographDiameter, myographProduct
@@ -113,7 +133,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 03-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -126,7 +146,7 @@
 % s.dustRadius=8;         % dark specks up to this size are removed (0 = off)
 % s.tSmoothHz=1;          % the diameter cannot change faster than this, Hz
 % %ADJUSTED IF NECESSARY - What is kept
-% s.keepLines=true;       % keep every line's own diameter, not only the trace
+% s.keepArrays=true;      % keep every line's own diameter and wall positions, not only the trace
 
 function runMyographDiameter(s,fNames,fNamesRaw)
 
@@ -147,15 +167,16 @@ for fidx=1:1:numel(fNames)
     if isempty(fNames{fidx}), continue; end
     fName=char(fNames{fidx});
     reportFile(rep,fidx,fName);
-    clearvars source results settings
+    clearvars results settings
 
-    [source,results,settings]=myographProduct('open',fName);
-    rawName=rawRecording(source,fNamesRaw,fidx,fName);
+    [results,settings]=myographProduct('open',fName);
+    rec=fieldOr(results,'recording',struct());
+    rawName=rawRecording(rec,fNamesRaw,fidx,fName);
 
     % ---- the settings this recording is measured with ----
     sFile=s; sFile.fName=fName;
     if ~isfield(sFile,'rowRange') || isempty(sFile.rowRange)
-        sFile.rowRange=fieldOr(source,'rowRange',[1 Inf]);
+        sFile.rowRange=fieldOr(rec,'rowRange',[1 Inf]);
     end
 
     % ---- the analysed span: pre-set intervals, else the crop, else the whole file --
@@ -165,27 +186,22 @@ for fidx=1:1:numel(fNames)
 
     ivs=getMyographDiameter(sCore,rawName);
 
-    % ---- SOURCE: the analysed span, and the arrays measured over it ---------------
+    % ---- RESULTS: the row band and the measures onto the recording, and each -----
+    % ---- window's own measurement into the window itself ------------------------
     % getMyographDiameter hands back one struct per interval, each exactly as long as
-    % that interval has frames, so the span is a CONCATENATION of what it returned -
-    % never a full-length array with holes in it.
-    source.time=vertcat(ivs.time);
-    source.data=cat(1,ivs.diameter);
-    source.wallL=cat(1,ivs.idxL);
-    source.wallR=cat(1,ivs.idxR);
-    source.mask=logical(cat(1,ivs.mask));
-    source.valid=logical(vertcat(ivs.valid));
-    source.measures=ivs(1).measures;
-    source.rowRange=sCore.rowRange;
+    % that interval has frames, so nothing here is a full-length array with holes in
+    % it - the windows ARE the storage, and what falls between them is not written.
+    rec.measures=ivs(1).measures;
+    rec.rowRange=sCore.rowRange;
+    results.recording=rec;
 
-    % ---- RESULTS: each interval's frame range into that span, and its traces ------
-    rows=measuredRows(sCore.rowRange,size(source.data,2));
-    results.intervals=fillIntervals(asked,ivs,rows,wantLines(sFile));
+    rows=measuredRows(sCore.rowRange,size(ivs(1).diameter,2));
+    results.intervals=fillIntervals(asked,ivs,rows,wantArrays(sFile));
 
     settings.runMyographDiameter=reportSettings(sFile);
 
     reportWriting(rep);
-    myographProduct('save',fName,source,results,settings);
+    myographProduct('save',fName,results,settings);
     reportSaved(rep);
 end
 reportClose(rep);
@@ -230,16 +246,18 @@ end
 end
 
 % =====================================================================
-function out=fillIntervals(asked,ivs,rows,keepLines)
-%fillIntervals  One results.intervals element per measured interval: its frame range
-%   into the span source.time now holds, and its line-averaged traces + statistics.
+function out=fillIntervals(asked,ivs,rows,keepArrays)
+%fillIntervals  One results.intervals element per measured interval: its own
+%   measurement, and its FRAME RANGE IN THE ORIGINAL RECORDING.  The core returns
+%   that range because it is the only function that ever saw the recording's frame
+%   axis; nothing downstream could work it out from the windows alone, and it is
+%   what re-opens the video at the right frame.
 %   WITH NO INTERVALS DEFINED the whole span is a single interval, named for what it
 %   is.  A window that WAS asked for keeps its name and its tStart/tEnd - those are
 %   the user's definition of it, and this step measures the window rather than
 %   redefines it; .frames and .diameter.time carry what was actually measured.
 %   'asked' comes straight from analysedSpan, element for element with ivs.
 out=myographProduct('intervals');
-i0=1;
 for k=1:1:numel(ivs)
     n=numel(ivs(k).time);
     if k<=numel(asked)
@@ -254,79 +272,48 @@ for k=1:1:numel(ivs)
         out(k).channels={};
         if n>0, out(k).tStart=ivs(k).time(1); out(k).tEnd=ivs(k).time(end); end
     end
-    out(k).frames=[i0 i0+n-1];
-    out(k).diameter=diameterBranch(ivs(k),rows,keepLines);
+    out(k).frames=fieldOr(ivs(k),'frames',[]);
+    out(k).diameter=diameterBranch(ivs(k),rows,keepArrays);
     % the two analyses downstream are re-derived from the diameter that has just
     % been measured, so anything an earlier run left behind is now out of date
     out(k).propagation=[];
     out(k).vasomotion=[];
-    i0=i0+n;
 end
 end
 
 % =====================================================================
-function d=diameterBranch(iv,rows,keepLines)
-%diameterBranch  The interval's own measurement: EVERY LINE'S OWN DIAMETER over the
-%   rows that were really measured, the same numbers averaged along the vessel, and
-%   the statistics a protocol is compared on.
-%
-%   THE TWO ARE ONE QUANTITY, and the pooled one is written rather than derived so a
-%   protocol never depends on a reader reproducing the reduction.  Only the rows in
-%   s.rowRange are stored, which is what makes size(.lines.<measure>,2) equal .nY by
-%   construction rather than by a consumer re-deriving the row range.
-%
-%   THE ARRAY IS THE FILLED ONE - the numbers the trace is the mean of, interpolated
-%   fill included.  NaN-ing the fill would make the pooled form of .lines disagree
-%   with .<measure> (measured on the reference recording: up to 1.19 px, 0.3%), and
-%   the two claiming to be one quantity is the whole point.  How much of the window
-%   was really measured is not lost: it is .stats.<measure>.measuredFraction.
-d=struct('time',[],'nY',0,'lines',struct(),'stats',struct());
+function d=diameterBranch(iv,rows,keepArrays)
+%diameterBranch  The interval's own measurement, sliced to the rows that were really
+%   measured and handed to the ONE builder that decides what a diameter block is.
+%   cutMyographIntervals calls the same builder when a boundary moves, which is what
+%   keeps a measured window and a re-cut one the same struct rather than two structs
+%   that happen to agree today.
 meas=iv.measures;
 r=rows(rows<=size(iv.diameter,2));
 if isempty(r), r=1:size(iv.diameter,2); end
-d.time=iv.time(:);
-d.nY=numel(r);
-valid=logical(iv.valid(:));
-for m=1:1:numel(meas)
-    lines=iv.diameter(:,r,m);                       % [frames x lines], as measured
-    if keepLines, d.lines.(meas{m})=single(lines); end
-    trace=mean(double(lines),2,'omitnan');
-    d.(meas{m})=trace;
-    d.stats.(meas{m})=traceStats(trace,valid,iv.mask(:,r));
+nM=numel(meas);
+[lines,wl,wr]=deal(cell(1,nM));
+for m=1:1:nM
+    lines{m}=iv.diameter(:,r,m);                    % [frames x lines], as measured
+    if keepArrays
+        wl{m}=iv.idxL(:,r,m);
+        wr{m}=iv.idxR(:,r,m);
+    end
 end
-% A run that did not keep them leaves no empty container behind: an absent .lines is
-% what every myograph result written before this step looks like, and it is what
-% tells a reader that the trace is the only form of the quantity in this file.
-if ~keepLines, d=rmfield(d,'lines'); end
+% The mask goes across whether or not the arrays are kept: it is what
+% .stats.<measure>.measuredFraction is computed from, and that number is what says
+% how much of the window was really seen.
+d=myographDiameterBranch(iv.time,numel(r),meas,lines,wl,wr, ...
+    iv.mask(:,r),iv.valid,keepArrays);
 end
 
 % =====================================================================
-function tf=wantLines(s)
-%wantLines  Whether every line's own diameter is stored beside the trace.  DEFAULT
-%   ON, and absent counts as on: the arrays are the measurement, and a protocol
-%   written before the setting existed should get them rather than have to ask.
-v=fieldOr(s,'keepLines',true);
+function tf=wantArrays(s)
+%wantArrays  Whether the per-point arrays are stored beside the trace.  DEFAULT ON,
+%   and absent counts as on: the arrays ARE the measurement, so a protocol that says
+%   nothing gets them rather than has to ask for them.
+v=fieldOr(s,'keepArrays',[]);
 if isempty(v), tf=true; else, tf=logical(v(1)); end
-end
-
-% =====================================================================
-function st=traceStats(trace,valid,mask)
-%traceStats  What a protocol compares: the level, the swing and how much of it was
-%   actually seen.  OFF-FOV FRAMES ARE EXCLUDED from the level and the swing - a
-%   wall that dilated out of view leaves an edge-clamped lower bound behind, and
-%   averaging it in would report a constriction that never happened.  How many such
-%   frames there were is not hidden: it is validFraction.
-if isempty(valid) || numel(valid)~=numel(trace), valid=true(size(trace)); end
-v=trace(valid); v=v(isfinite(v));
-st=struct('mean',NaN,'std',NaN,'min',NaN,'max',NaN,'amplitude',NaN, ...
-    'measuredFraction',NaN,'validFraction',NaN);
-if ~isempty(v)
-    st.mean=mean(v);  st.std=std(v);
-    st.min=min(v);    st.max=max(v);
-    st.amplitude=st.max-st.min;
-end
-if ~isempty(mask), st.measuredFraction=mean(double(mask(:))); end
-if ~isempty(trace), st.validFraction=mean(double(valid)); end
 end
 
 % =====================================================================
@@ -340,22 +327,16 @@ if ~(r1>=r0), rows=1:nY; else, rows=r0:r1; end
 end
 
 % =====================================================================
-function raw=rawRecording(source,fNamesRaw,fidx,fName)
+function raw=rawRecording(rec,fNamesRaw,fidx,fName)
 %rawRecording  THE VIDEO this product was made from: the list the caller passed, the
-%   path the entry step recorded, or the video sitting beside the product.  The
-%   recorded path is tried before the neighbours because it is the only one that
-%   knows the original container's extension.
+%   path the entry step recorded, or the video sitting beside the product - in that
+%   order, which myographRecordingPath owns so that every step of this branch looks
+%   in the same places.  A step that looked somewhere else would refuse over a file
+%   another step is happily reading.
 raw='';
 if numel(fNamesRaw)>=fidx && ~isempty(fNamesRaw{fidx}), raw=char(fNamesRaw{fidx}); end
-if isempty(raw) || ~isfile(raw), raw=char(fieldOr(source,'fName','')); end
-if isempty(raw) || ~isfile(raw)
-    [fPath,stem]=fileparts(regexprep(fName,'_MYO_[drs]\.mat$',''));
-    for ext={'.avi','.mp4','.mov','.mkv'}
-        cand=fullfile(fPath,[stem ext{1}]);
-        if isfile(cand), raw=cand; break; end
-    end
-end
-if isempty(raw) || ~isfile(raw)
+raw=myographRecordingPath(struct('recording',rec),fName,raw);
+if isempty(raw)
     error('runMyographDiameter:noRecording', ...
         ['The video this data came from was not found next to %s.  ' ...
          'Keep the recording beside its results, or pass the paths as the third argument.'],fName);
