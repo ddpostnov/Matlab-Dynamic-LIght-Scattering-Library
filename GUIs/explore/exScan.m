@@ -21,7 +21,7 @@
 %
 %     TEXT AND CELL LEAVES ARE LABELS, NEVER VARIABLES.  method, direction,
 %     speedUnit, confidenceLevel, confidenceText, qualityFlags, channelName,
-%     gsType, name, and the string columns of the metrics tables.  One of them
+%     name, and the string columns of the metrics tables.  One of them
 %     matters enough to keep: channelName is the REAL name of a wire channel
 %     ('channel 1') whose struct field has been sanitised ('channel1'), and the
 %     user must see the former - so it rides on the descriptor as .signalLabel.

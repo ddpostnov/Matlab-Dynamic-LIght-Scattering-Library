@@ -7,8 +7,10 @@
 %   only available at the decimated frame rate.  runGuidedIntensity streams the
 %   raw file in batches and, for each frame, averages the valid pixels of every
 %   region.  The per-region traces are stored at maximum temporal resolution in
-%   results.gsData with the matching time vector results.gsTime (and
-%   results.gsType = "intensity").
+%   results.gsData with the matching time vector results.gsTime.  That gsData
+%   holds INTENSITY is said by settings.runGuidedIntensity: the guided step
+%   leaves exactly one of runGuidedContrast / runGuidedIntensity in the settings,
+%   and that is the library's only record of which quantity the traces are.
 %
 %   "Valid" pixels are those that share the region label in results.sMap AND are
 %   kept in results.mask.  The columns of results.gsData are aligned with the
@@ -37,9 +39,9 @@
 %    s.cancelFcn()->tf.
 %
 % Outputs:
-%    (none) - updates each *_r.mat with results.gsData [nFrames x nRegions],
-%             results.gsTime [nFrames x 1] and results.gsType, and records
-%             settings.runGuidedIntensity.
+%    (none) - updates each *_r.mat with results.gsData [nFrames x nRegions] and
+%             results.gsTime [nFrames x 1], and records settings.runGuidedIntensity,
+%             removing settings.runGuidedContrast if an earlier run left one.
 %
 % Example:
 %    s.libraryFolder = libraryFolder;
@@ -139,11 +141,16 @@ for fidx=1:1:numel(fNames)
 
         results.gsData=gsData;
         results.gsTime=toSeconds(timeStamps,cfg);
-        results.gsType="intensity";
 
-        % Save the settings and results
+        % Save the settings and results.  The settings are the only record of which
+        % quantity gsData holds, so the sibling wrapper's entry goes when this one is
+        % written - re-running the guided step the other way round must leave ONE
+        % answer standing, not two.
         s.rawFrameRate=1./median(diff(results.gsTime));
         settings.runGuidedIntensity=reportSettings(s);
+        if isfield(settings,'runGuidedContrast')
+            settings=rmfield(settings,'runGuidedContrast');
+        end
         reportWriting(rep);
         save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
         save(s.fName,'results','-v7.3','-nocompression');

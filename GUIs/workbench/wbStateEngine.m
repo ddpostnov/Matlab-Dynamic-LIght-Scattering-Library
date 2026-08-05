@@ -57,8 +57,23 @@
 %                  settings struct s (from wbSettingsModel).  Used only for the
 %                  staleness fingerprint; omit/[] to skip (done stays done).
 %    opts        - (optional) struct with:
-%                    .sData       containers.Map name->settings struct, injected in
-%                                 place of a disk scan (for pure unit tests).
+%                    .sScan       a shared scan of the disk, as a struct of two
+%                                 containers.Maps, both filled on first miss:
+%                                   .listing   resultsFolder -> its settings files,
+%                                              parsed (one dir per folder)
+%                                   .settings  a settings file's path -> what it
+%                                              holds (one load per file)
+%                                 A caller asking about many files of ONE project
+%                                 hands in one empty pair and each folder is listed
+%                                 once and each file read once, for all of them.  It
+%                                 fills itself, so no caller has to predict which
+%                                 folders a working set spans.  Absent = a fresh
+%                                 scan per call, which is what a single query wants.
+%                                 WHAT IS SHARED IS THE DISK READ AND NEVER THE
+%                                 ANSWER: the two tests that decide which of a
+%                                 folder's settings files count for the queried file
+%                                 (same recording, same pipeline) run on every call
+%                                 over every candidate - see gatherSettings.
 %                    .plannedIds  cellstr of step ids THIS FILE'S configuration will
 %                                 run in the sequence about to be executed.  They
 %                                 count as satisfied prerequisites (see above); they
@@ -76,7 +91,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 28-July-2026
+% Last revision: 05-August-2026
 
 %------------- BEGIN CODE --------------
 function st = wbStateEngine(model, reg, curSettings, opts)
@@ -174,27 +189,31 @@ function [doneFields, storedMap] = gatherSettings(model, reg, opts)
 %gatherSettings  Union of settings fields across THIS FILE's pipeline (D6/D8).
 %   Same recording, and - when the queried file sits on a pipeline of its own -
 %   not on a different one: see samePipeline.
+%
+%   WHAT THE DISK SAYS IS SHARED; WHAT IT MEANS IS NOT.  Three things happen here
+%   and they belong to three different owners:
+%     the LISTING and the parses  belong to the FOLDER  - read once per folder;
+%     one settings file's BYTES   belong to that FILE   - read once per file;
+%     the two tests below         belong to the ASKING MODEL - run on every call.
+%   The workbench asks this question ninety times per repaint about one folder, and
+%   the first two were the same answer computed ninety times over.  The third is
+%   NOT the same answer: hoist it, or pre-filter the listing, and a settings file
+%   reaches the wrong pipeline and a half-processed recording reads as done.
+%
+%   THE LOAD SITS BEHIND THE FILTERS, WHERE IT ALWAYS DID.  Reading every file in
+%   the listing up front would be simpler and is wrong: a working set of two
+%   recordings taken from a folder of two hundred would read two hundred settings
+%   files to use four.  A file is read when some model first wants it, and then
+%   remembered - so a whole-project repaint still reads each file exactly once.
 doneFields = {};
 storedMap  = containers.Map('KeyType','char','ValueType','any');
 
-if isfield(opts,'sData') && ~isempty(opts.sData)
-    % injected: containers.Map name -> settings struct
-    names = keys(opts.sData);
-    for i = 1:numel(names)
-        settings = opts.sData(names{i});
-        [doneFields, storedMap] = absorb(settings, doneFields, storedMap);
-    end
-    return
-end
-
-% the SETTINGS files are products, so they are in the results folder - which is the
-% recording's own folder unless the project keeps its results apart (wbFileModel)
-if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
+cands = folderListing(model, opts);
+if isempty(cands), return; end
 rawBr = rawBranches(reg);
 base  = [model.roiPrefix model.stem];
-d = dir(fullfile(model.resultsFolder,'*_s.mat'));
-for i = 1:numel(d)
-    cand = wbFileModel(fullfile(d(i).folder, d(i).name));
+for i = 1:numel(cands)
+    cand = cands{i};
     if ~strcmp(cand.role,'s'), continue; end
     % THE BASE, NOT THE IDENTITY.  An identity carries the folder, and the folder is
     % a tautology here - every candidate came out of this one listing - so comparing
@@ -203,13 +222,66 @@ for i = 1:numel(d)
     % scanned from the raw one, and then it would reject every settings file there.
     if ~strcmp([cand.roiPrefix cand.stem], base), continue; end   % same recording only
     if ~samePipeline(model, cand, rawBr), continue; end        % same pipeline only
-    try
-        S = load(fullfile(d(i).folder, d(i).name),'settings');
-    catch
-        continue
-    end
-    if ~isfield(S,'settings'), continue; end
-    [doneFields, storedMap] = absorb(S.settings, doneFields, storedMap);
+    [doneFields, storedMap] = absorb(settingsOf(cand, opts), doneFields, storedMap);
+end
+end
+
+% =====================================================================
+function cands = folderListing(model, opts)
+%folderListing  The settings files of one results folder, parsed - once per folder.
+%   The SETTINGS files are products, so they are in the results folder, which is the
+%   recording's own folder unless the project keeps its results apart (wbFileModel).
+%
+%   IT IS A SHARED SCAN, NOT A CACHE.  opts.sScan belongs to the caller and lives
+%   exactly as long as the answers it feeds: the workbench builds an empty one at the
+%   top of a repaint and drops it at the bottom, so there is no moment at which it
+%   can disagree with the disk and no invalidation rule to get wrong.  Given no map
+%   at all - a bare query, a test, anything outside a repaint - the folder is read
+%   here and thrown away, which is what this function always did.
+cands = {};
+folder = model.resultsFolder;
+if isempty(folder), return; end
+sc = scanOf(opts);
+if ~isempty(sc) && isKey(sc.listing, folder), cands = sc.listing(folder); return; end
+if isfolder(folder)
+    d = dir(fullfile(folder,'*_s.mat'));
+    cands = cell(1,numel(d));
+    for i = 1:numel(d), cands{i} = wbFileModel(fullfile(d(i).folder, d(i).name)); end
+end
+% containers.Map is a HANDLE, so the caller's map is filled by this write and the
+% next of its ninety questions about this folder is answered from memory.
+if ~isempty(sc), sc.listing(folder) = cands; end
+end
+
+% =====================================================================
+function settings = settingsOf(cand, opts)
+%settingsOf  One settings file's contents, read once however many models ask.
+%   Three of a repaint's questions reach the same file - the recording's row, the
+%   file itself, and its branch - so the read is memoised by PATH, which is the only
+%   thing it depends on.  A file that cannot be read answers [], and absorb ignores
+%   that exactly as the loop used to skip it.
+sc = scanOf(opts);
+if ~isempty(sc) && isKey(sc.settings, cand.path), settings = sc.settings(cand.path); return; end
+settings = [];
+try
+    S = load(cand.path,'settings');
+    if isfield(S,'settings'), settings = S.settings; end
+catch
+end
+if ~isempty(sc), sc.settings(cand.path) = settings; end
+end
+
+% =====================================================================
+function sc = scanOf(opts)
+%scanOf  The caller's shared scan, or [] when it did not offer one.  Both members
+%   must be there and both must be maps: a half-built scan would silently memoise
+%   one half of the work and re-read the other on every call.
+sc = [];
+if ~isstruct(opts) || ~isfield(opts,'sScan'), return; end
+v = opts.sScan;
+if isstruct(v) && isscalar(v) && isfield(v,'listing') && isfield(v,'settings') && ...
+        isa(v.listing,'containers.Map') && isa(v.settings,'containers.Map')
+    sc = v;
 end
 end
 

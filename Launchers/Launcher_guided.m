@@ -171,15 +171,16 @@ print(f,strrep(rName,'_r.mat','_guided_overview.jpg'),'-djpeg','-r200');
 clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 load(rName,'results');
+load(getProductPath(rName,'s'),'settings'); %the settings member of the same product
 
 % Pick the largest lumen (vessel) segment
 isLumen=results.sMetrics.category==5;
 area=results.sMetrics.area; area(~isLumen)=-Inf;
 [~,li]=max(area);
 
-% results.gsType tells us whether gsData holds contrast or intensity, so the
-% plot always shows the right quantity (contrast -> BFI = 1/K^2).
-isContrast = ~isfield(results,'gsType') || strcmp(string(results.gsType),"contrast");
+% Which guided step ran is what gsData holds, and the settings are where that is
+% written, so the plot always shows the right quantity (contrast -> BFI = 1/K^2).
+isContrast = ~isfield(settings,'runGuidedIntensity');
 tHD=results.gsTime;                                       % full temporal resolution
 if isContrast
     yHD=1./results.gsData(:,li).^2; yLab='BFI (1/K^2)';
@@ -221,6 +222,7 @@ print(f,strrep(rName,'_r.mat','_guided_trace.jpg'),'-djpeg','-r200');
 clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 rName=strrep(getResultsPath(rawName,rootFolder,resultsFolder),'.rls','_t_K_r.mat'); %the product of the recording, wherever the results go
 load(rName,'results');
+load(getProductPath(rName,'s'),'settings'); %the settings member of the same product
 
 %EDIT THESE IF YOU LIKE
 frameStride=2;   % show every Nth frame (2 keeps the movie short)
@@ -228,10 +230,10 @@ fps=25;          % playback / video frames per second
 smoothWin=5;     % cosmetic temporal smoothing (frames); 1 = none
 saveVideo=true;  % also write an MP4 next to the data
 
-% Reconstruct the per-segment field and paint it back onto the segments.
-% results.gsType decides what is shown: contrast -> perfusion (BFI = 1/K^2),
+% Reconstruct the per-segment field and paint it back onto the segments.  Which
+% guided step ran decides what is shown: contrast -> perfusion (BFI = 1/K^2),
 % intensity -> mean intensity.
-isContrast = ~isfield(results,'gsType') || strcmp(string(results.gsType),"contrast");
+isContrast = ~isfield(settings,'runGuidedIntensity');
 if isContrast
     field=1./results.gsData.^2; cbLab='BFI (1/K^2)'; titlePrefix='Dynamic perfusion';
 else
@@ -276,9 +278,10 @@ end
 if saveVideo, close(vw); fprintf('Saved perfusion movie to %s\n',vidFile); end
 
 % %% STEP 8 (OPTIONAL) Guided mean INTENSITY instead of contrast
-% % This replaces results.gsData with intensity and sets results.gsType="intensity".
-% % STEP 6-7 read gsType, so re-running them now shows intensity (not 1/K^2) correctly.
-% % Re-run STEP 4 to restore the contrast/BFI perfusion movie.
+% % This replaces results.gsData with intensity and records settings.runGuidedIntensity
+% % in place of settings.runGuidedContrast.  STEP 6-7 read the settings, so re-running
+% % them now shows intensity (not 1/K^2) correctly.  Re-run STEP 4 to go back to
+% % contrast - it puts settings.runGuidedContrast back and drops the intensity entry.
 % close all
 % clearvars -except libraryFolder rootFolder resultsFolder rawName procType
 % s.libraryFolder=libraryFolder;

@@ -8,9 +8,9 @@
 %   branch main - see claude-docs/processing-workbench/01-pipeline-map.md.
 %
 %   Steps are listed in dependency order, speckle first and then the myograph:
-%     contrast · internalCycle · externalCycle · setRegions · segmentation ·
+%     contrast · internalCycle · setRegions · segmentation · externalCycle ·
 %     dynamicSegmentation · guided · registration · BFI · vasomotion ·
-%     pulsatility · vesselTypes · vascularTree ·
+%     pulsatility · fitNVC · fitVasoreactivity · vesselTypes · vascularTree ·
 %     myoVideo · labChart · myoPresetIntervals · myoCrop · myoDiameter ·
 %     myoIntervals · myoPropagation · myoVasomotion
 %
@@ -380,45 +380,7 @@ s.tips=struct('method','sLSCIMM recommended; ltLSCIMM for high-quality data', ..
     'minTrust','per-pixel trust in relation to dark/saturated frame fraction');
 reg(end+1)=s;
 
-% ---- 3. externalCycle (NVC) -------------------------------------------------
-s = base();
-s.id='externalCycle'; s.label='External cycle'; s.wrapper=@runExternalCycle;
-% external/epoch cycle of the contrast side (t or s): the stage flag BECOMES e,
-% i.e. the single suffix _e_K (the contrast base is kept in the settings, not the
-% name - see wbFileModel rationale)
-s.inGlob='*_K_r.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
-s.outTransform=struct('from','_t_K_r.mat','to','_e_K_r.mat');   % replaces the t|s flag with e
-s.gatingField='externalCycle';                       % REAL field (differs from fn name)
-s.requires={'contrast'}; s.produces={'epochAvg'};
-s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
-s.artifacts={'_rep_epochs.jpg','_rep_epoch-average.jpg'};
-s.legacyArtifacts={'_ec.jpg','_ec2.jpg'}; s.branch='contrast';
-s.fileOrder='ordered';                               % the stimulus timing is a PER-FILE list
-                                                     % indexed by position in fNames
-
-s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDurationSec', ...
-                     'epochBaselineSec','epochStimStartSec','stimDurationSec','epochFinaleSec'};
-                  'Masking',{'maskType','enablelRejectionModification'};
-                  'Rejection',{'rejectBlCoef','rejectEpochCoef','rejectFinCoef','rejectPeakCoef', ...
-                     'rejectBlSimCoef','rejectSimCoef','rejectTimeLoss','rejectFirstEpoch'} };
-s.basicFields={'stimStartType','stimOffset','epochsN','epochDurationSec','epochBaselineSec','epochStimStartSec','stimDurationSec','epochFinaleSec','maskType','enablelRejectionModification'};
-s.sharedKeys={'libraryFolder'};
-s.enums=struct('stimStartType',{{'offset','manual'}},'maskType',{{'basic','cMask','selection'}});
-s.presets=struct('default',struct('stimStartType','offset','stimOffset',0,'epochsN',20, ...
-    'epochDurationSec',30,'epochBaselineSec',[0 10],'epochStimStartSec',10,'stimDurationSec',5, ...
-    'epochFinaleSec',[-5 0], ...
-    'maskType','cMask','enablelRejectionModification',1,'rejectBlCoef',1,'rejectEpochCoef',1, ...
-    'rejectFinCoef',1,'rejectPeakCoef',1,'rejectBlSimCoef',1,'rejectSimCoef',1, ...
-    'rejectTimeLoss',0.5,'rejectFirstEpoch',1));
-s.tips=struct('maskType','''cMask'' reads the segmentation mask; ''basic'' the contrast mask', ...
-    'enablelRejectionModification','1 = interactive epoch-rejection editing', ...
-    'stimStartType','''offset'' (fixed delay) or ''manual'' (timestamp list)', ...
-    'stimDurationSec',['how long the stimulus lasts, seconds.  This step does not use ' ...
-       'it - it is recorded here so the response fit reads the protocol instead of ' ...
-       'being told it again']);
-reg(end+1)=s;
-
-% ---- 4. setRegions ----------------------------------------------------------
+% ---- 3. setRegions ----------------------------------------------------------
 s = base();
 s.id='setRegions'; s.label='Regions'; s.wrapper=@setRegions;
 s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -441,7 +403,7 @@ s.presets=struct('default',struct('nRegions',1));     % the wrapper's own defaul
 s.tips=struct('nRegions','how many regions you may draw on each recording');
 reg(end+1)=s;
 
-% ---- 5. segmentation --------------------------------------------------------
+% ---- 4. segmentation --------------------------------------------------------
 s = base();
 s.id='segmentation'; s.label='Segmentation'; s.wrapper=@runSegmentation;
 s.inGlob='*_K_r.mat'; s.outSuffix={}; s.outKind='inplace';
@@ -474,6 +436,50 @@ s.tips=struct('lSizeN','odd, ~2x the largest vessel', ...
     'sMinL','minimum segment length', ...
     'prchNSize','parenchymal pixel neighbourhood', ...
     'parforSegmentationLabels',parforTip('the per-segment label growing'));
+reg(end+1)=s;
+
+% ---- 5. externalCycle (NVC) -------------------------------------------------
+s = base();
+s.id='externalCycle'; s.label='External cycle'; s.wrapper=@runExternalCycle;
+% external/epoch cycle of the contrast side (t or s): the stage flag BECOMES e,
+% i.e. the single suffix _e_K (the contrast base is kept in the settings, not the
+% name - see wbFileModel rationale)
+% AFTER THE SEGMENTATION, not before it (author, 2026-08-04), which is the order the
+% NVC launcher has always run in: the default maskType 'cMask' is the mask the
+% segmentation writes, so averaging the epochs first leaves that mask unbuilt.  It
+% stays requires={'contrast'} rather than gaining a hard 'segmentation', because
+% maskType 'basic' averages on the contrast mask alone and that protocol is real -
+% the order says which one comes first, the prerequisite says which is compulsory.
+s.inGlob='*_K_r.mat'; s.outSuffix={'_e_K_d','_e_K_r','_e_K_s'}; s.outKind='new';
+s.outTransform=struct('from','_t_K_r.mat','to','_e_K_r.mat');   % replaces the t|s flag with e
+s.gatingField='externalCycle';                       % REAL field (differs from fn name)
+s.requires={'contrast'}; s.produces={'epochAvg'};
+s.interactive=@(ss) isfield(ss,'enablelRejectionModification') && isequal(ss.enablelRejectionModification,1);
+s.artifacts={'_rep_epochs.jpg','_rep_epoch-average.jpg'};
+s.legacyArtifacts={'_ec.jpg','_ec2.jpg'}; s.branch='contrast';
+s.fileOrder='ordered';                               % the stimulus timing is a PER-FILE list
+                                                     % indexed by position in fNames
+
+s.settingGroups={ 'Stimulation',{'stimStartType','stimOffset','epochsN','epochDurationSec', ...
+                     'epochBaselineSec','epochStimStartSec','stimDurationSec','epochFinaleSec'};
+                  'Masking',{'maskType','enablelRejectionModification'};
+                  'Rejection',{'rejectBlCoef','rejectEpochCoef','rejectFinCoef','rejectPeakCoef', ...
+                     'rejectBlSimCoef','rejectSimCoef','rejectTimeLoss','rejectFirstEpoch'} };
+s.basicFields={'stimStartType','stimOffset','epochsN','epochDurationSec','epochBaselineSec','epochStimStartSec','stimDurationSec','epochFinaleSec','maskType','enablelRejectionModification'};
+s.sharedKeys={'libraryFolder'};
+s.enums=struct('stimStartType',{{'offset','manual'}},'maskType',{{'basic','cMask','selection'}});
+s.presets=struct('default',struct('stimStartType','offset','stimOffset',0,'epochsN',20, ...
+    'epochDurationSec',30,'epochBaselineSec',[0 10],'epochStimStartSec',10,'stimDurationSec',5, ...
+    'epochFinaleSec',[-5 0], ...
+    'maskType','cMask','enablelRejectionModification',1,'rejectBlCoef',1,'rejectEpochCoef',1, ...
+    'rejectFinCoef',1,'rejectPeakCoef',1,'rejectBlSimCoef',1,'rejectSimCoef',1, ...
+    'rejectTimeLoss',0.5,'rejectFirstEpoch',1));
+s.tips=struct('maskType','''cMask'' reads the segmentation mask; ''basic'' the contrast mask', ...
+    'enablelRejectionModification','1 = interactive epoch-rejection editing', ...
+    'stimStartType','''offset'' (fixed delay) or ''manual'' (timestamp list)', ...
+    'stimDurationSec',['how long the stimulus lasts, seconds.  This step does not use ' ...
+       'it - it is recorded here so the response fit reads the protocol instead of ' ...
+       'being told it again']);
 reg(end+1)=s;
 
 % ---- 6. dynamicSegmentation -------------------------------------------------

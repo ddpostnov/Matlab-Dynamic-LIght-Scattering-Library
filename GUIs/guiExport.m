@@ -54,20 +54,38 @@
 %   .files .opts .previewTable .run - so the tool is fully headless-testable
 %   (claude-tests/Workbench/testExportTool.m), exactly like guiExplore's API.
 %
+% NO LAUNCHER IS NEEDED TO OPEN IT
+%   Every time this window opens it puts the library on the MATLAB path itself, from
+%   its own location (setLibraryPath), so typing guiExport in a fresh MATLAB is the
+%   whole of the setup - and a stale copy of the library left on the path by an
+%   earlier session is corrected rather than quietly used.
+%
 % Syntax:
 %    guiExport                        % open the tool
 %    guiExport(sessionPath)           % open it ON a workbench session
 %    h = guiExport('Visible','off')   % headless (programmatic drive / tests)
 %
-% See also: exportToExcel, wbSession, guiExplore, guiWorkbench, getFileNamesList
+% See also: exportToExcel, wbSession, guiExplore, guiWorkbench, getFileNamesList,
+%           setLibraryPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 29-July-2026
+% Last revision: 04-August-2026
 
 %------------- BEGIN CODE --------------
 function h = guiExport(varargin)
+
+% ---- THE LIBRARY PATH, SET FROM THIS FILE'S OWN LOCATION -------------------
+% A front window is usually the FIRST thing typed into a fresh MATLAB, with no
+% launcher run and often nothing on the path but the folder this file is in, so it
+% puts the library there itself instead of assuming somebody already did.
+% Utilities goes on first because that is where setLibraryPath lives; setLibraryPath
+% then does the rest, and keeps the .claude tooling copies OFF the path - they hold
+% whole checkouts of this library at older commits and SHADOW it silently.
+libraryFolder = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(libraryFolder,'Utilities'));
+setLibraryPath(libraryFolder);
 
 [sessionArg, vis] = parseArgs(varargin);
 

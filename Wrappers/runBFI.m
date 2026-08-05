@@ -10,6 +10,11 @@
 %       *_BFI_s.mat   SETTINGS – original parameter struct plus the
 %                                sub-field settings.calculateBFI
 %
+%   THE SWEEP TAKES results.gsData WITH THE REST, and that is correct: this step
+%   runs on a *_K_ product, whose guided traces are contrast.  The product name
+%   is the whole answer to what a field holds - a *_BFI_* file is blood-flow
+%   index throughout, a *_K_* file is contrast throughout.
+%
 %   By default (s.deleteOriginal == true) the original *_K_d / *_K_r /
 %   *_K_s triplet is deleted after successful conversion.
 %

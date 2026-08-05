@@ -9,7 +9,10 @@
 %   region as the coefficient of variation (std/mean) over that region's valid
 %   pixels.  The result is a set of per-region traces at maximum temporal
 %   resolution, stored in results.gsData with the matching time vector
-%   results.gsTime (and results.gsType = "contrast").
+%   results.gsTime.  That gsData holds CONTRAST is said by
+%   settings.runGuidedContrast: the guided step leaves exactly one of
+%   runGuidedContrast / runGuidedIntensity in the settings, and that is the
+%   library's only record of which quantity the traces are.
 %
 %   "Valid" pixels are those that share the region label in results.sMap AND are
 %   kept in results.mask.  The columns of results.gsData are aligned with the
@@ -36,9 +39,9 @@
 %    s.cancelFcn()->tf.
 %
 % Outputs:
-%    (none) - updates each *_r.mat with results.gsData [nFrames x nRegions],
-%             results.gsTime [nFrames x 1] and results.gsType, and records
-%             settings.runGuidedContrast.
+%    (none) - updates each *_r.mat with results.gsData [nFrames x nRegions] and
+%             results.gsTime [nFrames x 1], and records settings.runGuidedContrast,
+%             removing settings.runGuidedIntensity if an earlier run left one.
 %
 % Example:
 %    s.libraryFolder = libraryFolder;
@@ -141,11 +144,16 @@ for fidx=1:1:numel(fNames)
 
         results.gsData=gsData;
         results.gsTime=toSeconds(timeStamps,cfg);
-        results.gsType="contrast";
 
-        % Save the settings and results
+        % Save the settings and results.  The settings are the only record of which
+        % quantity gsData holds, so the sibling wrapper's entry goes when this one is
+        % written - re-running the guided step the other way round must leave ONE
+        % answer standing, not two.
         s.rawFrameRate=1./median(diff(results.gsTime));
         settings.runGuidedContrast=reportSettings(s);
+        if isfield(settings,'runGuidedIntensity')
+            settings=rmfield(settings,'runGuidedIntensity');
+        end
         reportWriting(rep);
         save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
         save(s.fName,'results','-v7.3','-nocompression');

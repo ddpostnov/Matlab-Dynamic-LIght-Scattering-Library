@@ -162,6 +162,12 @@
 %   of the files listed on the Files tab, counted and confirmed before anything goes
 %   (wipeTargets fences on the whole identity, so 'Foo' never carries off 'Foo2').
 %
+%   NO LAUNCHER IS NEEDED TO OPEN IT.  Every time this window opens it puts the
+%   library on the MATLAB path itself, from its own location (setLibraryPath), so
+%   typing guiWorkbench in a fresh MATLAB is the whole of the setup - and a stale
+%   copy of the library left on the path by an earlier session is corrected rather
+%   than quietly used.
+%
 % Syntax:
 %    guiWorkbench                       % open the workbench
 %    h = guiWorkbench('Visible','off')  % headless (for programmatic drive/tests)
@@ -172,15 +178,27 @@
 % See also: wbStepRegistry, wbDiscoverFiles, wbTypeModel, wbTypeSelection,
 %           wbFileModel, wbStateEngine, wbSettingsModel, wbInvalidate,
 %           wbRefBranch, wbRunRange, wbExecutor, wbModalGuard, wbUiGuard,
-%           wbArtifacts, makeReportPdf, wbPool, wbSession, guiExport, guiExplore
+%           wbArtifacts, makeReportPdf, wbPool, wbSession, guiExport, guiExplore,
+%           setLibraryPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 01-August-2026
+% Last revision: 05-August-2026
 
 %------------- BEGIN CODE --------------
 function h = guiWorkbench(varargin)
+
+% ---- THE LIBRARY PATH, SET FROM THIS FILE'S OWN LOCATION -------------------
+% A front window is usually the FIRST thing typed into a fresh MATLAB, with no
+% launcher run and often nothing on the path but the folder this file is in, so it
+% puts the library there itself instead of assuming somebody already did.
+% Utilities goes on first because that is where setLibraryPath lives; setLibraryPath
+% then does the rest, and keeps the .claude tooling copies OFF the path - they hold
+% whole checkouts of this library at older commits and SHADOW it silently.
+libraryFolder = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(libraryFolder,'Utilities'));
+setLibraryPath(libraryFolder);
 
 vis = 'on';
 for i = 1:2:numel(varargin)
@@ -192,6 +210,7 @@ app.reg          = wbStepRegistry('LSCI');       % the UNION over the modalities
 app.modality     = 'LSCI';                       % the working set's most common one
 app.typeMod      = containers.Map('KeyType','char','ValueType','char'); % type -> modality
 app.regCache     = containers.Map('KeyType','char','ValueType','any');  % modality -> registry
+app.regKey       = '';                             % which modality set the two above are for
 app.sm           = wbSettingsModel('new');        % settings bag + overrides
 app.disc         = emptyDisc();
 app.rows         = emptyRows();                    % flat, animal-major, reference-first
@@ -853,23 +872,75 @@ function renderRawPanel(fig)
 %renderRawPanel  The raw producers (type x step, small) with the per-animal steps
 %   beside them.  Ticking a producer is what brings its branch ROW into existence
 %   below - the two panels are one decision seen twice.
+%
+%   IT REDRAWS ONLY WHEN IT WOULD LOOK DIFFERENT.  Every curation action rebuilds
+%   the working set and this panel used to delete and recreate every live widget
+%   in it each time, so assigning a GROUP - which cannot move one cell of it - paid
+%   for the whole grid.  What the panel draws is described FIRST, as plain data
+%   (rawPanelKey), and compared with the description the panel is already carrying.
+%   The description is not a summary of the inputs, it IS the cells: a rule that
+%   changes what a cell shows changes the key by construction, so no caller has to
+%   remember to say that it did.  The panel carries its own key because that is the
+%   only place it cannot outlive what is on screen.
 app = getApp(fig); c = app.c.constructor;
+key = rawPanelKey(app);
+if isequaln(key, c.rawPanel.UserData), return; end
 delete(c.rawPanel.Children);
 gl = uigridlayout(c.rawPanel,[1 2],'ColumnWidth',{'1.7x','1x'}, ...
     'Padding',[4 4 4 4],'ColumnSpacing',8);
-renderRawMatrix(fig,gl);
-renderAnimalBox(fig,gl);
+renderRawMatrix(fig,gl,key);
+renderAnimalBox(fig,gl,key);
 % no dead space under two types, no clipping under eleven: the panel is exactly as
 % tall as the taller of its two halves, and only then does the matrix scroll
 if isfield(c,'left') && isgraphics(c.left)
-    nT = numel(constructorTypes(app));
-    nA = numel(wbTypeSelection('animalSteps', app.reg));
-    h  = max(66 + 26*nA, 96 + 26*nT);
+    h  = max(66 + 26*numel(key.animal), 96 + 26*numel(key.types));
     rh = c.left.RowHeight; rh{2} = min(320,max(120,h)); c.left.RowHeight = rh;
+end
+c.rawPanel.UserData = key;
+end
+
+function k = rawPanelKey(app)
+%rawPanelKey  EVERYTHING THE RAW PANEL PUTS ON SCREEN, as data: its rows and their
+%   file counts, its columns, the per-animal lines, and one spec per cell.  The
+%   registry is a pure function of the modality set (adoptDiscovery), so its
+%   ordered id list stands for every label and tooltip drawn out of it.
+k.types  = constructorTypes(app);
+k.regIds = {app.reg.id};
+k.cols   = wbTypeSelection('rawSteps', app.reg);
+k.animal = wbTypeSelection('animalSteps', app.reg);
+k.counts = zeros(1,numel(k.types));
+k.mods   = cell(1,numel(k.types));
+for r = 1:numel(k.types)
+    k.counts(r) = typeFileCount(app,k.types{r});
+    k.mods{r}   = modalityOfType(app,k.types{r});
+end
+k.aOn = false(1,numel(k.animal));
+for i = 1:numel(k.animal), k.aOn(i) = isKey(app.animalSel, k.animal{i}); end
+k.cell = repmat(rawCellSpec(), numel(k.types), numel(k.cols));
+for r = 1:numel(k.types)
+    for s = 1:numel(k.cols)
+        k.cell(r,s) = rawCellSpec(app, k.types{r}, stepById(app.reg,k.cols{s}));
+    end
 end
 end
 
-function renderRawMatrix(fig,parent)
+function s = rawCellSpec(app,type,step)
+%rawCellSpec  What ONE raw cell shows - its tick and the product flag beside it, or
+%   nothing and the reason when the step does not run on that type's recordings at
+%   all.  Called with no arguments for the empty spec the key preallocates with.
+s = struct('value',false,'live',false,'text','','tip','');
+if nargin==0, return; end
+if ~stepInReg(regFor(app,type),step.id)
+    s.tip = wrongModalityTip(app,type,step);
+    return
+end
+s.text  = rowFlagFor(app,type,step.branch);
+s.value = wbTypeSelection('isOn',app.typeSel,type,step.branch,step.id);
+s.tip   = rawCellTip(app,type,step);
+s.live  = true;
+end
+
+function renderRawMatrix(fig,parent,key)
 %renderRawMatrix  One checkbox per (type, raw producer).  The producers are the
 %   steps whose input is the recording itself - derived from the registry, never
 %   listed - and each writes its own independent product.
@@ -878,9 +949,13 @@ function renderRawMatrix(fig,parent)
 %   shows every modality's entry steps, so the matrix stays rectangular and the
 %   user can see what the other half of the folder is being offered; a cell whose
 %   step does not run on that type's recordings is dead and says why.
+%
+%   IT DRAWS THE KEY ITS PANEL COMPARED (rawPanelKey) instead of asking the same
+%   questions a second time, so what was compared and what reaches the screen
+%   cannot come apart.
 app = getApp(fig);
-types = constructorTypes(app);
-cols  = wbTypeSelection('rawSteps', app.reg);
+types = key.types;
+cols  = key.cols;
 if isempty(types) || isempty(cols)
     g = uigridlayout(parent,[1 1],'Padding',[16 16 16 16]);
     uilabel(g,'Text','Load your recordings and label them on the Files tab, then come back here.', ...
@@ -904,19 +979,15 @@ for s = 1:numel(cols)
 end
 for r = 1:numel(types)
     ty = types{r};
-    lb = uilabel(grid,'Text',sprintf('%s - %d files', ty, typeFileCount(app,ty)), ...
+    lb = uilabel(grid,'Text',sprintf('%s - %d files', ty, key.counts(r)), ...
         'FontWeight','bold','Tooltip','Every recording of this type is processed the same way.');
     lb.Layout.Row = r+1; lb.Layout.Column = 1;
     for s = 1:numel(cols)
-        step = stepById(app.reg,cols{s});
-        if ~stepInReg(regFor(app,ty),cols{s})
-            cb = uicheckbox(grid,'Text','','Value',false,'Enable','off', ...
-                'FontSize',10,'Tooltip',wrongModalityTip(app,ty,step));
-        else
-            cb = uicheckbox(grid,'Text',rowFlagFor(app,ty,step.branch), ...
-                'Value',wbTypeSelection('isOn',app.typeSel,ty,step.branch,cols{s}), ...
-                'FontSize',10,'Tooltip',rawCellTip(app,ty,step), ...
-                'ValueChangedFcn',ui(fig,@(o,~)tickRaw(fig,ty,cols{s},o.Value)));
+        sp = key.cell(r,s);
+        cb = uicheckbox(grid,'Text',sp.text,'Value',sp.value,'FontSize',10, ...
+            'Enable',ternary(sp.live,'on','off'),'Tooltip',sp.tip);
+        if sp.live
+            cb.ValueChangedFcn = ui(fig,@(o,~)tickRaw(fig,ty,cols{s},o.Value));
         end
         cb.Layout.Row = r+1; cb.Layout.Column = s+1;
     end
@@ -1114,26 +1185,27 @@ function renderDerivedPanel(fig)
 %   (vasomotion is contrast-only, pulsatility cardiac-only), and shown as an
 %   INHERITED tick when the step is drawn once on the contrast side and copied to
 %   the other branches (setRegions, segmentation - branchScope 'copy').
+%
+%   IT REDRAWS ONLY WHEN IT WOULD LOOK DIFFERENT - the same rule renderRawPanel
+%   states, for the same reason: the two panels are one decision seen twice, and
+%   neither of them can be moved by a label edit.
 app = getApp(fig); c = app.c.constructor;
+key = derivedPanelKey(app);
+if isequaln(key, c.derivedPanel.UserData), return; end
 delete(c.derivedPanel.Children);
-cols = wbTypeSelection('derivedSteps', app.reg);
-rows = constructorRows(app);
-types = constructorTypes(app);
-if isempty(cols) || (isempty(rows) && isempty(types))
+cols = key.cols;
+rows = key.rows;
+if isempty(cols) || (isempty(rows) && isempty(key.types))
     g = uigridlayout(c.derivedPanel,[1 1],'Padding',[16 16 16 16]);
     uilabel(g,'Text','Load your recordings and label them on the Files tab first.', ...
         'HorizontalAlignment','center','FontAngle','italic');
+    c.derivedPanel.UserData = key;
     return
 end
 
 gl = uigridlayout(c.derivedPanel,[2 1],'RowHeight',{'fit','1x'},'RowSpacing',4,'Padding',[4 4 4 4]);
-uilabel(gl,'Text',derivedHint(rows),'WordWrap','on','FontAngle','italic','FontSize',10);
-
-% with no producer ticked there is nothing to append to: show the shape, disabled
-preview = isempty(rows);
-if preview
-    for i = 1:numel(types), rows(end+1) = mkRow(app,types{i},''); end %#ok<AGROW>
-end
+uilabel(gl,'Text',key.hint,'WordWrap','on','FontAngle','italic','FontSize',10);
+preview = key.preview;
 
 grid = uigridlayout(gl,[1+numel(rows) 1+numel(cols)], ...
     'ColumnWidth',[{190}, repmat({88},1,numel(cols))], ...
@@ -1158,39 +1230,76 @@ for r = 1:numel(rows)
     lb.Layout.Row = r+1; lb.Layout.Column = 1;
     if preview, lb.FontColor = [0.45 0.45 0.45]; end
     for s = 1:numel(cols)
-        cb = makeRowCell(fig,grid,app,row,cols{s},preview);
+        cb = makeRowCell(fig,grid,key.cell(r,s),row,cols{s});
         cb.Layout.Row = r+1; cb.Layout.Column = s+1;
+    end
+end
+c.derivedPanel.UserData = key;
+end
+
+function k = derivedPanelKey(app)
+%derivedPanelKey  EVERYTHING THE DERIVED PANEL PUTS ON SCREEN, as data: its rows
+%   with their labels and file counts, its columns, and one spec per cell.  See
+%   rawPanelKey for why the description is the cells themselves rather than a list
+%   of the inputs they were computed from.
+k.regIds = {app.reg.id};
+k.cols   = wbTypeSelection('derivedSteps', app.reg);
+k.types  = constructorTypes(app);
+rows     = constructorRows(app);
+k.hint    = derivedHint(rows);        % the REAL rows decide the hint, not the preview
+k.preview = isempty(rows);
+% with no producer ticked there is nothing to append to: show the shape, disabled
+if k.preview
+    for i = 1:numel(k.types), rows(end+1) = mkRow(app,k.types{i},''); end %#ok<AGROW>
+end
+k.rows = rows;
+k.cell = repmat(rowCellSpec(), numel(rows), numel(k.cols));
+for r = 1:numel(rows)
+    for s = 1:numel(k.cols)
+        k.cell(r,s) = rowCellSpec(app, rows(r), k.cols{s}, k.preview);
     end
 end
 end
 
-function cb = makeRowCell(fig,grid,app,row,stepId,preview)
-%makeRowCell  One derived cell: live, greyed-with-a-reason, or inherited.  Every
-%   question is asked of THIS ROW'S TYPE registry, so a column belonging to another
-%   modality is dead here and says so, and the row rule ('why') never has to answer
-%   for a step this type does not have.
+function s = rowCellSpec(app,row,stepId,preview)
+%rowCellSpec  What ONE derived cell shows: live, greyed-with-a-reason, or an
+%   inherited tick.  Every question is asked of THIS ROW'S TYPE registry, so a
+%   column belonging to another modality is dead here and says so, and the row rule
+%   ('why') never has to answer for a step this type does not have.  Called with no
+%   arguments for the empty spec the key preallocates with.
+s = struct('value',false,'live',false,'tip','');
+if nargin==0, return; end
 reg = regFor(app,row.type);
 if ~stepInReg(reg,stepId)
-    cb = uicheckbox(grid,'Text','','Value',false,'Enable','off', ...
-        'Tooltip',wrongModalityTip(app,row.type,stepById(app.reg,stepId)));
+    s.tip = wrongModalityTip(app,row.type,stepById(app.reg,stepId));
     return
 end
 why = wbTypeSelection('why', reg, row.branch, stepId);
 if preview || ~isempty(why)
     if isempty(why), why = 'Tick a step in the panel above first, to give this type a result to work on.'; end
-    cb = uicheckbox(grid,'Text','','Value',false,'Enable','off','Tooltip',why);
+    s.tip = why;
     return
 end
 [tf,inh] = wbTypeSelection('effective', app.typeSel, reg, row.type, row.branch, stepId);
 if inh
     src = wbTypeSelection('anchorBranch', reg);
-    cb = uicheckbox(grid,'Text','','Value',tf,'Enable','off', ...
-        'Tooltip',sprintf('%s  Tick it on the %s row instead.', ...
-        sharedReason(stepById(reg,stepId)), rowFlagFor(app,row.type,src)));
+    s.value = tf;
+    s.tip = sprintf('%s  Tick it on the %s row instead.', ...
+        sharedReason(stepById(reg,stepId)), rowFlagFor(app,row.type,src));
     return
 end
-cb = uicheckbox(grid,'Text','','Value',tf,'Tooltip',cellTip(reg,stepId), ...
-    'ValueChangedFcn',ui(fig,@(o,~)tickRow(fig,row.type,row.branch,stepId,o.Value)));
+s.value = tf; s.live = true; s.tip = cellTip(reg,stepId);
+end
+
+function cb = makeRowCell(fig,grid,spec,row,stepId)
+%makeRowCell  One derived cell, built from its spec.  The LIVE case is the only one
+%   that carries a callback - the other three are pictures with the reason attached,
+%   and a box with no callback cannot tick the wrong row.
+cb = uicheckbox(grid,'Text','','Value',spec.value,'Tooltip',spec.tip, ...
+    'Enable',ternary(spec.live,'on','off'));
+if spec.live
+    cb.ValueChangedFcn = ui(fig,@(o,~)tickRow(fig,row.type,row.branch,stepId,o.Value));
+end
 end
 
 function t = sharedReason(step)
@@ -1236,14 +1345,16 @@ end
 end
 
 %% ---- Constructor: the per-animal steps ----------------------------- %%
-function renderAnimalBox(fig,parent)
+function renderAnimalBox(fig,parent,key)
 %renderAnimalBox  The steps that span the ANIMAL (registration, vessel typing):
 %   ONE box, one line each - a checkbox and a 'settings' button, exactly like the
 %   step columns beside it.  Their parameters open in the settings panel on the
 %   right rather than inline, and WHICH BRANCH FILE of each animal's reference they
 %   resolve to is reported in the selection summary, the one place status is read.
+%   Its lines and their ticks are in the raw panel's key, so it is drawn from there
+%   (renderRawMatrix says why).
 app = getApp(fig);
-ids = wbTypeSelection('animalSteps', app.reg);
+ids = key.animal;
 p  = uipanel(parent,'Title','Done once per animal','FontWeight','bold','FontSize',10);
 n  = max(1,numel(ids));
 gl = uigridlayout(p,[n+1 2],'ColumnWidth',{'1x','fit'}, ...
@@ -1251,7 +1362,7 @@ gl = uigridlayout(p,[n+1 2],'ColumnWidth',{'1x','fit'}, ...
     'RowSpacing',6,'ColumnSpacing',6,'Padding',[8 8 8 8]);
 for i = 1:numel(ids)
     step = stepById(app.reg,ids{i});
-    uicheckbox(gl,'Text',step.label,'Value',isKey(app.animalSel,step.id), ...
+    uicheckbox(gl,'Text',step.label,'Value',key.aOn(i), ...
         'Tooltip',animalStepTip(step), ...
         'ValueChangedFcn',ui(fig,@(o,~)tickAnimalStep(fig,step.id,o.Value)));
     uibutton(gl,'Text','settings','FontSize',9, ...
@@ -1650,7 +1761,8 @@ applyInvalidation(fig,seed,type);      % forward cascade, restricted to this typ
 renderProgress(fig);   % the monitor's ROWS, columns and range follow the configuration
 % a setting can change the PRODUCT this type writes (contrastType -> _t_K | _s_K),
 % and that flag is on every row label and checkbox - so redraw them, do not leave
-% the panels showing the flag the type had before the edit
+% the panels showing the flag the type had before the edit.  The two panels compare
+% their own keys, so the edits that do NOT move a flag cost nothing here.
 renderRawPanel(fig);
 renderDerivedPanel(fig);
 refreshConstructorSettings(fig);
@@ -2209,6 +2321,7 @@ paths = gridPaths(disc);
 app.autoRef = autoRefsFor(app, paths);
 setApp(fig,app);
 n = rebuildWorkingSet(fig, paths, false);
+logPerFileFlips(fig);         % D6: a set the user has not been told about yet
 end
 function uiAddFiles(fig)
 app = getApp(fig);
@@ -2232,6 +2345,7 @@ function n = addPaths(fig,paths)
 app = getApp(fig);
 if ischar(paths), paths = {paths}; end
 n = rebuildWorkingSet(fig, [reshape({app.files.path},1,[]), reshape(paths,1,[])], true);
+logPerFileFlips(fig);         % D6: these files have not been reported on either
 end
 function n = deletePaths(fig,paths)
 %deletePaths  Drop rows from the WORKING SET.  Nothing is removed from disk.
@@ -2261,6 +2375,7 @@ app.autoRef      = autoRefsFor(app, paths);
 app.animalRefMan = containers.Map('KeyType','char','ValueType','char');
 setApp(fig,app); syncFilesControls(fig);
 rebuildWorkingSet(fig, paths, false);
+logPerFileFlips(fig);         % D6: a set the user has not been told about yet
 end
 function d = defaultDir(v)
 if ~isempty(v) && isfolder(v), d = v; else, d = pwd; end
@@ -2317,12 +2432,21 @@ function n = rebuildWorkingSet(fig, paths, keepOverlay)
 app = getApp(fig);
 paths = uniqueStable(cleanPathList(paths));
 
+% ---- one parse per path, for the whole rebuild -----------------------------
+% wbFileModel answers from the PATH STRING alone, and two of the passes below asked
+% it the same question over again - every file's modality, then every file's
+% identity.  Parse here and hand the models down.  (buildFileEntries still parses on
+% a miss and wbDiscoverFiles parses its own grid: both of those take the project
+% folders too, so threading models into them would widen a signature across
+% wbDiscoverFiles' other two modes.)
+mdl = cellfun(@wbFileModel, paths, 'UniformOutput', false);
+
 % ---- labels: the regexp answer, then the hand overrides on top -------------
 app.labelsAuto = wbTypeModel('derive', paths, app.patterns);
 app.labels     = wbTypeModel('applyOverrides', app.labelsAuto, app.overrides);
 % modality is PARSED from the extension/product rather than matched, so it rides
 % alongside the regexp axes with its own override map (same path->value contract)
-app.labels.modality = modalityLabels(paths, app.modalityOvr);
+app.labels.modality = modalityLabels(paths, app.modalityOvr, mdl);
 
 % ---- effective per-animal reference: hand-pinned wins over the regexp ------
 animalsNow = wbTypeModel('values', app.labels, 'animal');
@@ -2333,7 +2457,7 @@ for i = 1:numel(animalsNow)
     elseif isKey(app.autoRef,a),   app.animalRef(a) = app.autoRef(a);
     end
 end
-app.animalRef = pruneRefs(app.animalRef, paths);     % a ref whose file is gone is no ref
+app.animalRef = pruneRefs(app.animalRef, mdl);       % a ref whose file is gone is no ref
 
 % ---- the animal grid + the deduped matrix rows -----------------------------
 disc = wbDiscoverFiles('curated', paths, app.labels, app.animalRef, app.root, app.resultsRoot);
@@ -2344,13 +2468,14 @@ adoptDiscovery(fig, disc, keepOverlay);
 n = numel(paths);
 end
 
-function labels = modalityLabels(paths, ovr)
+function labels = modalityLabels(paths, ovr, mdl)
 %modalityLabels  The parsed modality of each file, with any hand override on top.
 %   An override is only honoured if the EXTENSION allows it (wbFileModel owns
 %   that rule), so a stale session can never resurrect an impossible pairing.
+%   The models come from the caller, parsed once for the whole rebuild.
 labels = cell(1,numel(paths));
 for i = 1:numel(paths)
-    m = wbFileModel(paths{i});
+    m = mdl{i};
     v = m.modality;
     if isa(ovr,'containers.Map') && isKey(ovr,paths{i})
         cand = ovr(paths{i});
@@ -2382,13 +2507,13 @@ for i = 1:numel(paths)
 end
 end
 
-function m = pruneRefs(m, paths)
+function m = pruneRefs(m, mdl)
 %pruneRefs  Drop any reference whose recording no longer has a file in the set.
+%   Takes the working set's parsed models, not its paths: only the identities are
+%   read, and they were already parsed once at the top of the rebuild.
 if m.Count==0, return; end
 live = containers.Map('KeyType','char','ValueType','logical');
-for i = 1:numel(paths)
-    mm = wbFileModel(paths{i}); live(mm.identity) = true;
-end
+for i = 1:numel(mdl), live(mdl{i}.identity) = true; end
 k = keys(m);
 for i = 1:numel(k)
     if ~isKey(live, m(k{i})), remove(m,k{i}); end
@@ -2416,9 +2541,20 @@ if ~isempty(app.modelArr), mods = uniqueStable({app.modelArr.modality}); end
 mods = mods(~cellfun(@isempty,mods));
 if isempty(mods), mods = {'LSCI'}; end
 app.modality = modeStr({app.modelArr.modality});
-app.reg      = wbStepRegistry(mods);
-app.regCache = containers.Map('KeyType','char','ValueType','any');
-for i = 1:numel(mods), app.regCache(mods{i}) = wbStepRegistry(mods{i}); end
+% THE REGISTRY IS A PURE FUNCTION OF THE MODALITY SET, so it is built when that set
+% changes rather than once per curation action: a 1108-line builder ran two to three
+% times per rebuild for an answer that could not have moved.  The cache lives on the
+% WINDOW and not in a persistent inside wbStepRegistry - a persistent would survive
+% an edit to the registry itself and need a 'clear functions' story, where a new
+% window starts with a fresh one.  The three fields are written together, which is
+% what stops the key ever describing a registry other than the one beside it.
+regKey = strjoin(mods,'|');
+if ~strcmp(app.regKey, regKey)
+    app.reg      = wbStepRegistry(mods);
+    app.regCache = containers.Map('KeyType','char','ValueType','any');
+    for i = 1:numel(mods), app.regCache(mods{i}) = wbStepRegistry(mods{i}); end
+    app.regKey   = regKey;
+end
 app.typeMod  = typeModalities(app);
 if nargin<3 || ~keepOverlay
     % a fresh load starts with no invalidation overlay
@@ -2428,7 +2564,6 @@ setApp(fig,app);
 recomputeBase(fig);
 refreshFileTable(fig);
 renderProgress(fig);
-logPerFileFlips(fig);         % D6: say so when a cell stopped reading as done
 renderConstructor(fig);       % types are data: a label edit adds/removes a row live
 refreshStatus(fig);
 autosaveSession(fig);         % the state changed -> the last session follows it
@@ -2514,14 +2649,24 @@ function n = logPerFileFlips(fig)
 %   said out loud on load rather than left to be noticed.  The old answer is
 %   recovered for free by asking about the same FILE with its pipeline flag
 %   cleared, which is exactly the whole-recording union wbStateEngine used to do.
+%
+%   IT RUNS WHERE A WORKING SET ARRIVES, NOT ON EVERY STATE CHANGE.  The four
+%   callers are a scan, the programmatic loader, Add..., and a session load - the
+%   only actions that put files in front of the user that have not been reported on
+%   yet.  It used to sit inside adoptDiscovery, so a label edit walked every file
+%   and asked wbStateEngine a SECOND complete time - a whole extra state pass, 36
+%   of a rebuild's 126 statesOf calls - to reprint a sentence about a project the
+%   user had already been told about.  Nothing about the count changed: the same
+%   files are compared the same way, at the moments the comparison means something.
 app = getApp(fig);
 n = 0;
 seen = containers.Map('KeyType','char','ValueType','logical');
+scan = newScan();                 % one listing per results folder, as recomputeBase
 for i = 1:numel(app.files)
     f = app.files(i);
     if isempty(f.model.branch) || isKey(seen,f.path), continue; end
     seen(f.path) = true;
-    was = statesOf(app, wholeRecordingModel(f.model), f.type);
+    was = statesOf(app, wholeRecordingModel(f.model), f.type, scan);
     now_ = app.fileState(f.path);
     for k = 1:numel(app.reg)
         id = app.reg(k).id;
@@ -2548,10 +2693,20 @@ m.stage  = '';
 m.branch = '';
 end
 %% ---- curation actions (table edits, assignment, references) -------- %%
-function setLabel(fig,path,axis,value)
+function setLabel(fig,path,axis,value,defer)
 %setLabel  Hand-assign one label.  A value that equals what the regexp already
 %   says clears the override instead of freezing it, so re-tuning the regexp
 %   still works; anything else is remembered path->value and survives a re-scan.
+%
+%   DEFER LETS A BULK ACTION REBUILD ONCE.  A curation action that touches many
+%   files (quickAssign, a table edit) writes every override first and rebuilds
+%   the working set afterwards; assigning a value to twenty rows used to run the
+%   whole Files-tab loop twenty times.  It is safe because the override-vs-clear
+%   decision reads app.labelsAuto, which wbTypeModel derives from the PATHS and
+%   the PATTERNS alone - neither of which an override touches - so it cannot move
+%   part-way through a batch.  Nor can one label move another: every axis of
+%   every file is its own override or its own regexp answer, per path.
+if nargin<5, defer = false; end
 app = getApp(fig);
 axis = axisFieldOf(axis);
 if isempty(axis) || ~isfield(app.overrides,axis), return; end
@@ -2563,7 +2718,7 @@ else
     app.overrides.(axis)(path) = value;
 end
 setApp(fig,app);
-rebuildWorkingSet(fig, {app.files.path}, true);
+if ~defer, rebuildWorkingSet(fig, {app.files.path}, true); end
 end
 function a = axisFieldOf(axis)
 %axisFieldOf  Accept the table's column name ('group') for the axis ('expGroup').
@@ -2573,11 +2728,14 @@ switch char(axis)
     otherwise, a = '';
 end
 end
-function ok = setModality(fig,path,value)
+function ok = setModality(fig,path,value,defer)
 %setModality  Hand-correct a file's modality.  The EXTENSION decides what is
 %   possible (a .rls cannot be a myograph video), so an impossible value is
-%   refused rather than stored - wbFileModel owns that rule.
+%   refused rather than stored - wbFileModel owns that rule.  DEFER is setLabel's,
+%   and safe for the same reason: the extension a value is checked against is the
+%   file's, and no other file's override can change it.
 ok = false;
+if nargin<4, defer = false; end
 app = getApp(fig);
 i = find(strcmp({app.files.path}, path), 1);
 if isempty(i), return; end
@@ -2590,14 +2748,19 @@ else
     app.modalityOvr(path) = value;
 end
 setApp(fig,app);
-rebuildWorkingSet(fig, {app.files.path}, true);
+if ~defer, rebuildWorkingSet(fig, {app.files.path}, true); end
 ok = true;
 end
-function setReference(fig,path,tf)
+function setReference(fig,path,tf,defer)
 %setReference  Tick/untick 'ref'.  RADIO SEMANTICS SCOPED TO THE ANIMAL: pinning
 %   a recording replaces that animal's previous reference and leaves every other
 %   animal alone.  What is stored is the recording IDENTITY, never a file path -
 %   each step resolves the branch (_t / _c / ...) it needs at run time.
+%
+%   THE RADIO IS ORDER-DEPENDENT and DEFER does not change that: a caller that
+%   unpins several references and pins one still does so in its own order, and
+%   only the rebuild that follows is moved to the end.
+if nargin<4, defer = false; end
 app = getApp(fig);
 i = find(strcmp({app.files.path}, path), 1);
 if isempty(i), return; end
@@ -2609,7 +2772,7 @@ else
     if isKey(app.autoRef,m.animal),      remove(app.autoRef,m.animal); end
 end
 setApp(fig,app);
-rebuildWorkingSet(fig, {app.files.path}, true);
+if ~defer, rebuildWorkingSet(fig, {app.files.path}, true); end
 end
 function id = animalRefOf(app,animal)
 id = '';
@@ -2632,22 +2795,38 @@ function onFileTableEdit(fig,src,~)
 %   A NAME EDIT IS HANDLED FIRST AND ENDS THE CALLBACK, because it moved the very
 %   key the reconciliation below reads by: every other row would still match, and
 %   the edited one would silently look like an unknown file.
+%
+%   THE WHOLE EDIT IS ONE REBUILD.  Each write is deferred and the working set is
+%   rebuilt once at the end, after the reference radio has been resolved - a
+%   single cell edit that moved two axes used to rebuild twice.  One read of the
+%   row's entry serves every axis: a label is its own override or its own regexp
+%   answer, per path and per axis, so no write here can move what the next one
+%   compares against.
+%
+%   AND THE WORKING SET IS READ ONCE FOR THE WHOLE CALLBACK, not once per row.  The
+%   two lookups below each used to walk the entire file list, so reconciling the
+%   table cost a scan per row - paid in full even when the edit changed nothing.
+%   Hoisting them is safe for the same reason the deferral is: nothing this loop
+%   writes (an override, per path and per axis) is anything this loop reads.
 D = src.Data;
 if isempty(D), return; end
 if handleNameEdit(fig, D), return; end
+app = getApp(fig);
+byName = pathByName(app); byPath = entryByPath(app);
 col = columnIndex();
-newRef = ''; unRef = {}; refused = {};
+newRef = ''; unRef = {}; refused = {}; touched = false;
 for i = 1:size(D,1)
-    p = pathOfName(getApp(fig), charOf(D{i,col.file}), charOf(D{i,col.filetype}));
+    p = nameToPath(byName, charOf(D{i,col.file}), charOf(D{i,col.filetype}));
     if isempty(p), continue; end                            % unknown or ambiguous
+    f = byPath(p);
     for ax = {'animal','type','index','group'}
-        f = fileEntry(getApp(fig), p);                      % labels may have moved
         v = charOf(D{i,col.(ax{1})});
-        if ~strcmp(v, f.(axisFieldOf(ax{1}))), setLabel(fig,p,ax{1},v); end
+        if ~strcmp(v, f.(axisFieldOf(ax{1})))
+            setLabel(fig,p,ax{1},v,true); touched = true;
+        end
     end
-    f = fileEntry(getApp(fig), p);
     if  logical(D{i,col.reference}) && ~f.isRef
-        if isempty(animalRefOf(getApp(fig), f.animal))
+        if isempty(animalRefOf(app, f.animal))
             newRef = p;
         else
             refused{end+1} = sprintf('%s already has a reference', f.animal); %#ok<AGROW>
@@ -2658,10 +2837,11 @@ end
 % the reference is a RADIO scoped to the animal: pin one where there is none, or
 % unpin the current one first (the other rows of that animal are greyed meanwhile)
 if ~isempty(newRef)
-    setReference(fig,newRef,true);
+    setReference(fig,newRef,true,true); touched = true;
 else
-    for i = 1:numel(unRef), setReference(fig,unRef{i},false); end
+    for i = 1:numel(unRef), setReference(fig,unRef{i},false,true); touched = true; end
 end
+if touched, rebuildWorkingSet(fig, {getApp(fig).files.path}, true); end
 if ~isempty(refused)
     setCurStatus(fig, ['refused: ' strjoin(unique(refused),'; ') ...
         ' - untick its current reference first.']);
@@ -2674,14 +2854,38 @@ f = [];
 k = find(strcmp({app.files.path}, path), 1);
 if ~isempty(k), f = app.files(k); end
 end
-function p = pathOfName(app,name,ext)
-%pathOfName  The path behind a table row, keyed by its name + extension columns -
-%   '' when the pair is not in the set or is AMBIGUOUS (two files of that name,
-%   which fileProblems flags as a hard block).
+function m = pathByName(app)
+%pathByName  file name (extension included) -> path, for the whole working set.
+%   This is THE definition of the rule the table rows are keyed on: a name is a row
+%   key, and a name that TWO files carry answers '' - fileProblems reports that as a
+%   hard block and every caller relies on leaving those rows alone.
+%
+%   COUNTING COMES FIRST, AND THAT IS THE WHOLE POINT.  A map filled by plain
+%   assignment keeps the LAST writer, so an ambiguous name would quietly resolve to
+%   one of its two files and the callback would start editing it.  Poisoning the key
+%   on the second sighting keeps the old answer exactly, for any number of clashes.
+%
+%   It is built once per callback because every caller looks up in a LOOP over table
+%   rows; a linear search per row made a single cell edit walk the file list N times.
+m = containers.Map('KeyType','char','ValueType','char');
+for i = 1:numel(app.files)
+    n = app.files(i).name;
+    if isKey(m,n), m(n) = ''; else, m(n) = app.files(i).path; end
+end
+end
+function p = nameToPath(m,name,ext)
+%nameToPath  One table row's path out of pathByName's map - '' when the name + ext
+%   pair is not in the working set, and '' when it is ambiguous.
 p = '';
 if nargin<3, ext = ''; end
-k = find(strcmp({app.files.name}, [name ext]));
-if isscalar(k), p = app.files(k).path; end
+k = [name ext];
+if isKey(m,k), p = m(k); end
+end
+function m = entryByPath(app)
+%entryByPath  path -> working-set entry, for the same reason as pathByName: the
+%   callers ask once per table row, and fileEntry walks the whole list each time.
+m = containers.Map('KeyType','char','ValueType','any');
+for i = 1:numel(app.files), m(app.files(i).path) = app.files(i); end
 end
 function setCurStatus(fig,msg)
 c = getApp(fig).c.files;
@@ -2978,27 +3182,52 @@ end
 v = strtrim(c.assignVal.Value);
 if isempty(v), setCurStatus(fig,'Type or pick a value first.'); return; end
 field = c.assignAxis.Value;
-[n,refused] = quickAssign(fig, sel, field, v);
+[n,refused,already] = quickAssign(fig, sel, field, v);
 msg = sprintf('%d of %d selected rows set to %s "%s".', n, numel(sel), field, v);
+if already > 0
+    msg = [msg sprintf('  %d already had it.', already)];
+end
 if refused > 0
     msg = [msg sprintf('  %d were left alone - their file format does not allow it.', refused)];
 end
 setCurStatus(fig,msg);
 end
-function [n,refused] = quickAssign(fig, paths, field, value)
+function [n,refused,already] = quickAssign(fig, paths, field, value)
 %quickAssign  Set one field on many files at once - the bulk-curation workhorse
 %   behind "Apply to selected rows" (and the programmatic entry point for it).
-n = 0; refused = 0;
+%
+%   ONE REBUILD FOR THE WHOLE ACTION.  Every write is deferred and the working set
+%   is rebuilt once at the end, not once per file - the same rebuild, moved, not a
+%   cheaper one.  A row that ALREADY CARRIES THE VALUE is left alone and counted
+%   apart, so a bulk assignment over rows that are already right costs nothing and
+%   the status line does not claim to have set them.
+n = 0; refused = 0; already = 0;
 if ischar(paths), paths = {paths}; end
+value = strtrim(char(value));
 for i = 1:numel(paths)
+    if carries(getApp(fig), paths{i}, field, value), already = already + 1; continue; end
     if strcmp(field,'modality')
-        if setModality(fig,paths{i},value), n = n + 1; else, refused = refused + 1; end
+        if setModality(fig,paths{i},value,true), n = n + 1; else, refused = refused + 1; end
     else
-        setLabel(fig,paths{i},field,value);
+        setLabel(fig,paths{i},field,value,true);
         n = n + 1;
     end
 end
+if n > 0, rebuildWorkingSet(fig, {getApp(fig).files.path}, true); end
 refreshFileTable(fig); refreshStatus(fig);
+end
+function tf = carries(app, path, field, value)
+%carries  Does this file already show that value on that axis?  The comparison
+%   onFileTableEdit makes before it calls a setter, asked from the bulk path too -
+%   without it, assigning a type twenty rows already have costs twenty rebuilds
+%   and changes nothing.  A path that is not in the working set carries nothing,
+%   which leaves the setter to decide what to do with it, exactly as before.
+tf = false;
+f = fileEntry(app, path);
+if isempty(f), return; end
+if strcmp(field,'modality'), a = 'modality'; else, a = axisFieldOf(field); end
+if isempty(a) || ~isfield(f,a), return; end
+tf = strcmp(value, f.(a));
 end
 function uiDeleteSelected(fig)
 app = getApp(fig); c = app.c.files;
@@ -3015,8 +3244,9 @@ if ~isgraphics(t), return; end
 if ischar(paths), paths = {paths}; end
 D = t.DisplayData; if isempty(D), D = t.Data; end
 col = columnIndex(); rows = [];
+byName = pathByName(app);
 for i = 1:size(D,1)
-    p = pathOfName(app, charOf(D{i,col.file}), charOf(D{i,col.filetype}));
+    p = nameToPath(byName, charOf(D{i,col.file}), charOf(D{i,col.filetype}));
     if ~isempty(p) && any(strcmp(p,paths)), rows(end+1) = i; end %#ok<AGROW>
 end
 t.Selection = reshape(rows,1,[]);   % row-selection tables demand a 1-by-N vector
@@ -3041,9 +3271,10 @@ end
 D = t.DisplayData;
 if isempty(D), D = t.Data; end
 col = columnIndex();
+byName = pathByName(app);
 for i = 1:numel(idx)
     if idx(i) > size(D,1), continue; end
-    p = pathOfName(app, charOf(D{idx(i),col.file}), charOf(D{idx(i),col.filetype}));
+    p = nameToPath(byName, charOf(D{idx(i),col.file}), charOf(D{idx(i),col.filetype}));
     if ~isempty(p), sel{end+1} = p; end %#ok<AGROW>
 end
 end
@@ -3358,32 +3589,67 @@ function recomputeBase(fig)
 %   since the look-ahead landed (statesOf), what a type is TICKED for is one of the
 %   inputs, so a Constructor tick makes these maps stale exactly as a settings edit
 %   does - and both now call this.
+%
+%   THE RESULTS FOLDER IS READ ONCE HERE, NOT ONCE PER QUESTION.  The three loops
+%   below ask the same folder what it contains R + N + R*B times - ninety times on a
+%   thirty-six file project - and each answer was a fresh dir, a parse of every
+%   settings file in it and a load of the matching ones.  That listing is a loop
+%   invariant: it depends on the FOLDER, never on which file is asking.  So one
+%   scan is built at the top of this function, handed down to every question, and
+%   dropped when the answers are in.  It is deliberately NOT a cache that outlives
+%   the call - a value that dies with the answer it fed has no invalidation rule and
+%   cannot go stale.  What the scan never shares is the FILTERING: which of a
+%   folder's settings files count for a given file is decided per question, inside
+%   wbStateEngine, exactly as before (see gatherSettings there).
 app = getApp(fig);
 app.base        = containers.Map('KeyType','char','ValueType','any');
 app.fileState   = containers.Map('KeyType','char','ValueType','any');
 app.branchState = containers.Map('KeyType','char','ValueType','any');
+scan = newScan();
 for i = 1:numel(app.rows)
     m = app.rows(i).model;
-    app.base(m.identity) = statesOf(app, m, modelType(m));
+    app.base(m.identity) = statesOf(app, m, modelType(m), scan);
 end
 for i = 1:numel(app.files)
     f = app.files(i);
-    app.fileState(f.path) = statesOf(app, f.model, f.type);
+    app.fileState(f.path) = statesOf(app, f.model, f.type, scan);
 end
 brs = wbTypeSelection('branches', app.reg);
 for i = 1:numel(app.rows)
     id = app.rows(i).identity;
     ty = typeOfIdentity(app, id);
     for b = 1:numel(brs)
-        bm = branchModelOf(app, app.rows(i).model, brs{b});
+        bm = branchModelOf(app, app.rows(i).model, brs{b}, scan);
         if isempty(bm), continue; end                % that pipeline has no file yet
-        app.branchState([id '||' brs{b}]) = statesOf(app, bm, ty);
+        app.branchState([id '||' brs{b}]) = statesOf(app, bm, ty, scan);
     end
 end
 setApp(fig,app);
 end
 
-function bs = statesOf(app, model, type)
+function s = newScan()
+%newScan  An empty set of disk readings, to be filled on demand and dropped by
+%   whoever made it.  Three maps, because three things are being remembered and
+%   each is keyed by what it actually depends on:
+%     .state.listing   a results folder -> its SETTINGS files, parsed
+%     .state.settings  one settings file -> what it holds
+%     .products        a results folder -> its RESULTS files, parsed
+%   The first two are filled inside wbStateEngine, which owns what a settings scan
+%   is; the third is branchModelOf's.  The products are a separate listing and not a
+%   third column of the first because they are a different glob read for a different
+%   question - and because they are parsed knowing the project's two roots, where
+%   the settings files are parsed as bare names.
+%
+%   MAKE ONE PER REPAINT AND LET IT GO.  Held any longer it would be a cache of the
+%   disk with an invalidation rule to get wrong - dropped after a run, after a Scan,
+%   after a results-folder change, after an edit made outside the workbench.
+s = struct( ...
+    'state', struct('listing',  containers.Map('KeyType','char','ValueType','any'), ...
+                    'settings', containers.Map('KeyType','char','ValueType','any')), ...
+    'products', containers.Map('KeyType','char','ValueType','any'));
+end
+
+function bs = statesOf(app, model, type, scan)
 %statesOf  wbStateEngine's answer for one model, folded into a stepId->state struct.
 %
 %   THE DISK IS NOT THE ONLY SOURCE (author, 2026-07-31).  A step is also satisfied
@@ -3393,15 +3659,23 @@ function bs = statesOf(app, model, type)
 %   the same answer the Constructor and the monitor read; wbStateEngine folds it
 %   into its prerequisite test and reports such a cell as READY (never done), which
 %   is why only .state is kept here and the distinction lives in .reason.
+%
+%   SCAN is the caller's shared listing of the results folders (newScan).  A caller
+%   with many questions about one project makes one and hands it to all of them; a
+%   caller with a single question passes nothing and the folder is read for that
+%   question alone.  It changes what the disk read costs and nothing about the
+%   answer - the filtering it feeds is per-file and runs either way.
 if nargin<3, type = modelType(model); end
+if nargin<4, scan = newScan(); end
 cs = curSettingsFor(app, model, type);
 opts = struct('plannedIds', {plannedStepIds(app, type)});
+opts.sScan = scan.state;      % assigned, not passed to struct(): one nested value
 st = wbStateEngine(model, app.reg, cs, opts);
 bs = struct();
 for k = 1:numel(st), bs.(st(k).id) = st(k).state; end
 end
 
-function m = branchModelOf(app, model, branch)
+function m = branchModelOf(app, model, branch, scan)
 %branchModelOf  ANY data file of one recording sitting on one pipeline ([] if the
 %   pipeline has produced nothing yet).  Which file does not matter: wbStateEngine
 %   unions the settings ALONG the pipeline, so '_t_K_r' and '_t_BFI_r' give the
@@ -3414,14 +3688,41 @@ function m = branchModelOf(app, model, branch)
 %   two project folders for the same reason: a branch model with no raw folder
 %   sends every needsRaw step of that pipeline looking for the recording among the
 %   results.
+%
+%   IT READS THE SAME FOLDER AS statesOf AND ONCE FOR THE SAME REASON.  The listing
+%   used to be narrowed by the OS ('<base>*_r.mat') and then re-tested here anyway,
+%   so the glob was a pre-filter on a test this loop already does - and it made the
+%   listing per RECORDING when the folder is per PROJECT.  It is now one listing of
+%   the whole folder, shared through scan.products, filtered by the same two tests
+%   in the same order: dir sorts, and the narrow listing was a subsequence of the
+%   wide one, so the file this hands back is the file it always handed back.
 m = [];
-if isempty(model.resultsFolder) || ~isfolder(model.resultsFolder), return; end
+if nargin<4, scan = newScan(); end
 base = [model.roiPrefix model.stem];
-d = dir(fullfile(model.resultsFolder,[base '*_r.mat']));
-for i = 1:numel(d)
-    cm = wbFileModel(fullfile(d(i).folder, d(i).name), app.root, app.resultsRoot);
+ms = productScan(app, model.resultsFolder, scan);
+for i = 1:numel(ms)
+    cm = ms{i};
     if strcmp([cm.roiPrefix cm.stem], base) && strcmp(cm.branch, branch), m = cm; return; end
 end
+end
+
+function ms = productScan(app, folder, scan)
+%productScan  Every '_r.mat' of one results folder, parsed, once per folder.
+%   Parsed KNOWING THE TWO ROOTS, unlike the settings listing beside it: these
+%   models are handed to wbStateEngine as the file a pipeline is judged on, and a
+%   model that does not know where the recordings are sends every needsRaw step
+%   looking for the recording among the results (branchModelOf above).
+ms = {};
+if isempty(folder), return; end
+if isKey(scan.products, folder), ms = scan.products(folder); return; end
+if isfolder(folder)
+    d = dir(fullfile(folder,'*_r.mat'));
+    ms = cell(1,numel(d));
+    for i = 1:numel(d)
+        ms{i} = wbFileModel(fullfile(d(i).folder, d(i).name), app.root, app.resultsRoot);
+    end
+end
+scan.products(folder) = ms;      % containers.Map is a handle - the caller's map fills
 end
 
 function cs = curSettingsFor(app,model,type)
@@ -3631,6 +3932,11 @@ if ~isfield(c,fld) || ~isgraphics(c.(fld)), return; end
 h = c.(fld);
 if isempty(rows), h.Data = {}; return; end
 ids  = monitorColumns(app.reg, kind);
+% THE COLUMNS' STEPS, RESOLVED ONCE.  stepById builds a cellstr of every registry
+% id, runs a strcmp across it and then COPIES the whole step struct (presets, tips,
+% setting groups, enums) - and it sat inside the cell loop, so a repaint paid that
+% rows x columns times over for an answer that is per COLUMN and cannot vary by row.
+steps = arrayfun(@(k) stepById(app.reg, ids{k}), 1:numel(ids), 'UniformOutput', false);
 D    = h.Data;
 nCol = numel(ids)+2;         % the name, one per step, and the '1x' spacer (D5)
 if ~iscell(D) || size(D,1)~=numel(rows) || size(D,2)~=nCol
@@ -3647,7 +3953,7 @@ for i = which
     D{i,1} = r.rowLabel;
     planned = plannedStepsFor(app, r);
     for s = 1:numel(ids)
-        D{i,s+1} = progressCellText(app, r, stepById(app.reg,ids{s}), planned);
+        D{i,s+1} = progressCellText(app, r, steps{s}, planned);
     end
 end
 h.Data = D;
@@ -4329,6 +4635,7 @@ syncFilesControls(fig);
 paths = session.paths;
 if isempty(paths), paths = gridPaths(struct('fNames',{session.fNames})); end
 rebuildWorkingSet(fig, paths, true);
+logPerFileFlips(fig);                    % D6: a set the user has not been told about yet
 setReprocess(fig, session.reprocess);    % after the working set: it repaints the range
 refreshPresetDrop(fig);
 wbLog(fig,sprintf('loaded session %s (schema %g, %d file(s), %d completed cell(s))', ...

@@ -259,6 +259,12 @@
 %     built - the frame under the slider is painted when it is asked for, and the
 %     export paints one frame at a time as it writes.
 %
+%   NO LAUNCHER IS NEEDED TO OPEN IT.  Every time this window opens it puts the
+%   library on the MATLAB path itself, from its own location (setLibraryPath), so
+%   typing guiExplore in a fresh MATLAB is the whole of the setup - and a stale copy
+%   of the library left on the path by an earlier session is corrected rather than
+%   quietly used.
+%
 % Syntax:
 %    guiExplore                         % open the tool (folder / file route)
 %    guiExplore(sessionPath)            % open it ON a workbench session
@@ -279,16 +285,28 @@
 %    api.export('spectrum.png', 300, 'PNG');
 %
 % See also: exScan, exPlotRules, exFetch, exAxes, exSchema, exModality, exMyograph,
-%           wbSession, guiExport, guiWorkbench, exportToExcel, myographProduct
+%           wbSession, guiExport, guiWorkbench, exportToExcel, myographProduct,
+%           setLibraryPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 03-August-2026
+% Last revision: 04-August-2026
 
 %------------- BEGIN CODE --------------
 
 function h = guiExplore(varargin)
+
+% ---- THE LIBRARY PATH, SET FROM THIS FILE'S OWN LOCATION -------------------
+% A front window is usually the FIRST thing typed into a fresh MATLAB, with no
+% launcher run and often nothing on the path but the folder this file is in, so it
+% puts the library there itself instead of assuming somebody already did.
+% Utilities goes on first because that is where setLibraryPath lives; setLibraryPath
+% then does the rest, and keeps the .claude tooling copies OFF the path - they hold
+% whole checkouts of this library at older commits and SHADOW it silently.
+libraryFolder = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(libraryFolder,'Utilities'));
+setLibraryPath(libraryFolder);
 
 % ---- inputs: an optional leading SESSION path, plus 'Visible' -------------
 [sessionArg, vis] = parseArgs(varargin);
