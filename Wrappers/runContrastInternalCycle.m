@@ -1,6 +1,6 @@
-%runInternalCycle  Collapse a high-frame-rate *.rls recording to one mean period
+%runContrastInternalCycle  Collapse a high-frame-rate *.rls recording to one mean period
 %
-%   runInternalCycle(s,fNames) detects an endogenous periodic signal
+%   runContrastInternalCycle(s,fNames) detects an endogenous periodic signal
 %   (cardiac pulse) in each raw LSCI acquisition file
 %   (*.rls), rejects outlier cycles by multiple feature criteria, and
 %   averages the accepted cycles into a single X×Y×T contrast cube.  The
@@ -11,17 +11,29 @@
 %       *_c_K_d.mat   SOURCE – mean-period contrast cube (data) and
 %                                 its time vector in seconds, source.time
 %                                 [T x 1] - the library-wide orientation,
-%                                 shared with runContrastFromRLS/runBolus/
-%                                 runIntensity and with results.sData's
+%                                 shared with runContrastFromRLS/runIntensityBolus/
+%                                 runIntensity/runIntensityInternalCycle and
+%                                 with results.sData's
 %                                 [nT x nSeg] frames-down-the-rows layout
 %       *_c_K_r.mat   RESULTS – masks, cycle metrics, timestamps
 %       *_c_K_s.mat   SETTINGS – copy of the parameter structure *s*, including
 %                                 decimationSpaceUsed – the decimation actually
 %                                 applied, which equals decimationSpace unless the
-%                                 pre-processing cube did not fit in memory
+%                                 pre-processing cube did not fit in memory.
+%                                 The field is settings.runContrastInternalCycle
 %       *_rep_cycle-detect.jpg   – cycle-rejection overview
 %       *_rep_cycle-average.jpg  – mean-period contrast image, the propagated
 %                                 mask, and the BFI time-course
+%
+%   THE NAME SAYS WHICH INTERNAL CYCLE THIS IS.  Two entry steps collapse a
+%   recording onto one cardiac period: this one, on the CONTRAST of an *.rls
+%   speckle acquisition, and runIntensityInternalCycle, on the FLUORESCENCE of a
+%   *.cxd stack.  They write '_c_K' and '_c_I' onto the same 'cardiac' branch and
+%   are told apart by the modality, so the unqualified name this function used to
+%   carry said nothing about which of the two it was.  It was renamed when the
+%   second one was written, and the SETTINGS FIELD moved with it - a settings field
+%   is named after the function that writes the file, and the already-processed
+%   sidecars were migrated rather than read under two spellings.
 %
 %   INPUTS
 %     s        parameter structure (fields include sizeT, framesToAverage,
@@ -53,15 +65,18 @@
 %   EXAMPLE
 %     p = defaultInternalCycleParams();
 %     D = dir(fullfile(dataRoot,'*.rls'));
-%     runInternalCycle(p, fullfile({D.folder}',{D.name}'));
+%     runContrastInternalCycle(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
 %     readRLS, getK, getFFT.
 %
+% See also: runIntensityInternalCycle, runContrastFromRLS, runPulsatility,
+%           getResultsPath, wbStepRegistry
+%
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 04-August-2026
+% Last revision: 07-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -100,7 +115,7 @@
 % s.smoothCoef1=1/3; %in respect to minimum points per cycle value
 % s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 
-function runInternalCycle(s,fNames)
+function runContrastInternalCycle(s,fNames)
 if ~all( cellfun(@(s) isempty(s) || contains(s,'.rls'), fNames(:)) )
     error('One or more *non-empty* entries do not contain ".rls".');
 end
@@ -614,7 +629,7 @@ for fidx=1:1:numel(fNames)
         reportSave(rep,fh,'cycle-average');
 
         reportWriting(rep);
-        settings.runInternalCycle=reportSettings(s);
+        settings.runContrastInternalCycle=reportSettings(s);
         results.imgK=squeeze(mean(source.data,3,'omitmissing'));
         results.imgI=imgIcycle;
         results.time=source.time;
@@ -753,7 +768,7 @@ binBytes=nPx*sum(cyclesDur)*4;
 %cycle rejection has not converged, and averaging those cycles would be wrong however
 %it is computed - hence an error rather than a fallback to a per-cycle path.
 if binBytes>gpuDev.AvailableMemory*0.5
-    error('runInternalCycle:TooManyCycleLengths', ...
+    error('runContrastInternalCycle:TooManyCycleLengths', ...
         ['%d distinct accepted cycle lengths need %.1f GB of GPU memory. ' ...
         'Rejection is not converging - check coeffsSTD(4) and rangeFrq.'], ...
         numel(cyclesDur),binBytes/2^30);
@@ -783,7 +798,7 @@ function W=interpWeights(nIn,nOut)
 %   sum - and it makes the interpolation a matrix product, so no permute is needed
 %   to reach it and none is needed to come back.
 if nIn<2
-    error('runInternalCycle:ShortCycle','A cycle needs at least two frames to interpolate.');
+    error('runContrastInternalCycle:ShortCycle','A cycle needs at least two frames to interpolate.');
 end
 x=linspace(1,nIn,nOut);
 i0=min(floor(x),nIn-1);

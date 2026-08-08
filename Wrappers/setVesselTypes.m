@@ -1,36 +1,50 @@
-%setVesselTypes  Semi-automatic vessel/ROI labelling for *_BFI_r.mat datasets
+%setVesselTypes  Semi-automatic vessel/ROI labelling for *_BFI_r.mat / *_I_r.mat products
 %
-%   setVesselTypes(s,fNames) opens an interactive GUI for each BFI dataset in
-%   fNames, displays the BFI image together with a provisional artery/vein
-%   guess (derived from psPI heuristics), and lets the user paint or
-%   relabel regions.  The routine then:
+%   setVesselTypes(s,fNames) opens an interactive GUI for each product in fNames,
+%   displays its mean picture together with a provisional artery/vein guess, and lets the
+%   user paint or relabel regions.  The routine then:
 %       • writes the chosen type ("Artery", "Vein", "Uncertain"),
 %         free-text label, and confidence score into RESULTS.sMetrics
 %         (and dvsMetrics, if present)
 %       • stores the signed confidence map in RESULTS.mapType (NaN outside
 %         mask, −maxGuess … +maxGuess in vessels)
-%       • updates *_BFI_r.mat and *_BFI_s.mat in place
+%       • updates the *_r.mat and *_s.mat members in place
 %
 %   When s.useReference is true the first file in fNames is treated as the
 %   reference: subsequent files inherit its type/label definitions via
 %   REGID matching, skipping the GUI.
+%
+%   WHAT DRIVES THE GUESS IS A FACT ABOUT THE PRODUCT, AND IT IS RESOLVED IN ONE PLACE.
+%   The sliders are built by getVesselTypeGuess off getVascularCues' answer: pulse
+%   arrival and pulsatility on an internal cycle (psTimeMax/psTimeMin/psPI on a speckle
+%   one, pv* on a fluorescence one), TRACER arrival on a fluorescence bolus
+%   (bsDelay/bsMtt), and nothing at all on an angiogram, which carries no timing.
+%
+%   AND WHEN NOTHING DRIVES IT, THIS STEP SAYS SO.  Every driving slider used to be built
+%   from a column looked up by name, and an absent column produced no slider - so a
+%   product that had not been through the step which writes those columns opened a GUI
+%   with nothing driving it, every segment came out "Uncertain", and nothing anywhere
+%   said why.  It is now a warning by name (setVesselTypes:noGuessColumns), a line in the
+%   slider panel, and a sentence on the report page.  The labelling still runs: painting
+%   by hand is a legitimate way to use this step, and the point is that a user can tell
+%   which of the two they got.
 %
 %   INPUTS
 %     s        parameter struct
 %                • useReference   true / false
 %                • refFName       path to reference file (if used)
 %                • prchNSize      grid spacing for parenchyma fill-in
-%     fNames   cell array of *_BFI_r.mat paths.
+%     fNames   cell array of *_BFI_r.mat or *_I_r.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
 %     s.cancelFcn()->tf (between files).
 %
 %   SIDE-EFFECTS
-%       *_BFI_r.mat   RESULTS  – fields mapType, .type, .label, etc.
-%       *_BFI_s.mat   SETTINGS – sub-field settings.setVesselTypes added
+%       *_r.mat       RESULTS  – fields mapType, .type, .label, etc.
+%       *_s.mat       SETTINGS – sub-field settings.setVesselTypes added
 %       *_rep_vesseltypes.jpg  the record of the labelling: the artery/vein map over
-%                     the BFI image with the NAMED vessels outlined and annotated.
-%                     Written for EVERY file - under s.useReference only the first
-%                     opens the GUI, and confirming that the inherited labelling
+%                     the product's mean picture with the NAMED vessels outlined and
+%                     annotated.  Written for EVERY file - under s.useReference only the
+%                     first opens the GUI, and confirming that the inherited labelling
 %                     landed correctly on the rest is what the page is for.
 %
 %   EXAMPLE
@@ -39,15 +53,19 @@
 %     setVesselTypes(p, fullfile({D.folder}',{D.name}'));
 %
 %   DEPENDS ON
-%     enhanceForDisplay (background-subtracted preview), Image Processing Toolbox
-%     (bwskel, visboundaries, etc.) and core LSCI utility functions.
+%     getVesselTypeGuess and getVascularCues (Core/Vasculature: which columns drive the
+%     guess on this product, and the guess itself), enhanceForDisplay
+%     (background-subtracted preview), Image Processing Toolbox (bwskel, visboundaries,
+%     etc.) and core LSCI utility functions.
 %
-% See also: setRegions, runSegmentation, runPulsatility, runDynamicSegmentation
+% See also: getVesselTypeGuess, getVascularCues, setVascularTree, setRegions,
+%           runSegmentation, runPulsatility, runIntensityPulsatility, runCTTH,
+%           runDynamicSegmentation
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 07-July-2026
+% Last revision: 08-August-2026
 
 %%Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -65,21 +83,30 @@
 % %convienintly done in a loop as below, but REQUIRES proper file naming.
 % for idxA=5 %animals index list
 %     for idxR=1:2 %ROIs index list
-%         files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*LH%03d*c_BFI_r.mat', idxR, idxA))); %<---ALWAYS REFER TO "_K_r.mat" files, but you may use regexp to define specific "_K_r.mat" files of interest
+%         files      = dir(fullfile(rootFolder,'**',sprintf('Roi%d*LH%03d*c_BFI_r.mat', idxR, idxA))); %<---ALWAYS REFER TO "_BFI_r.mat" files, but you may use regexp to define specific ones of interest
 %         fNames     = fullfile({files.folder}', {files.name}');
 %         s.refFName=fNames{1};
 %         setVesselTypes(s,fNames)
 %     end
 % end
+% %ON THE FLUORESCENCE BRANCH the products are "_I_r.mat" and the guess is driven by the
+% %tracer arrival the transit-time step measures, so the reference is the BOLUS product:
+% % fNames=getFileNamesList(resultsFolder,'*_I_r.mat');
+% % s.useReference=true; s.refFName=fNames{contains(fNames,'_b_I_r.mat')};
+% % setVesselTypes(s,fNames(:));
 
 
 
 function setVesselTypes(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_r.mat'), fNames(:)) )
-    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
-        'step takes the RESULTS member of a product - list them with ' ...
-        'getFileNamesList(rootFolder,''*_c_BFI_r.mat'').']);
+% ONE EXPRESSION, NO FALLBACK.  The speckle branch labels a blood-flow-index product and
+% the fluorescence branch labels an intensity one; both are current, so this is the gate
+% of a step that serves two modalities rather than a reader of an old name.
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_r.mat') || contains(s,'_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries are neither a "_BFI_r.mat" nor an ' ...
+        '"_I_r.mat" product.  Every step takes the RESULTS member of a product - ' ...
+        'list them with getFileNamesList(rootFolder,''*_c_BFI_r.mat'') or ' ...
+        'getFileNamesList(resultsFolder,''*_I_r.mat'').']);
 end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
@@ -98,119 +125,28 @@ for fidx=1:1:numel(fNames)
         load(getProductPath(s.fName,'s'),'settings');
         load(s.fName,'results');
         if (fidx==1 &&  s.useReference ) || ~s.useReference
-            idxs=results.sMetrics{:,'idx'};
-            ctgs=results.sMetrics{:,'category'};
-            bfi=results.sMetrics{:,'BFI'};
-            guess=zeros(size(idxs));
             cMask=results.cMask;
+
+            % ----- the guess sliders, built in the core -----------------------------
+            % THE COLUMNS THAT DRIVE THE GUESS ARE RESOLVED FROM THE PRODUCT, ONCE.
+            % getVesselTypeGuess returns one entry per slider it can actually build -
+            % never an inert one - each carrying its per-segment value, its full range
+            % and its default thumbs, sampled at the segment's first endpoint.  A
+            % slider whose source column is absent is not returned, and gctx.missing
+            % names it so the step can say so instead of quietly labelling everything
+            % "Uncertain".  Sliders 1-2 (pulsatility) start ON, the rest start OFF.
+            [sliderSpec,gctx] = getVesselTypeGuess(results,s.fName);
+            nVis  = numel(sliderSpec);
+            guess = zeros(gctx.N,1);
             % maxGuess (the magnitude of a hand-set label, kept beyond the auto-guess
             % range) is computed from the number of guess sliders once they are built.
-            N=numel(idxs);
-            % Valid category-5 rows the auto-guess may write to (need a 2-endpoint
-            % span idxs(i):idxs(i)+1 that stays inside the guess vector).
-            m5 = ~isnan(idxs) & idxs>=1 & (idxs+1)<=N & (ctgs==5);
-            ii = find(m5);                  % shared by all guess sliders
-            vn = results.sMetrics.Properties.VariableNames;   % available feature columns
-
-            % ----- guess sliders 1-11 (computed once) -------------------------------
-            % The automatic guess is produced by range sliders (see recomputeGuess);
-            % each carries a per-segment value, a full range and initial thumbs, and
-            % is sampled at the segment's first endpoint idxs(i):
-            %   sld1     psPI gradient (this endpoint - next)
-            %   sld2     psPI magnitude
-            %   sld3     BFI / diameter ratio
-            %   sld4     std(BFI) / BFI ratio
-            %   sld5-11  single-column "magnitude" metrics (built by metricSlider):
-            %            the time-of-* metrics are inverted.
-            % A slider whose source column is absent is inert and not shown. Sliders
-            % 1-2 start ON when psPI exists; the rest start OFF. Default thumbs:
-            % sld1 at 0, sld2 at the PI medians around thrsh, sld3 at the data
-            % quartiles, and sld4-11 at the metric's parenchymal (category-1) median.
-            sld1 = struct('seg',nan(N,1),'rng',[-1 1],'lo',0,'hi',0);
-            sld2 = struct('seg',nan(N,1),'rng',[ 0 1],'lo',1/3,'hi',2/3);
-            sld3 = struct('seg',nan(N,1),'rng',[ 0 1],'lo',1/3,'hi',2/3);
-            sld4 = struct('seg',nan(N,1),'rng',[ 0 1],'lo',1/3,'hi',2/3);
-
-            % sliders 1 & 2: psPI gradient and magnitude
-            hasPI = any(strcmp('psPI',vn));
-            if hasPI
-                var=results.sMetrics{:,"psPI"};
-                thrsh=median(var(bfi<prctile(bfi(ctgs==5),10) & ctgs==5),'omitnan');
-                dv = nan(N,1);  mv = nan(N,1);
-                dv(ii) = var(idxs(ii)) - var(idxs(ii)+1);   % this endpoint - next
-                mv(ii) = var(idxs(ii));                      % psPI magnitude here
-                sld1.seg = dv;  sld2.seg = mv;
-
-                % slider 1: symmetric range spanning the endpoint psPI differences
-                % (the category-5 vs category-3 difference along a segment), thumbs at 0
-                R1 = max(abs(dv),[],'omitnan');
-                if ~isfinite(R1) || R1==0, R1 = 1; end
-                sld1.rng = [-R1 R1];  sld1.lo = 0;  sld1.hi = 0;
-
-                % slider 2: range over category-5 psPI; default thumbs at the
-                % medians of category-5 psPI below / above thrsh
-                lo2 = median(var(ctgs==5 & var<thrsh),'omitnan');
-                hi2 = median(var(ctgs==5 & var>thrsh),'omitnan');
-                mvLo = min(mv,[],'omitnan');  mvHi = max(mv,[],'omitnan');
-                if ~isfinite(mvLo) || ~isfinite(mvHi) || mvLo==mvHi, mvLo=0; mvHi=1; end
-                if ~isfinite(lo2), lo2 = mvLo + (mvHi-mvLo)/3;   end
-                if ~isfinite(hi2), hi2 = mvLo + 2*(mvHi-mvLo)/3; end
-                pad = 0.02*(mvHi-mvLo);
-                sld2.rng = [min(mvLo,lo2)-pad, max(mvHi,hi2)+pad];
-                sld2.lo  = min(max(lo2,sld2.rng(1)),sld2.rng(2));
-                sld2.hi  = min(max(hi2,sld2.rng(1)),sld2.rng(2));
-            end
-
-            % slider 3: BFI / diameter ratio (enable-able only if both columns exist)
-            has3 = any(strcmp('BFI',vn)) && any(strcmp('diameter',vn));
-            if has3
-                diam = results.sMetrics{:,'diameter'};
-                r3 = nan(N,1);
-                r3(ii) = bfi(idxs(ii)) ./ diam(idxs(ii));
-                r3(~isfinite(r3)) = NaN;                 % guard divide-by-zero / missing
-                sld3.seg = r3;
-                [sld3.rng, sld3.lo, sld3.hi] = autoRangeThumbs(r3, m5);
-            end
-
-            % slider 4: std(BFI) / BFI ratio; default thumbs at the parenchymal median
-            has4 = any(strcmp('BFI',vn)) && any(strcmp('std(BFI)',vn));
-            if has4
-                sbfi = results.sMetrics{:,"std(BFI)"};
-                r4 = nan(N,1);
-                r4(ii) = sbfi(idxs(ii)) ./ bfi(idxs(ii));
-                r4(~isfinite(r4)) = NaN;
-                rP = sbfi(ctgs==1) ./ bfi(ctgs==1);          % ratio over parenchyma
-                med4 = median(rP(isfinite(rP)));
-                sld4.seg = r4;
-                [sld4.rng, sld4.lo, sld4.hi] = thumbsAtValue(r4, m5, med4);
-            end
-
-            % sliders 5-11: single-column magnitude sliders (parenchymal-median
-            % default). The time-of-* metrics are inverted.
-            % An absent column yields an inert slider (.has == false), so it won't show.
-            sld5  = metricSlider('psTimeMin',   true);
-            sld6  = metricSlider('psTimeMax',   true);
-            sld7  = metricSlider('t0B',         true);
-            sld8  = metricSlider('t5B',         true);
-            sld9  = metricSlider('tUB',         true);
-            sld10 = metricSlider('t90',         true);
-            sld11 = metricSlider('tMB',         true);
-
-            % A slider is only built/shown when the variable it relies on is present;
-            % absent ones are omitted entirely (not just disabled). Sliders 1-2 share
-            % psPI; the rest each rely on their own column.
-            present = [hasPI hasPI has3 has4 ...
-                sld5.has sld6.has sld7.has sld8.has sld9.has sld10.has sld11.has];
-            nVis = nnz(present);
+            noDriver = sayWhatDrivesTheGuess(gctx,s.fName);
 
             map=[0;guess];
             map=map(results.sMap+1);
             map(cMask<4)=NaN;
             cmap=vesselTypeColormap();   % blue (vein) -> green (0) -> red (artery)
-            img=sqrt(results.imgBFI);
-            img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
-            fSize=floor((min(size(img))./20))*2+1;
-            img=enhanceForDisplay(img,fSize).*(cMask>0);
+            img=vesselTypeBackdrop(results,gctx.cues,cMask);
             rois=repmat("",1,numel(guess));
 
 
@@ -220,7 +156,7 @@ for fidx=1:1:numel(fNames)
             axL = nexttile(TL,[1 2]);
             imagesc(axL,img), axis(axL,'image','off'), colormap(axL,'parula');
             clim(axL,prctile(img(cMask(:)>0),[1,99]));
-            title('BFI');
+            title(gctx.cues.image,'Interpreter','none');
             axR = nexttile(TL,[1 2]);
             hMap = imagesc(axR,map,'AlphaData',~isnan(map));
             axis(axR,'image','off'), setRightClim(axR,f), colormap(axR,cmap);
@@ -286,39 +222,40 @@ for fidx=1:1:numel(fNames)
                 for fn = fieldnames(results.pulsatility.ppx.scalars).', v=results.pulsatility.ppx.scalars.(fn{1});
                     if chk(v), names{end+1}=['pulsatility.ppx.scalars.' fn{1}]; data{end+1}=v; end, end
             end
-            idx0 = find(strcmp(names,'imgBFI'),1);   % try to start at "imgBFI"
+            % start at the product's own mean picture - 'imgBFI' on the speckle branch
+            % and 'imgI' on the fluorescence one, which getVascularCues has already named
+            idx0 = find(strcmp(names,gctx.cues.image),1);
             if isempty(idx0), idx0 = 1; end
             pop.UserData = struct('ax',axL,'data',{data},'names',{names});
             set(pop,'String',names,'Value',idx0,'Callback',@updateImg);   % ← set start
 
-            % ---------- range sliders (only those whose variable is present) -------
-            % Each slider: a variable-name label with an On/Off switch beside it, a
-            % two-thumb track (right thumb constrained >= left, splitting the range
-            % into 3 segments), and a Reset button. All shown sliders feed the guess;
-            % 1-2 start ON (psPI present), the rest start OFF. Sliders whose source
-            % column is missing are not built at all.
-            sldNames   = {'psPI: this - next','psPI: magnitude', ...
-                'BFI / diameter','std(BFI) / BFI', ...
-                '-psTimeMin','-psTimeMax', ...
-                '-t0B','-t5B','-tUB','-t90','-tMB'};
-            sldRange   = {sld1.rng,sld2.rng,sld3.rng,sld4.rng,sld5.rng,sld6.rng,sld7.rng,sld8.rng,sld9.rng,sld10.rng,sld11.rng};
-            sldLo      = {sld1.lo, sld2.lo, sld3.lo, sld4.lo, sld5.lo, sld6.lo, sld7.lo, sld8.lo, sld9.lo, sld10.lo, sld11.lo};
-            sldHi      = {sld1.hi, sld2.hi, sld3.hi, sld4.hi, sld5.hi, sld6.hi, sld7.hi, sld8.hi, sld9.hi, sld10.hi, sld11.hi};
-            sldSeg     = {sld1.seg,sld2.seg,sld3.seg,sld4.seg,sld5.seg,sld6.seg,sld7.seg,sld8.seg,sld9.seg,sld10.seg,sld11.seg};
-            sldGuess   = true(1,11);                                          % all feed the guess
-            sldEnabled = [hasPI hasPI false false false false false false false false false]; % on by default?
-            sliders = struct([]);                  % only present sliders get built
-            vi = 0;                                % visible-row counter
-            for k = 1:numel(sldNames)
-                if ~present(k), continue, end      % variable missing -> not visualised
-                vi = vi + 1;
+            % ---------- range sliders (one per spec the core returned) -------------
+            % Each slider: its label with an On/Off switch beside it, a two-thumb track
+            % (right thumb constrained >= left, splitting the range into 3 segments),
+            % and a Reset button. All shown sliders feed the guess. The core returned
+            % ONLY the ones whose source column is present, so there is nothing to skip
+            % here - which is the difference between a slider that is absent because the
+            % quantity does not exist on this product and one that is absent because a
+            % step has not been run.
+            sliders = struct([]);
+            for k = 1:nVis
                 bandH = 1/nVis;
-                yBand = 1 - vi*bandH;              % top row first, by visible position
-                rs = addRangeSlider(f,pSld,[0 yBand 1 bandH],sldNames{k}, ...
-                    sldRange{k},sldLo{k},sldHi{k},sldEnabled(k),false);
-                rs.guesses = sldGuess(k);          % whether it contributes to the guess
-                rs.segVals = sldSeg{k};            % per-segment variable (or [])
-                if vi==1, sliders = rs; else, sliders(vi) = rs; end
+                yBand = 1 - k*bandH;               % top row first
+                rs = addRangeSlider(f,pSld,[0 yBand 1 bandH],sliderSpec(k).name, ...
+                    sliderSpec(k).rng,sliderSpec(k).lo,sliderSpec(k).hi, ...
+                    sliderSpec(k).enabled,false);
+                rs.guesses = sliderSpec(k).guesses; % whether it contributes to the guess
+                rs.seg     = sliderSpec(k).seg;     % per-segment variable
+                if k==1, sliders = rs; else, sliders(k) = rs; end
+            end
+            % AND WHEN THERE ARE NONE, THE PANEL SAYS SO rather than being empty.  An
+            % operator who opens this on a product that has not been through the timing
+            % step sees why every vessel is undecided, in the place where the reason for
+            % it would have been.
+            if nVis==0
+                uicontrol(pSld,'Style','text','String',noDriver, ...
+                    'Units','normalized','Position',[.04 .05 .92 .90], ...
+                    'HorizontalAlignment','left','BackgroundColor','w');
             end
             setappdata(f,'sliders',sliders);
             setappdata(f,'activeSlider',[]);
@@ -330,7 +267,7 @@ for fidx=1:1:numel(fNames)
 
             % ---------- share data for painting routine -----------------------------
             guidata(f,struct('map',map,'cMask',cMask,'guess',guess,'maxGuess',maxGuess,'rois',rois,'sMap',results.sMap,'hMap',hMap,'axL',axL,'axR',axR, ...
-                'userSet',false(size(guess)),'idxs',idxs,'m5',m5));
+                'userSet',false(size(guess)),'gctx',gctx));
             setappdata(f,'paintVal',[]);
             set(f,'WindowButtonDownFcn',@startPaint,'WindowButtonUpFcn',@stopPaint, ...
                 'WindowButtonMotionFcn',@onHover, ...     % hover: label inspector + slider focus
@@ -742,8 +679,10 @@ reportClose(rep);
         %   lo, hi     = initial thumb positions ([] => split the range in thirds;
         %                right thumb is kept at or above the left thumb)
         %   enabled    = logical, whether the slider starts active
-        %   lockSwitch = logical, if true the On/Off switch cannot be toggled
-        %                (used when the driving variable, e.g. psPI, is absent)
+        %   lockSwitch = logical, if true the On/Off switch cannot be toggled.  No
+        %                caller passes true today: a slider whose driving column is
+        %                absent is not built at all (getVesselTypeGuess returns only
+        %                the ones it could build), so there is nothing to lock
         % The two thumbs split the range into three segments. Handles + state are
         % returned in S (stored in the 'sliders' appdata).
         bx=band(1); by=band(2); bw=band(3); bh=band(4);
@@ -903,30 +842,17 @@ reportClose(rep);
         if sld(idx).guesses, recomputeGuess(fig); end
     end
     function recomputeGuess(fig)
-        % Re-derives the automatic part of the guess from the enabled,
-        % guess-driving range sliders, then refreshes the right-hand label image.
-        %   value above a slider's HIGH thumb -> +1 (artery)
-        %   value below a slider's LOW  thumb -> -1 (vein)
-        %   value between the two thumbs       ->  0 (unknown)
-        % Contributions from every enabled guess slider are summed; a disabled
-        % slider contributes nothing. Segments the user labelled by hand
-        % (gui.userSet) keep their value and are never overwritten.
+        % Re-derives the automatic part of the guess from the enabled, guess-driving
+        % range sliders, then refreshes the right-hand label image.  THE VOTE ITSELF IS
+        % THE CORE'S, called here on every thumb drag and by the test on the specs it
+        % returned - one implementation, so the live guess and the checked guess cannot
+        % come apart.  Segments the user labelled by hand (gui.userSet) keep their value
+        % and are never overwritten.
         gui = guidata(fig);
         if ~isstruct(gui) || ~isfield(gui,'guess'), return, end
         sld = getappdata(fig,'sliders');
 
-        votes = zeros(numel(gui.guess),1);       % per-row +1 / -1 / 0 tally
-        for si = 1:numel(sld)
-            if sld(si).guesses && sld(si).enabled && ~isempty(sld(si).segVals)
-                vv = sld(si).segVals(:);
-                votes = votes + double(vv > sld(si).hi) - double(vv < sld(si).lo);
-            end
-        end
-
-        % spread each segment's vote over its two endpoints idxs(i):idxs(i)+1
-        selRows = gui.m5;                          % valid category-5 rows
-        autoG = accumarray(gui.idxs(selRows),   votes(selRows), [numel(gui.guess) 1]) + ...
-            accumarray(gui.idxs(selRows)+1, votes(selRows), [numel(gui.guess) 1]);
+        autoG = getVesselTypeGuess('vote',sld,gui.gctx);
 
         gNew = gui.guess;
         gNew(~gui.userSet) = autoG(~gui.userSet); % auto only where not hand-labelled
@@ -940,68 +866,6 @@ reportClose(rep);
         setRightClim(gui.axR, fig);
         guidata(fig,gui);
     end
-    function [rng, lo, hi] = autoRangeThumbs(vals, vmask)
-        % Pick a range and default thumbs for a guess slider from the spread of
-        % its per-segment values (over the valid rows in vmask): range = observed
-        % min/max (padded), thumbs = medians of the lower / upper halves (roughly
-        % the quartiles). Falls back to [0 1] split in thirds without enough data.
-        rr = vals(vmask);
-        rr = rr(isfinite(rr));
-        if isempty(rr)
-            rng = [0 1]; lo = 1/3; hi = 2/3; return
-        end
-        rmin = min(rr);  rmax = max(rr);
-        if rmin==rmax, rmin = rmin-0.5; rmax = rmax+0.5; end
-        rmed = median(rr);
-        lo = median(rr(rr<rmed));            % ~ lower quartile
-        hi = median(rr(rr>rmed));            % ~ upper quartile
-        if ~isfinite(lo), lo = rmin + (rmax-rmin)/3;   end
-        if ~isfinite(hi), hi = rmin + 2*(rmax-rmin)/3; end
-        pd  = 0.02*(rmax-rmin);
-        rng = [rmin-pd, rmax+pd];
-        lo  = min(max(lo,rng(1)),rng(2));
-        hi  = min(max(hi,rng(1)),rng(2));
-        if hi<lo, hi=lo; end
-    end
-    function [rng, lo, hi] = thumbsAtValue(vals, vmask, defVal)
-        % Range spans the per-segment values over vmask (extended to include
-        % defVal), and BOTH thumbs start at defVal -- e.g. the parenchymal median,
-        % giving a single threshold there by default. Falls back to the range
-        % midpoint / [0 1] when defVal or the data is unavailable.
-        rr = vals(vmask);
-        rr = rr(isfinite(rr));
-        haveData = ~isempty(rr);
-        haveDef  = isscalar(defVal) && isfinite(defVal);
-        if ~haveData && ~haveDef
-            rng = [0 1]; lo = 0.5; hi = 0.5; return
-        end
-        if haveData, rmin = min(rr); rmax = max(rr); else, rmin = defVal; rmax = defVal; end
-        if haveDef,  rmin = min(rmin,defVal); rmax = max(rmax,defVal); end
-        if rmin==rmax, rmin = rmin-0.5; rmax = rmax+0.5; end
-        pd  = 0.02*(rmax-rmin);
-        rng = [rmin-pd, rmax+pd];
-        if haveDef, vc = defVal; else, vc = (rmin+rmax)/2; end
-        vc  = min(max(vc,rng(1)),rng(2));
-        lo  = vc;  hi = vc;
-    end
-    function S = metricSlider(col, invert)
-        % Build a single-column "magnitude" guess slider for the table column
-        % named col: per-segment value is that metric (negated when invert is
-        % true) sampled at the segment's first endpoint idxs(i), with both thumbs
-        % defaulting to its median over parenchymal (category-1) segments. Returns
-        % an inert slider with S.has == false when the column is absent, so the
-        % caller can skip building/showing it. Uses the shared setup variables
-        % vn / results / idxs / ii / ctgs / m5 / N.
-        S = struct('seg',nan(N,1),'rng',[0 1],'lo',1/3,'hi',2/3,'has',false);
-        if ~any(strcmp(col,vn)), return, end
-        xv = results.sMetrics{:,col};
-        if invert, xv = -xv; end
-        sv = nan(N,1);  sv(ii) = xv(idxs(ii));
-        sv(~isfinite(sv)) = NaN;
-        mPar = xv(ctgs==1);  medv = median(mPar(isfinite(mPar)));
-        S.seg = sv;  S.has = true;
-        [S.rng, S.lo, S.hi] = thumbsAtValue(sv, m5, medv);
-    end
 
 end
 
@@ -1010,6 +874,81 @@ end
 % everything above this line is a nested callback that does.
 % =====================================================================
 
+function msg = sayWhatDrivesTheGuess(gctx,fName)
+%sayWhatDrivesTheGuess  THE OUT-LOUD HALF OF THIS STEP, and the reason S10 existed.
+%
+%   Both vascular steps read per-segment columns by name.  setVascularTree's core refuses
+%   LOUDLY when none of them has data - it will not invent a flow direction.  This step
+%   degraded SILENTLY instead: a missing column simply produced no slider, so the guess
+%   lost its driving variables, every vessel came out "Uncertain", and the only evidence
+%   was a panel with fewer rows in it than usual.  That is the documented trap on the
+%   speckle branch for a contrast product that skipped pulsatility, and the fluorescence
+%   branch reproduced it for a whole modality.
+%
+%   IT IS A WARNING AND NOT AN ERROR, deliberately.  Painting types by hand on a product
+%   with no timing is a legitimate way to use this step - what was wrong was not being
+%   able to tell that from a guess that had worked.  Returns the sentence so the slider
+%   panel and the report page carry the same words.
+msg = '';
+if gctx.driving > 0
+    if isempty(gctx.missing), return; end
+    % SOME of them arrived: say which did not, since a guess driven by half its
+    % variables looks exactly like one driven by all of them
+    warning('setVesselTypes:someGuessColumns', ...
+        ['%s: the automatic guess is missing %s.  It is running on the %d ' ...
+         'measurement(s) that are there.'], ...
+        shortName(fName), strjoin(gctx.missing,', '), gctx.driving);
+    return
+end
+
+if isempty(gctx.what)
+    % nothing was ever going to drive it - an angiogram is one picture of a whole
+    % recording and carries no timing at all
+    msg = ['This recording has no timing on it, so every vessel starts undecided ' ...
+           'and the types have to be painted by hand.'];
+    warning('setVesselTypes:noGuessColumns', ...
+        ['%s carries no timing, so there is nothing to guess artery from vein with. ' ...
+         'Every vessel will read "Uncertain" unless it is painted by hand.'], ...
+        shortName(fName));
+else
+    msg = sprintf(['Nothing measures %s on this recording yet, so every vessel ' ...
+        'starts undecided.  Run %s first, or paint the types by hand.'], ...
+        gctx.what, lower(gctx.writtenBy));
+    warning('setVesselTypes:noGuessColumns', ...
+        ['%s has not been through %s, so nothing measures %s on it and the ' ...
+         'automatic guess has no driving variable: every vessel will read ' ...
+         '"Uncertain" unless it is painted by hand.'], ...
+        shortName(fName), lower(gctx.writtenBy), gctx.what);
+end
+end
+
+% =====================================================================
+function img = vesselTypeBackdrop(results,cues,cMask)
+%vesselTypeBackdrop  The product's mean picture, prepared for display.
+%   ONE DISPLAY PIPELINE FOR BOTH BRANCHES, on purpose: the square root is a mild gamma
+%   and mat2gray normalises on the picture's own 5th-99th percentiles, so a blood-flow
+%   index and a fluorescence intensity are shown the same way and the two branches' pages
+%   read alike.  It touches nothing this step writes.  Which FIELD holds the picture is
+%   getVascularCues' answer - 'imgBFI' on the speckle branch, 'imgI' on the fluorescence
+%   one - because there is no BFI twin on the intensity side [D10].
+if ~isfield(results,cues.image)
+    img = double(cMask>0); return          % no picture: the mask is still a backdrop
+end
+img = sqrt(double(results.(cues.image)));
+lo  = double(prctile(img(cMask(:)>0),[5,99]));
+if ~all(isfinite(lo)) || lo(2)<=lo(1), lo = [min(img(:)) max(img(:))+eps]; end
+img = mat2gray(img,lo);
+fSize = floor((min(size(img))./20))*2+1;
+img = enhanceForDisplay(img,fSize).*(cMask>0);
+end
+
+% =====================================================================
+function n = shortName(p)
+[~,nm,ex] = fileparts(char(p));
+n = [nm ex];
+end
+
+% =====================================================================
 function cmap=vesselTypeColormap()
 %vesselTypeColormap  The one artery/vein colour convention: blue for vein, green
 %   for undecided, red for artery.  Used by the labelling GUI and by the report
@@ -1022,25 +961,27 @@ end
 
 % =====================================================================
 function writeVesselTypesReport(rep,fName,results)
-%writeVesselTypesReport  Save <name>_rep_vesseltypes.jpg: the artery/vein map over
-%   the BFI image, with the NAMED vessels outlined and annotated.
+%writeVesselTypesReport  Save <name>_rep_vesseltypes.jpg: the artery/vein map over the
+%   product's mean picture, with the NAMED vessels outlined and annotated.
 %
 %   Only the non-empty labels count as "labelled vessels" - the ones somebody typed
 %   a name for.  Everything else is left to the colour map, which already says
 %   artery or vein.  The page is a record, so it is written even when nothing was
 %   named: an unlabelled map is still the map that was accepted.
 %
+%   AND IT SAYS WHEN NOTHING DROVE THE GUESS.  A page of undecided vessels looks the same
+%   whether the measurements disagreed or were never taken, and the page is what a
+%   reviewer sees months later, so the caption carries the difference.
+%
 %   A FAILURE HERE COSTS A LINE, NOT THE RUN.  This page is new: before it existed
 %   setVesselTypes saved its labelling and moved on, and it must still do that.
-if ~isfield(results,'mapType') || ~isfield(results,'sMap') || ~isfield(results,'imgBFI')
+cues=getVascularCues(fName);
+if ~isfield(results,'mapType') || ~isfield(results,'sMap') || ~isfield(results,cues.image)
     return
 end
 
 cMask=results.cMask;
-img=sqrt(results.imgBFI);
-img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
-fSize=floor((min(size(img))./20))*2+1;
-img=enhanceForDisplay(img,fSize).*(cMask>0);
+img=vesselTypeBackdrop(results,cues,cMask);
 
 map=results.mapType;
 L=max(abs(map(:)),[],'omitnan');
@@ -1084,7 +1025,19 @@ try
             'VerticalAlignment','middle','Interpreter','none');
     end
     hold(axMap,'off'); hold(ax,'off')
-    title(axMap,sprintf('Vessel types (blue vein / red artery), %d named',nNamed))
+    % WAS THE GUESS DRIVEN BY ANYTHING?  Read off the product rather than passed in, so
+    % the page says the same thing whether this file opened the GUI or inherited its
+    % labelling from the reference.
+    drivers = intersect([cues.arrival(:); {cues.pulsatility}], ...
+                        results.sMetrics.Properties.VariableNames);
+    if isempty(drivers) && ~isempty(cues.what)
+        tail = sprintf(', painted by hand - nothing measures %s on this recording',cues.what);
+    elseif isempty(drivers)
+        tail = ', painted by hand - this recording carries no timing to guess from';
+    else
+        tail = '';
+    end
+    title(axMap,sprintf('Vessel types (blue vein / red artery), %d named%s',nNamed,tail))
 catch
     delete(f);              % no page, no line: a report is a by-product
     return

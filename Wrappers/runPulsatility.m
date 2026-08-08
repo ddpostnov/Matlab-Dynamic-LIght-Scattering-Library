@@ -1,7 +1,7 @@
 %runPulsatility  Harmonic pulsatility analysis into the results.pulsatility tree
 %
 %   runPulsatility(s,fNames) loads every *_BFI_r.mat cardiac-cycle triplet in
-%   fNames (produced by runInternalCycle/runExternalCycle -> runSegmentation ->
+%   fNames (produced by runContrastInternalCycle -> runSegmentation ->
 %   runBFI: results.sData/dvsData/dvsDiameter [nT x nSeg] on results.time, plus
 %   the source cube source.data [Y x X x nT]) and reduces every averaged cycle to
 %   classical pulsatility markers and, optionally, an nHarm-harmonic sine fit
@@ -45,6 +45,25 @@
 %                         (from dvsDiameter): the six pd*
 %     BFI / std(BFI) are runBFI's columns and are LEFT UNTOUCHED (not written here).
 %
+%   WHAT pd* IS FOR, AND THE PULSATILITY IT CANNOT SEE.  dvsDiameter is a per-frame
+%   diameter walked from INTEGER indices on a profile interpolated by s.pInterpF
+%   (runDynamicSegmentation:338), so the trace cannot change by less than 0.25 px.
+%   That is the right instrument for VASOMOTION and VASOREACTIVITY, where a diameter
+%   moves by whole pixels over tens of seconds.  It is the WRONG one for a cardiac
+%   cycle: measured on the fluorescence reference recording the cardiac change is
+%   0.014 to 0.152 px zero-to-peak, i.e. 1.6 to 18 times SMALLER than one step of the
+%   instrument, and the per-frame noise is 4.6 to 45 times the modulation.  There is
+%   also no matched control anywhere in this wrapper, so pdPI on such a trace is
+%   (max-min)/mean of the quantisation and nothing says so.
+%
+%   AND pd* MUST NEVER BE POOLED WITH wm*.  runMotionEnhancement measures the same
+%   physical quantity - how far a wall moved - on the fluorescence branch, sub-pixel,
+%   against a matched control, with the translation split beside it.  The two differ by
+%   an order of magnitude in resolution and only one of them can see a cardiac cycle,
+%   exactly as this library already forbids pooling an nd* column with an ns* one.
+%   The fluorescence pulsatility step does not write pd* at all, for the reason above:
+%   see runIntensityPulsatility.
+%
 %   INPUTS
 %     s        parameter struct with fields
 %                • nHarm          number of harmonics in the sine model (default 5)
@@ -77,10 +96,13 @@
 %     Core/Pulsatility/getPulsatilityMetrics (shared harmonic pulsatility core),
 %     MATLAB Curve Fitting Toolbox (fit); core LSCI library utilities.
 %
+% See also: getPulsatilityMetrics, runIntensityPulsatility, runVasomotion,
+%           runContrastInternalCycle, runDynamicSegmentation, runMotionEnhancement
+%
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 25-July-2026
+% Last revision: 08-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -265,7 +287,12 @@ for fidx=1:1:numel(fNames)
             fitRanPix=wantPix.model || wantPix.reconstruction;
 
             sz=size(source.data); Y=sz(1); X=sz(2); nTp=sz(3); npx=Y*X;
-            T=results.time(end);                 %cycle duration for the wrap/symmetry
+            %CYCLE DURATION FROM THE LAYOUT, NOT RE-DERIVED HERE.  This was a second copy
+            %of the period expression and the two are only the same while the cycle is
+            %sampled at its endpoints; getPulsatilityMetrics owns the definition for both
+            %conventions now, so the per-pixel wrap/symmetry cannot drift from the
+            %per-segment one.  Identical to the bit on this branch (time(1) is zero).
+            T=layoutPix.T;                       %cycle duration for the wrap/symmetry
             invPix=all(isnan(source.data),3);    %[Y x X] all-NaN cycles (invalid -> NaN)
 
             if fitRanPix

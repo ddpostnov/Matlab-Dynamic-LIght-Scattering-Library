@@ -284,7 +284,7 @@
 %    fprintf('CVR = %.1f %%, t_max = %.1f min, steal = %d\n', ...
 %        100*m.CVR, m.TMaxModel/60, m.Steal);
 %
-% See also: runFitVasoreactivity, fitNVC, getPulsatilityMetrics, getVasomotionMetrics,
+% See also: runFitVasoreactivity, getPulsatilityMetrics, getVasomotionMetrics,
 %           blockDecimate, quasiUniform, lsqcurvefit
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)

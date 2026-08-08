@@ -166,7 +166,7 @@ if useGPU
     %impossible without a cap.  And the chunk plus the one same-sized temporary the
     %metrics below make of it may take only a share of the card: half the coefficient,
     %because getK's own splitter then budgets against what is left.  Wrappers/
-    %runInternalCycle.m sizes its batch from AvailableMemory the same way.
+    %runContrastInternalCycle.m sizes its batch from AvailableMemory the same way.
     gpuDev = gpuDevice;
     bytesPerFrame = sz(1)*sz(2)*(2*stream.dataSize+1);
     batchSize = min([batchSize, ...

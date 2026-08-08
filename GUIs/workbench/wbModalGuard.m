@@ -1,7 +1,7 @@
 %wbModalGuard - Park the workbench window around a blocking interactive step.
 %
 %   The interactive pipeline steps (setRegions, setVesselTypes, setVascularTree,
-%   and the conditionally-blocking contrast/registration/externalCycle) open
+%   and the conditionally-blocking contrast/registration/nvc) open
 %   their OWN editor figures and block until the user presses Done.  They cannot
 %   be made modal from outside.  wbModalGuard covers the workbench figure with an
 %   overlay panel ("finish the pop-up window"), guards its close button, runs the

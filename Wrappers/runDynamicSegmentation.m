@@ -39,17 +39,27 @@
 %     runSegmentation(s,fNames);
 %     runDynamicSegmentation(s,fNames);
 %
-%   DEPENDS ON
-%     getSegmentationLabels, showSegmentsPreview (Core/LSCI) + MATLAB's Image
-%     Processing Toolbox (bwdist, islocalmax, bwareaopen, bwareafilt, polyfit, pca,
-%     imresize3, ...).
+%   WHICH WAY ROUND THE VESSELS ARE reaches FOUR places in this step - the ridge
+%   image the centre lines are seeded from, the profile the lumen edges are walked
+%   along, the trace written into dvsData, and the report page - and getVesselPolarity
+%   answers it once for all four.  Until 2026-08-08 the first of the four was
+%   UNCONDITIONAL: the mean image was inverted whatever the product was, so on an
+%   intensity recording islocalmax hunted ridges in the tissue BETWEEN the vessels
+%   while the other three sites correctly did not invert.  Nothing on the speckle
+%   path changes - dark vessels still invert - but the intensity path was wrong and
+%   looked right.
 %
-% See also: runSegmentation, setRegions, getSegmentationLabels
+%   DEPENDS ON
+%     getVesselPolarity, getSegmentationLabels, showSegmentsPreview (Core) +
+%     MATLAB's Image Processing Toolbox (bwdist, islocalmax, bwareaopen, bwareafilt,
+%     polyfit, pca, imresize3, ...).
+%
+% See also: runSegmentation, setRegions, getVesselPolarity, getSegmentationLabels
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 27-July-2026
+% Last revision: 08-August-2026
 
 
 %%Example of s structure parametrisation
@@ -94,6 +104,9 @@ for fidx=1:1:numel(fNames)
     load(getProductPath(s.fName,'s'),'settings');
     load(s.fName,'results');
 
+    % --- which way round the vessels are: one answer, four uses below ---
+    polarity = getVesselPolarity(s.fName);
+
     % --- re-derive the labelling transients from the persisted seam (option a) ---
     edgeSize = settings.runSegmentation.edgeSize;
     [~,~,sLines,cMask,vsMap,dMask,nodes] = getSegmentationLabels(results.cMask,edgeSize,s);
@@ -115,7 +128,12 @@ for fidx=1:1:numel(fNames)
     tmp(cMask==0)=nan;
     img=mean(source.data,3,'omitnan');
     img=img.*tmp;
-    img=imcomplement(img);
+    % islocalmax below seeds the centre lines from the RIDGES of this image, so the
+    % vessels have to be its high ground.  Inverting a picture whose vessels are
+    % already bright puts the ridges in the tissue between them.
+    if strcmp(polarity,'dark')
+        img=imcomplement(img);
+    end
     d2C=bwdist(~dMask).*(dMask);
     d2MY=islocalmax(img,1).*(cMask==5);
     [~,d2MY]=bwdist(d2MY);
@@ -209,9 +227,11 @@ for fidx=1:1:numel(fNames)
                 dataROI=single(source.data(limY(1):limY(2),limX(1):limX(2),:));
                 compVal=max(dataROI(:));
                 maskROI(maskROI==0)=NaN;
-                if contains(s.fName,'_K_r.mat')
+                % The edge walk below grows a bright foreground out of its own peak,
+                % so both arms end with the lumen bright above a zero floor.
+                if strcmp(polarity,'dark')
                     dataROI=compVal-dataROI;
-                elseif contains(s.fName,'_I_r.mat')
+                else
                     dataROI=dataROI-min(dataROI(dataROI(:)>0));
                 end
                 dataROI=dataROI.*maskROI;
@@ -337,9 +357,9 @@ for fidx=1:1:numel(fNames)
                     dvsMetrics(counter,:)={lineIdx,sL,sCLR,sR2,test1,test2};
                     dvsDiameter(:,counter)=(idxR-idxL)* abs(sind(theta))./s.pInterpF;
                     for i=1:1:size(dataProfile,2)
-                        if contains(s.fName,'_K_r.mat')
+                        if strcmp(polarity,'dark')
                             dvsData(i,counter)=compVal-mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan');
-                        elseif contains(s.fName,'_I_r.mat')
+                        else
                             dvsData(i,counter)=mean(dataProfile(idxL(i):idxR(i),i),1,'omitnan')-min(dataROI(dataROI(:)>0));
                         end
                     end
@@ -360,9 +380,8 @@ for fidx=1:1:numel(fNames)
     % --- segments preview: re-emit the page with the accepted dynamic segments overlaid ---
     % (overwrites the static one runSegmentation wrote, matching the old attmemptDS
     %  artifact) using the merged cMask (recomputed above) and the persisted results.sMap.
-    isK=contains(s.fName,'_K_r.mat');
     fh=reportFigure(rep,'segments');
-    showSegmentsPreview(fh,source.data,cMask,results.sMap,isK,dvsMap);
+    showSegmentsPreview(fh,source.data,cMask,results.sMap,polarity,dvsMap);
     reportSave(rep,fh,'segments',s.fName);
 
     %Save the data

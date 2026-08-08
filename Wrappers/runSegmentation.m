@@ -16,13 +16,21 @@
 %       -> getPixelCategories  (edge size + enhancement + trust mask + 5-level cMask)
 %       -> _rep_categories page
 %       -> getSegmentationLabels (centerlines -> sMap/pMap; merges inner walls)
-%       -> single cube pass -> sMetrics (geometry) + sData (traces)
+%       -> one grouping pass over sMap -> sMetrics (geometry) + sData (traces)
 %       -> _rep_segments page -> save
+%
+%   WHICH WAY ROUND THE VESSELS ARE IS RESOLVED IN ONE PLACE, getVesselPolarity, and
+%   never by a file-name test here: a contrast product's vessels are dark as a matter
+%   of physics and an intensity product's are bright by this library's stated
+%   assumption.  It matters that the two are asked as one question, because inverting
+%   a picture that should not have been inverted segments the tissue BETWEEN the
+%   vessels and nothing about the run looks wrong afterwards.
 %
 %   INPUTS
 %     s        parameter structure.
 %              Categorization (read by getPixelCategories): trustLimitsK, iniSizeN,
-%                lSizeN, sSizeN, sens, deSens, sSizeScale, lThinN, imOpen, iEdge, eEdge.
+%                diffusionSchedule, lSizeN, sSizeN, sens, deSens, sSizeScale,
+%                lThinN, imOpen, iEdge, eEdge.
 %              Labelling (read by getSegmentationLabels): correctNodes, simR, difR,
 %                sMinL, prchNSize.
 %              Traces: sStat ('mean' or, default, 'median').
@@ -59,16 +67,17 @@
 %     runDynamicSegmentation(s,fNames);                        % optional heavy loop
 %
 %   DEPENDS ON
-%     getPixelCategories, getSegmentationLabels, enhanceForDisplay,
-%     showSegmentsPreview (Core/LSCI); plus MATLAB's Image Processing Toolbox.
+%     getVesselPolarity, getPixelCategories, getSegmentationLabels,
+%     enhanceForDisplay, showSegmentsPreview (Core); plus MATLAB's Image
+%     Processing Toolbox.
 %
-% See also: setRegions, runDynamicSegmentation, getPixelCategories,
-%           getSegmentationLabels, splitRegions
+% See also: setRegions, runDynamicSegmentation, getVesselPolarity,
+%           getPixelCategories, getSegmentationLabels, splitRegions
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 27-July-2026
+% Last revision: 08-August-2026
 
 
 %%Example of s structure parametrisation
@@ -84,6 +93,10 @@
 % s.imOpen=2;  % small-vessel thinning
 % s.iniSizeN=7;% Odd number equal or larger than the spatial contrast kernel
 % s.iEdge=2; s.eEdge=2; % internal / external wall edge widths
+% s.diffusionSchedule='multiscale'; % 'multiscale' (nine extra coarse-to-fine passes,
+%              % written for speckle contrast's noise) or 'single'.  Default when the
+%              % field is absent is 'multiscale', which is what every launcher here
+%              % was already doing.
 % %ADJUSTED (OR VERIFIED) PER PROTOCOL - LABELLING & TRACES
 % s.correctNodes=true; s.simR=0.3; s.difR=0.4; % branch-node correction
 % s.sMinL=15;      % minimum segment length
@@ -105,6 +118,18 @@ if ~isfield(s,'fNamesCopyTo'), s.fNamesCopyTo={}; end
 if ~isfield(s,'parforSegmentationLabels') || isempty(s.parforSegmentationLabels)
     s.parforSegmentationLabels=true;
 end
+% The same, for the diffusion schedule that used to be chosen by the file's product
+% token.  'multiscale' is what every launcher in this repository was already getting,
+% so an s written before the field existed keeps its numbers exactly; the workbench
+% supplies it from the step's own preset, which is where the two branches differ.
+if ~isfield(s,'diffusionSchedule') || isempty(s.diffusionSchedule)
+    s.diffusionSchedule='multiscale';
+end
+if ~any(strcmp(s.diffusionSchedule,{'multiscale','single'}))
+    error('runSegmentation:diffusionSchedule', ...
+        ['The vessel-smoothing schedule is either "multiscale" or "single"; ' ...
+         '"%s" is neither.'], char(s.diffusionSchedule));
+end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
 % are resolved to no-ops when absent and ride in rep.  s is never mutated, and
@@ -121,9 +146,9 @@ for fidx=1:1:numel(fNames)
     load(getProductPath(s.fName,'s'),'settings');
     load(s.fName,'results');
 
-    % --- mean image + modality ---
-    isK=contains(s.fName,'_K_r.mat');
-    if isK
+    % --- which way round the vessels are, and which mean image holds them ---
+    [polarity,product]=getVesselPolarity(s.fName);
+    if strcmp(product,'K')
         if isfield(results,'imgK')
             imgIni=results.imgK;
         else
@@ -142,8 +167,11 @@ for fidx=1:1:numel(fNames)
     end
 
     % --- categorize (automatic core: edge size + enhancement + trust mask + cMask) ---
+    % An intensity product carries no results.mask of its own - neither entry step
+    % writes one, deliberately (see 03-regions-segmentation.md) - so existingMask is
+    % empty there and the trust mask is derived open, restricted only by the regions.
     if isfield(results,'mask'), existingMask=results.mask; else, existingMask=[]; end
-    [cMask,s.edgeSize,maskOut,imgVis]=getPixelCategories(imgIni,regionsMask,existingMask,isK,s);
+    [cMask,s.edgeSize,maskOut,imgVis]=getPixelCategories(imgIni,regionsMask,existingMask,product,polarity,s);
     results.regionsMask=regionsMask;
     results.mask=(maskOut==(regionsMask>0));
     results.cMask=cMask;                          % store the 5-level (un-merged) mask
@@ -155,78 +183,16 @@ for fidx=1:1:numel(fNames)
     results.pMap=pMap;
 
     %Build segments table
-    varTypes = ["double","double","double","double","double","double","double","double"];
-    varNames = ["idx","category","length","CLR","diameter","std(diameter)","area","nearestVesIdx"];
-    sMetrics=table('Size',[max(sMap(:)),8],'VariableTypes',varTypes,'VariableNames',varNames);
-    sData=zeros(size(source.data,3),max(sMap(:)));
+    % ONE pass over the labelled pixels gives every label its pixel list and its area;
+    % the metrics and the traces then index that grouping instead of re-scanning the
+    % whole image once per label (5215 labels x 1.69e6 pixels on a 1300 x 1300 field).
+    nSeg=double(max(sMap(:)));
+    grp=labelPixelGroups(sMap,nSeg);
+    sMetrics=segmentMetrics(sLines,cMask,dMask,grp,nSeg);
+
     dataSize=size(source.data);
     source.data=reshape(source.data,[],dataSize(3));
-    for i=1:1:max(sMap(:))
-        area=sum(sMap(:)==i);
-        if area>0
-            if strcmp(s.sStat,'mean')
-            sData(:,i)=mean(source.data(sMap(:)==i,:),1,'omitnan');
-            else %DEFAULT
-            sData(:,i)=median(source.data(sMap(:)==i,:),1,'omitnan');
-            end
-            c=unique(cMask(sMap==i));
-            if numel(c)~=1
-                error("Mix of categories detected in the region");
-            end
-
-            if c==5
-                %Measure segment length
-                tmp=(sLines==i);
-                ends=bwmorph(sLines==i,'endpoints');
-                [y,x]  = find(ends);
-                if numel(y)<2
-                    error(['Centerline extraction failed in segment ',num2str(i)]);
-                elseif numel(y)>2
-                    maxDistance=0;
-                    for pointFirst = 1:numel(y)
-                        seedMask = false(size(tmp));
-                        seedMask(y(pointFirst), x(pointFirst)) = true;
-
-                        % Calculate distance along the curve using quasi-euclidean metric
-                        geodesicMap = bwdistgeodesic(tmp, seedMask, 'quasi-euclidean');
-
-                        for pointSecond = (pointFirst + 1):numel(y)
-                            pathLength = geodesicMap(y(pointSecond), x(pointSecond));
-
-                            % Exclude infinite values occurring if points reside on disconnected segments
-                            if pathLength > maxDistance && ~isinf(pathLength)
-                                maxDistance = pathLength;
-                                pointIndexA = pointFirst;
-                                pointIndexB = pointSecond;
-                            end
-                        end
-                    end
-
-                    x = [x(pointIndexA), x(pointIndexB)];
-                    y = [y(pointIndexA), y(pointIndexB)];
-                end
-                d        = bwdistgeodesic(sLines==i, x(1), y(1), 'quasi-euclidean');
-                l= max(d(~isnan(d)));
-
-                %Measure CLR
-                clr=l./hypot(x(2)-x(1), y(2)-y(1));
-
-                %Get segment diameter
-                d=bwdist(~dMask).*(sLines==i);
-                d=[mean(d(d(:)>0)),std(d(d(:)>0))]*2;
-
-                sMetrics(i,:)={i,c,l,clr,d(1),d(2),area,i};
-            elseif c==3
-                sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,i-1};
-            else
-                sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,NaN};
-
-            end
-        else
-            sData(:,i)=NaN;
-            sMetrics(i,:)={NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN};
-        end
-    end
+    sData=groupedTraces(source.data,grp,nSeg,dataSize(3),s.sStat);
     source.data=reshape(source.data,dataSize);
 
     results.sMap=sMap;
@@ -235,7 +201,7 @@ for fidx=1:1:numel(fNames)
 
     % --- segments preview: the wrapper owns the canvas, the core only draws ---
     fh=reportFigure(rep,'segments');
-    showSegmentsPreview(fh,source.data,cMask,sMap,isK);
+    showSegmentsPreview(fh,source.data,cMask,sMap,polarity);
     reportSave(rep,fh,'segments',s.fName);
 
     %Save the data
@@ -281,8 +247,10 @@ load(getProductPath(targetName,'d'),'source')
 load(getProductPath(targetName,'s'),'settings');
 load(targetName,'results');
 
-isK=contains(targetName,'_K_r.mat');
-if isK
+% The TARGET's own polarity and product token - a copy can cross from an intensity
+% file to a contrast one, and each has to read its own mean image the right way up.
+[polarity,product]=getVesselPolarity(targetName);
+if strcmp(product,'K')
     if isfield(results,'imgK'), imgIni=results.imgK; else, imgIni=mean(source.data,3,'omitmissing'); end
 else
     imgIni=results.imgI;
@@ -300,10 +268,10 @@ results.sMetrics=shared.sMetrics;
 results.sData=extractTraces(source.data,shared.sMap,sT.sStat);
 
 % previews from the target's own image with the copied overlays
-imgVis=categoryPreviewBackground(imgIni,isK);
+imgVis=categoryPreviewBackground(imgIni,polarity);
 writeCategoriesPreview(rep,targetName,imgVis,shared.cMask);
 fh=reportFigure(rep,'segments');
-showSegmentsPreview(fh,source.data,shared.cMask,shared.sMap,isK);
+showSegmentsPreview(fh,source.data,shared.cMask,shared.sMap,polarity);
 reportSave(rep,fh,'segments',targetName);
 
 settings.runSegmentation=reportSettings(sT);  % carry edgeSize / sStat onto the sibling
@@ -315,18 +283,47 @@ end
 
 % =====================================================================
 function sData=extractTraces(dataCube,sMap,sStat)
-%extractTraces  Per-label mean/median trace over a cube - matches runSegmentation's
-%   own sData pass exactly (mean/median over sMap(:)==i; NaN column for empty labels).
+%extractTraces  Per-label mean/median trace over a cube - the same pass runSegmentation
+%   runs on its own file, for a copy target whose sMap arrives from the source.
 dataSize=size(dataCube);
 n=double(max(sMap(:)));
-sData=zeros(dataSize(3),n);
+grp=labelPixelGroups(sMap,n);
 dataCube=reshape(dataCube,[],dataSize(3));
+sData=groupedTraces(dataCube,grp,n,dataSize(3),sStat);
+end
+
+% =====================================================================
+function g=labelPixelGroups(map,n)
+%labelPixelGroups  ONE pass over a label map -> each label's pixel list and area.
+%   g.idx holds every labelled linear index sorted by label, g.first(i):g.last(i) is
+%   label i's slice of it, and g.area(i) is its pixel count.  This replaces the
+%   sum(map(:)==i) / map(:)==i that used to run once per label: on a 1300 x 1300 field
+%   with 5215 labels those were 8.8e9 element compares for information one pass holds.
+%
+%   sort is STABLE, so within a label the indices stay ASCENDING - the exact order, and
+%   therefore the exact floating-point summation order, a logical map(:)==i would give.
+lin=find(map>0);
+lin=lin(:);
+[lab,ord]=sort(double(map(lin)));
+g.idx  = lin(ord);
+g.area = accumarray(lab,1,[n 1]);
+g.last = cumsum(g.area);
+g.first= g.last-g.area+1;
+end
+
+% =====================================================================
+function sData=groupedTraces(dataFlat,g,n,nT,sStat)
+%groupedTraces  Per-label mean/median trace, one gather per label from the grouping.
+%   dataFlat is the cube reshaped to [nPixels x nT]; empty labels get a NaN column.
+sData=zeros(nT,n);
+useMean=strcmp(sStat,'mean');
 for i=1:1:n
-    if sum(sMap(:)==i)>0
-        if strcmp(sStat,'mean')
-            sData(:,i)=mean(dataCube(sMap(:)==i,:),1,'omitnan');
+    if g.area(i)>0
+        rows=g.idx(g.first(i):g.last(i));
+        if useMean
+            sData(:,i)=mean(dataFlat(rows,:),1,'omitnan');
         else %DEFAULT
-            sData(:,i)=median(dataCube(sMap(:)==i,:),1,'omitnan');
+            sData(:,i)=median(dataFlat(rows,:),1,'omitnan');
         end
     else
         sData(:,i)=NaN;
@@ -335,17 +332,115 @@ end
 end
 
 % =====================================================================
-function imgVis=categoryPreviewBackground(imgIni,isK)
+function sMetrics=segmentMetrics(sLines,cMask,dMask,g,n)
+%segmentMetrics  Per-segment scalars: length, chord-length ratio, diameter, area.
+%   Every number is what the per-label whole-image loop produced; only the cost moved.
+%     - area and category come from the labelPixelGroups pass, not a full-image compare;
+%     - bwdist(~dMask) is computed ONCE and indexed, not recomputed per segment;
+%     - bwmorph / bwdistgeodesic run inside the segment's own bounding box, padded by
+%       one pixel.  Geodesic distance is a property of the mask and every pixel of the
+%       segment is inside its own bounding box, so the distances are unchanged; the pad
+%       makes bwmorph see the neighbourhood it would see on the full frame.  A crop is
+%       a RECTANGLE, so column-major order inside it matches the full frame's order
+%       restricted to it - the endpoint enumeration and the diameter's mean/std run
+%       over the same values in the same sequence.
+varTypes = ["double","double","double","double","double","double","double","double"];
+varNames = ["idx","category","length","CLR","diameter","std(diameter)","area","nearestVesIdx"];
+sMetrics=table('Size',[n,8],'VariableTypes',varTypes,'VariableNames',varNames);
+
+dtWall=bwdist(~dMask);                        % ONCE, not once per segment
+[H,W]=size(cMask);
+
+% --- every centre-line's bounding box, in one pass over the skeleton pixels ---
+bbY1=zeros(n,1); bbY2=zeros(n,1); bbX1=zeros(n,1); bbX2=zeros(n,1);
+idxL=find(sLines>0);
+if ~isempty(idxL)
+    labL=double(sLines(idxL));
+    [ry,rx]=ind2sub([H W],idxL(:));
+    bbY1=accumarray(labL,ry,[n 1],@min,0);  bbY2=accumarray(labL,ry,[n 1],@max,0);
+    bbX1=accumarray(labL,rx,[n 1],@min,0);  bbX2=accumarray(labL,rx,[n 1],@max,0);
+end
+
+for i=1:1:n
+    area=g.area(i);
+    if area>0
+        cv=cMask(g.idx(g.first(i):g.last(i)));
+        if ~all(cv==cv(1))
+            error("Mix of categories detected in the region");
+        end
+        c=double(cv(1));
+
+        if c==5
+            % The segment's own bounding box, padded by one.  A label with no
+            % centre-line pixels leaves the box at zero, which degenerates to a 1x1
+            % empty crop and reaches the same "Centerline extraction failed" error
+            % the whole-image loop reached.
+            r1=max(1,bbY1(i)-1); r2=min(H,bbY2(i)+1);
+            c1=max(1,bbX1(i)-1); c2=min(W,bbX2(i)+1);
+
+            %Measure segment length
+            tmp=(sLines(r1:r2,c1:c2)==i);
+            ends=bwmorph(tmp,'endpoints');
+            [y,x]  = find(ends);
+            if numel(y)<2
+                error(['Centerline extraction failed in segment ',num2str(i)]);
+            elseif numel(y)>2
+                maxDistance=0;
+                for pointFirst = 1:numel(y)
+                    seedMask = false(size(tmp));
+                    seedMask(y(pointFirst), x(pointFirst)) = true;
+
+                    % Calculate distance along the curve using quasi-euclidean metric
+                    geodesicMap = bwdistgeodesic(tmp, seedMask, 'quasi-euclidean');
+
+                    for pointSecond = (pointFirst + 1):numel(y)
+                        pathLength = geodesicMap(y(pointSecond), x(pointSecond));
+
+                        % Exclude infinite values occurring if points reside on disconnected segments
+                        if pathLength > maxDistance && ~isinf(pathLength)
+                            maxDistance = pathLength;
+                            pointIndexA = pointFirst;
+                            pointIndexB = pointSecond;
+                        end
+                    end
+                end
+
+                x = [x(pointIndexA), x(pointIndexB)];
+                y = [y(pointIndexA), y(pointIndexB)];
+            end
+            d        = bwdistgeodesic(tmp, x(1), y(1), 'quasi-euclidean');
+            l= max(d(~isnan(d)));
+
+            %Measure CLR
+            clr=l./hypot(x(2)-x(1), y(2)-y(1));
+
+            %Get segment diameter
+            d=dtWall(r1:r2,c1:c2).*tmp;
+            d=[mean(d(d(:)>0)),std(d(d(:)>0))]*2;
+
+            sMetrics(i,:)={i,c,l,clr,d(1),d(2),area,i};
+        elseif c==3
+            sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,i-1};
+        else
+            sMetrics(i,:)={i,c,NaN,NaN,NaN,NaN,area,NaN};
+
+        end
+    else
+        sMetrics(i,:)={NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN};
+    end
+end
+end
+
+% =====================================================================
+function imgVis=categoryPreviewBackground(imgIni,polarity)
 %categoryPreviewBackground  Enhanced background for the _rep_categories page.
 %   Mirrors getPixelCategories' internal imgVis prep so a copied file's page
 %   matches a directly-segmented one (keep in sync with getPixelCategories).
-if isK
-    img=imgIni;
+img=imgIni;
+if strcmp(polarity,'dark')
     img(img(:)>prctile(img(:),99))=prctile(img(:),99);
     img(img(:)<prctile(img(:),1))=prctile(img(:),1);
     img=imcomplement(img);
-else
-    img=imgIni;
 end
 fSize=floor((min(size(img))./20))*2+1;
 img(isnan(img))=0;

@@ -175,7 +175,18 @@ for i=1:1:numel(fNames)
     if isempty(f), fNamesRaw{i}=''; continue; end
     f=getResultsPath(f,s,'root');
     if contains(f,'_I_r.mat')
-        fNamesRaw{i}=regexprep(f,'_I_r\.mat$','.cxd');   % intensity pipeline -> .cxd
+        % EVERY intensity product carries its stage flag - '_a' angiogram, '_c'
+        % cardiac, '_b' bolus - so the flag comes off with the product token, exactly
+        % as it does for '_K' one line below.  The flagless '_I_r.mat' this used to
+        % strip was runIntensity's old name; nothing writes it and nothing reads it,
+        % and stripping only '_I_r.mat' turned 'M_a_I_r.mat' into 'M_a.cxd'.
+        r=regexprep(f,'_[a-z]_I_r\.mat$','.cxd');        % intensity pipeline -> .cxd
+        if strcmp(r,f)
+            error('runGuidedContrast:noRawName', ...
+                ['Cannot name the recording behind "%s": an intensity product is ' ...
+                 '"<stem>_a_I_r.mat", "_c_I_r.mat" or "_b_I_r.mat".'],f);
+        end
+        fNamesRaw{i}=r;
     else
         r=regexprep(f,'_[a-z]_K_r\.mat$','.rls');        % contrast pipeline -> .rls
         if strcmp(r,f), r=regexprep(f,'_K_r\.mat$','.rls'); end

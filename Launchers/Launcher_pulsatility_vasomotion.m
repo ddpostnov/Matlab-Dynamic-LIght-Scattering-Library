@@ -121,10 +121,10 @@ fNames=getFileNamesList(rootFolder,'*.rls'); %if structured file names were used
 % Uncomment below if you need to avoid re-processing processed files. The trailing s
 % is what says where the results are - the later steps do not need it, their list is
 % already in the results tree
-%fNames=removeProcessedFiles(fNames,'.rls','_c_K_s.mat','runInternalCycle',false,s);
+%fNames=removeProcessedFiles(fNames,'.rls','_c_K_s.mat','runContrastInternalCycle',false,s);
 
 %RUN THE PROCESSING ROUTINE
-runInternalCycle(s,fNames(:));
+runContrastInternalCycle(s,fNames(:));
 %% STEP 3 Define segmentation regions (interactive ROI editor; optional - whole window if skipped)
 close all
 clearvars -except fNames libraryFolder rootFolder resultsFolder
@@ -402,8 +402,9 @@ s.libraryFolder=libraryFolder;
 
 %ADJUSTED IF NECESSARY - HIERARCHY DERIVATION
 s.autoOnly=false;            % true = derive & save without opening the GUI
-s.phiWeights=[1 1 1];        % relative weight of [foot(psTimeMin) peak(psTimeMax) -psPI] in the flow potential
-s.useHarmonicPhase=false;    % include the fundamental phase b1 in the flow potential if present
+%The parameters that order the tree are resolved from each file's own product
+%(psTimeMax,psTimeMin,psPI here) and are easiest to tune live in the GUI. Set
+%s.flowParams yourself to override them on every file.
 s.propagatePartners={'t','s'}; % after a "_c" file is derived, auto-copy the hierarchy to its _t/_s partners if they exist
 
 %SET FILE NAMES HERE - use the pulsatility "_c" files (they carry the pulse timing)

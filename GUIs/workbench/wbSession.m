@@ -66,7 +66,7 @@
 %   ignored, and everything else about it still loads.  Schema 7 added .reprocess,
 %   the Process tab's re-run switch; a schema-6 sidecar reads it as false, which is
 %   the default and the safe answer.  Schema 8 is a MIGRATION rather than a new
-%   field: runInternalCycle's reference-trace mask limits were renamed
+%   field: the internal cycle's reference-trace mask limits were renamed
 %   trustLimitsK/trustLimitsI -> maskLimitsK/maskLimitsI, so a schema-7 sidecar's
 %   step-scoped override of the old name is moved to the new one on load - see
 %   migrateMaskLimits.  It is the one kind of change that MUST bump the schema even
@@ -344,7 +344,7 @@ end
 
 % =====================================================================
 function session = migrateMaskLimits(session)
-%migrateMaskLimits  Schema 8: runInternalCycle's reference-trace mask limits.
+%migrateMaskLimits  Schema 8: the internal cycle's reference-trace mask limits.
 %   The step used to call them trustLimitsK/trustLimitsI - the names the contrast step
 %   uses for the mask it PROPAGATES, which is why the two steps had to carry different
 %   values under one shared key.  They are now maskLimitsK/maskLimitsI, and

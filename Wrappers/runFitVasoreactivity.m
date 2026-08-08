@@ -8,7 +8,7 @@
 %
 %   THIS STEP MODELS PHARMACOKINETICS DRIVING A QUASI-STATIC VASCULAR GAIN, not
 %   vascular dynamics.  A rate constant from here is a drug rate, not a vessel time
-%   constant, and nothing it reports is comparable with anything runFitNVC reports -
+%   constant, and nothing it reports is comparable with anything runNVC reports -
 %   the two timescales differ by two to three orders of magnitude.  fitVasoreactivity's
 %   header carries the full argument; read it before reading a number out of this tree.
 %
@@ -57,12 +57,11 @@
 %   LEVELS  (selector cell arrays; a subset of {'markers','model','reconstruction'})
 %     s.segVrcReturn  per-segment levels; default {'markers','model','reconstruction'}.
 %     s.ppxVrcReturn  per-pixel levels + GATE: NON-EMPTY runs the per-pixel path,
-%                     [] skips it; DEFAULT [] - OFF.  This differs from runFitNVC,
-%                     whose epoch cube is 40 s long; a drug-challenge cube is
-%                     45 minutes, so enabling it is a deliberate act.
+%                     [] skips it; DEFAULT [] - OFF.  A drug-challenge cube is
+%                     45 minutes of frames, so enabling it is a deliberate act.
 %     THE LEVELS GATE THE TREE, NOT THE METRICS TABLE.  The model-free markers cost no
 %     fit, so they are always computed and always duplicated into the metrics tables;
-%     dropping 'markers' drops them from the tree only.  Same rule as runFitNVC and
+%     dropping 'markers' drops them from the tree only.  Same rule as runNVC and
 %     runPulsatility, and it keeps a metrics column from appearing and disappearing
 %     with a display setting.
 %
@@ -125,7 +124,7 @@
 %     Core/Vasoreactivity/fitVasoreactivity (shared response core), MATLAB
 %     Optimization Toolbox (lsqcurvefit); core LSCI library utilities.
 %
-% See also: fitVasoreactivity, runFitNVC, runVasomotion, runPulsatility, getProductPath
+% See also: fitVasoreactivity, runNVC, runVasomotion, runPulsatility, getProductPath
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -173,7 +172,7 @@ function runFitVasoreactivity(s,fNames)
 
 %THE INPUT IS A WHOLE RECORDING ON THE CONTRAST BRANCH.  An epoch average ('_e_') and a
 %cardiac average ('_c_') both collapse the recording clock, so there is no time axis
-%left to place an injection on - the same argument runExternalCycle makes for refusing
+%left to place an injection on - the same argument runNVC makes for refusing
 %the cardiac product.  The guard is written positively, naming the two stages that DO
 %carry a recording clock.
 if ~all( cellfun(@(x) isempty(x) || contains(x,'_t_BFI_r.mat') || ...
@@ -430,10 +429,10 @@ end
 % =====================================================================
 function requireInjection(s,nFiles)
 %requireInjection  The two settings with no upstream owner, checked before any file is
-%   opened.  NOTHING IN THE LIBRARY WRITES AN INJECTION TIME - there is no producing
-%   step to inherit it from the way runFitNVC inherits its stimulus geometry from the
-%   external cycle - so it lives here, and a missing or mis-sized list has to be a
-%   named message rather than a subscript error inside the loop.
+%   opened.  NOTHING IN THE LIBRARY WRITES AN INJECTION TIME, and nothing writes a
+%   stimulus geometry either - runNVC requires its own for the same reason - so it
+%   lives here, and a missing or mis-sized list has to be a named message rather than
+%   a subscript error inside the loop.
 if ~isfield(s,'injectionSec') || isempty(s.injectionSec)
     error('runFitVasoreactivity:noInjection', ...
         ['s.injectionSec is required - when the drug was given, in seconds from the ' ...

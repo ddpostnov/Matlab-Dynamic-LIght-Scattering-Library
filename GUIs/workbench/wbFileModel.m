@@ -8,20 +8,32 @@
 %   where the tokens are the library's stage flags (see 01-pipeline-map.md §4):
 %       stage   : a SINGLE flag naming the processing stage -
 %                   t = temporal contrast    s = spatial contrast
-%                   c = internal/cardiac cycle    e = external/epoch cycle
-%                   b = bolus
+%                   c = internal/cardiac cycle    b = bolus    a = angiogram
 %       product : K (speckle contrast) | I (intensity) | g (g2/DLSI) | BFI |
 %                 MYO (myograph - diameter or force channels)
 %       role    : d (SOURCE) | r (RESULTS) | s (SETTINGS)
 %
+%   AN ANGIOGRAM is a fluorescence recording read whole, at full spatial resolution
+%   and optionally at a reduced frame rate, together with its time-mean image - the
+%   picture of the vasculature the tracer fills, and the frames the flow and motion
+%   analyses are measured on.
+%
+%   THERE IS NO EPOCH-AVERAGED '_e' STAGE (2026-08-05).  It named the product the
+%   external cycle wrote: twenty stimulus repetitions averaged into one, so that a
+%   later step could measure the average.  runNVC measures every repetition on its
+%   own, in place on the whole-recording '_t_BFI' product, so nothing writes an
+%   epoch-averaged triplet and nothing reads one - and a stage flag for a stage that
+%   does not exist is a second way for a name to disagree with the pipeline.  'b' is
+%   not in the same position: it is a stage the library intends to grow into, not one
+%   it has just removed.
+%
 %   RATIONALE for the single flag (author decision, 2026-07-28).  A strictly
-%   logical name would encode the contrast BASE of a cycle - '_e_t_K'/'_e_s_K'
-%   for an external cycle, and then '_c_t_K'/'_c_s_K' for an internal cycle,
-%   since a cycle can in principle be built from a temporal OR a spatial contrast
-%   base.  But that base is ALSO recorded in the associated SETTINGS file, and it
-%   matters little downstream: a project is not expected to mix contrast bases
-%   for its cycles.  So the suffix is kept simple, carrying only the flag the
-%   next step needs - '_t_K', '_s_K', '_c_K', '_e_K'.  t and s are the
+%   logical name would encode the contrast BASE of a cycle - '_c_t_K'/'_c_s_K'
+%   for an internal cycle, since a cycle can in principle be built from a temporal
+%   OR a spatial contrast base.  But that base is ALSO recorded in the associated
+%   SETTINGS file, and it matters little downstream: a project is not expected to
+%   mix contrast bases for its cycles.  So the suffix is kept simple, carrying only
+%   the flag the next step needs - '_t_K', '_s_K', '_c_K'.  t and s are the
 %   interchangeable "contrast" branch and are not expected to coexist in one run
 %   by default.
 %
@@ -79,9 +91,9 @@
 %    resultsFolder - (optional) where the RESULTS go.  Empty, or equal to
 %                    rootFolder, means the two trees are one.
 %    model  - a struct returned by the decompose form.
-%    chain  - flag chain to compose, e.g. '_t_K', '_c_BFI', '_e_K' or '' .
+%    chain  - flag chain to compose, e.g. '_t_K', '_c_BFI' or '' .
 %    role   - 'd' | 'r' | 's' (SOURCE/RESULTS/SETTINGS).
-%    stage  - a single stage flag: 't' | 's' | 'c' | 'e' | 'b' | '' .
+%    stage  - a single stage flag: 't' | 's' | 'c' | 'b' | 'a' | '' .
 %    product- a product token: 'K' | 'BFI' | 'I' | 'g' | 'MYO' | '' .
 %
 % Outputs:
@@ -89,8 +101,8 @@
 %            ext, modality, roi (double or []), roiPrefix, stem, identity, flags
 %            (cellstr, name order), stage, branch, product, role, isRaw,
 %            isReference, animal, type, index, expGroup.  branch is derived from
-%            stage: t|s -> 'contrast', c -> 'cardiac', e -> 'epoch',
-%            b -> 'bolus'; a stage-less product falls back to its product token,
+%            stage: t|s -> 'contrast', c -> 'cardiac', b -> 'bolus',
+%            a -> 'angiogram'; a stage-less product falls back to its product token,
 %            so 'MYO' -> 'myograph'.
 %
 %   THREE FOLDERS, AND A NAME ALONE ONLY SETTLES ONE.  '.folder' is where the file
@@ -122,12 +134,13 @@
 %   parser, which leaves them empty.
 %
 % Notes:
-%    The stage flag is a single token, but a LEGACY external-cycle file written
-%    the stacked way ('_t_e_K', which runExternalCycle currently emits) still
-%    parses to the same identity: up to two stage tokens are stripped and the
-%    reported stage is the one adjacent to the product (here 'e').  A stem that
-%    literally ends in a stage letter before a real '_<product>_<role>' is the
-%    inherent (rare) ambiguity of the flat naming scheme.
+%    THE STAGE FLAG IS A SINGLE TOKEN AND EXACTLY ONE IS STRIPPED.  It used to be up
+%    to two, so that the external cycle's stacked '_t_e_K' still parsed to the right
+%    identity; that step and its product are gone (see the header), nothing writes a
+%    stacked name, and taking one token is the narrower reading - a stem that itself
+%    ends in a stage letter now loses nothing.  A stem that ends in a stage letter
+%    immediately before a real '_<product>_<role>' is still the inherent (rare)
+%    ambiguity of the flat naming scheme.
 %
 % See also: wbStepRegistry, wbStateEngine, wbDiscoverFiles, wbTypeModel,
 %           getFileNamesList
@@ -179,7 +192,7 @@ pth = char(pth);
 
 roleSet    = {'d','r','s'};
 productSet = {'BFI','K','I','g','MYO'};          % MYO carries no stage flag
-stageSet   = {'t','s','c','e','b'};              % one stage slot; t|s|c|e|b
+stageSet   = {'t','s','c','b','a'};              % one stage slot; t|s|c|b|a
 
 % ---- leading region-crop prefix (part of the identity) --------------
 roi = [];  roiPrefix = '';
@@ -201,15 +214,13 @@ if ~isRaw
     end
     if ~isempty(parts) && ismember(parts{end},productSet)
         product = parts{end};  parts(end) = [];
-        % strip the stage flag, which lives only alongside a product.  Canonically
-        % ONE flag ('_e_K'), but tolerate a legacy stacked name ('_t_e_K') by
-        % taking up to two tokens; the reported stage is the one nearest product.
-        for hop = 1:2
-            if ~isempty(parts) && ismember(parts{end},stageSet)
-                flags = [parts(end) flags];  parts(end) = []; %#ok<AGROW> (<=2 hops)
-            else
-                break
-            end
+        % strip the stage flag, which lives only alongside a product.  EXACTLY ONE:
+        % the loop used to take up to two so that the external cycle's stacked
+        % '_t_e_K' parsed, and with that step retired nothing in the library writes
+        % a stacked name - so the second hop could only ever eat a stem that happens
+        % to end in a stage letter.
+        if ~isempty(parts) && ismember(parts{end},stageSet)
+            flags = parts(end);  parts(end) = [];
         end
     end
     stem = strjoin(parts,'_');
@@ -287,8 +298,8 @@ stage = char(stage); product = char(product);
 switch stage
     case {'t','s'}, b = 'contrast';   % temporal / spatial contrast (interchangeable)
     case 'c',       b = 'cardiac';    % internal cycle
-    case 'e',       b = 'epoch';      % external / NVC cycle
     case 'b',       b = 'bolus';      % bolus (CTTH)
+    case 'a',       b = 'angiogram';  % the whole fluorescence recording + its mean image
     otherwise
         if strcmp(product,'MYO'), b = 'myograph'; else, b = ''; end
 end

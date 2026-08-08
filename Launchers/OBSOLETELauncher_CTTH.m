@@ -24,19 +24,26 @@ rootFolder    = 'C:\Data\mia'; %where the RECORDINGS are
 resultsFolder = rootFolder;    %where the RESULTS go. Point it elsewhere to keep the raw data untouched
 
 
-%% STEP 1 Process .rls files to get the temoiral contrast for segmentation and vasomotion analysis
+%% STEP 1 Split each bolus recording into a full-speed bolus span and an angiogram
 close all
 clearvars -except fNames libraryFolder rootFolder resultsFolder
 s.libraryFolder=libraryFolder;
 s.rootFolder=rootFolder; s.resultsFolder=resultsFolder; %only the step that reads the recording needs these - every step after it is already in the results tree
 
-s.fBolus=[];%[301,1500]; %expected frame indexes for bolus injection, leave empty if unknown
-s.fAngio=[];%[1600,2000]; % expected frame indexes for angiogram, leave empty if unknown
+s.fBolus=[];%[301,1500]; %frames kept at the full frame rate. Leave empty to mark them on
+                         %the recording. KEEP 25-30 SECONDS OF THEM and start at least
+                         %1.5 s BEFORE the dye arrives: a shorter span still gives the
+                         %transit time but not the spread of transit times, and a span
+                         %that starts after the injection is refused by STEP 6
+s.fAngio=[];%[1600,2000]; %frames averaged into the picture the vessels are found on.
+                         %Leave empty to use everything after the bolus span
+s.pixelSize=2.5;         %micrometres per pixel on this microscope. It is recorded on the
+                         %product, and the steps that work in micrometres refuse without it
 
-%SET FILE NAMES HERE
-fNames=getFileNamesList(rootFolder,'*BB0.cxd'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+%SET FILE NAMES HERE - 'BB' in the recording code names a bolus recording
+fNames=getFileNamesList(rootFolder,'*BB*.cxd'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
-runBolus(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+runIntensityBolus(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
 %% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
 close all
@@ -149,6 +156,53 @@ fNames=getFileNamesList(resultsFolder,'*_b_I_r.mat'); %if structured file names 
 
 runDynamicSegmentation(s, fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
 
+%% STEP 6 Measure the bolus transit: arrival, mean transit time and the spread of it
+close all
+clearvars -except fNames libraryFolder rootFolder resultsFolder
+s.libraryFolder=libraryFolder;
+
+%EVERY TIME IS MEASURED AGAINST THE RECORDING'S OWN ARTERIAL CURVE, which the step works
+%out for itself from the vessels that fill first - there is no region to draw.  That is
+%what makes the delay, the mean transit time and the spread comparable between
+%recordings; the plain times (T0, T10...T90, the time of the peak) are not, because the
+%injection lasts several seconds and adds itself to every one of them.
+
+%ADJUSTED IF NECESSARY - HOW A CURVE IS READ
+s.ctthLevelPcts=[10,25,50,75,90]; % how far the tracer has filled, in per cent, at each
+                        % time that gets reported
+s.ctthPlateauSec=1;     % how much of the end of the recording is averaged to read the
+                        % final level, seconds
+s.ctthGuardSec=0.5;     % quiet time left between the pre-injection period and the arrival
+s.ctthSlopeSec=0.1;     % how long a stretch the steepest rise and fall are measured over
+
+%ADJUSTED IF NECESSARY - WHERE THE ARTERIAL CURVE COMES FROM
+s.ctthInputAmpPct=75;   % how bright a vessel has to be to count towards it. Do not lower
+                        % this far: without the brightness gate the "earliest-filling"
+                        % vessels are the dimmest ones, which cross their own threshold
+                        % on noise, and every transit time would be referenced to that
+s.ctthInputPct=5;       % how many of the earliest-filling vessels make it up
+
+%ADJUSTED IF NECESSARY - HOW MUCH TO TRUST A VESSEL
+s.ctthConfThreshold=0.6;    % how good all the checks together have to be
+s.ctthConfMinThreshold=0.2; % how good the single worst check has to be
+s.ctthSettleFrac=1;     % how much the curve may still be rising at the end and still be used
+s.ctthInputScale=0.5;   % how far ahead of the artery a vessel may fill, seconds
+s.ctthCthTol=0.25;      % how close the spread check has to come before the recording is
+                        % judged long enough for it. Below that the spread is left blank
+                        % rather than reported small
+
+%ADJUSTED IF NECESSARY - WHICH NUMBERS TO KEEP
+s.segCtthReturn={'levels','amplitudes','times','transit','shape'};
+s.ppxCtthReturn={};     % {} = the vessels alone, which is what a table is read from.
+                        % Non-empty ALSO makes a picture of every listed marker, one
+                        % value per pixel - about six minutes on a full field
+s.parforCTTHPixels=true; % false measures one pixel at a time and starts no parallel pool
+
+%SET FILE NAMES HERE
+fNames=getFileNamesList(resultsFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
+
+runCTTH(s,fNames(:)); %LAUNCHES THE PROCESSING ROUTINE
+
 %% STEP 7 (OPTIONAL. Use if multiple recordings of the same field of view have to be compared to each other) Register LSCI files to the first file in the list
 close all
 clearvars -except fNames libraryFolder rootFolder resultsFolder
@@ -167,24 +221,6 @@ fNamesVSM  = fullfile({files.folder}', {files.name}');
 fNamesPLS=regexprep(fNamesVSM, '\_t_K_r.mat$', '_c_K_r.mat');
 fNames=cat(1,fNamesPLS,fNamesVSM);
 runRegistration(s,fNames); %LAUNCHES THE UTILITY ROUTINE
-
-%%
-close all
-clearvars -except fNames libraryFolder rootFolder resultsFolder
-s.libraryFolder=libraryFolder;
-
-
-    s.calcData="all";                 % per-region + per-pixel
-    s.medSpace=3; s.medTime=3;         % despeckle / despike
-    s.sgOrder=2;  s.sgFrame=11;        % smoothing
-    s.hampWin=3;  s.hampSig=3;         % motion-spike rejection
-    s.slopeWin=9; s.promFrac=0.2;      % robust upslope / peak
-    s.minStep=1;                       % uint16 resolution
-
-fNames=getFileNamesList(resultsFolder,'*_b_I_r.mat'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
-
-
-runCTTH(s,fNames(:))
 
 %% STEP 8 Convert contrast to blood flow index
 close all
@@ -283,181 +319,3 @@ fNames     = fullfile({files.folder}', {files.name}');
 %the averaging, write one workbook per recording or one merged workbook for statistics)
 exportToExcel(fNames); %LAUNCHES THE UTILITY ROUTINE
 
-%%
-
-figure
-plot(squeeze(max(source.data,[],[1,2])))
-hold on
-plot(squeeze(mean(source.data,[1,2])))
-hold off
-
-%%
-
-dataBL=source.data(:,:,1:575);
-dataRP=source.data(:,:,576:end-100);
-dataFN=source.data(:,:,end-99:end);
-
-figure
-cval=[mean(dataRP(:,:,1),'all'),prctile(max(dataRP,[],3),99,'all')];
-for i=1:1:size(dataRP,3)
-imagesc(dataRP(:,:,i))
-clim(cval)
-axis image
-colormap gray
-title(num2str(i/100))
-pause(0.05)
-end
-
-
-dataRPN=single(dataRP)-mean(single(dataBL),3);%
-dataRPN=mat2gray(dataRPN);
-fSize=151;
-parfor i=1:1:size(dataRPN,3)
-i
-dataRPN(:,:,i)=dataRPN(:,:,i)-imopen(medfilt2(dataRPN(:,:,i),[15,15],'symmetric'),strel('disk',fSize));
-end
-
-figure
-cval=[mean(dataRPN(:,:,1),'all'),prctile(max(dataRPN,[],3),99,'all')];
-for i=1:1:size(dataRPN,3)
-imagesc(dataRPN(:,:,i))
-clim(cval)
-axis image
-colormap gray
-title(num2str(i/100))
-pause(0.5)
-end
-%%
-img=img-imopen(medfilt2(img,[15,15],'symmetric'),strel('disk',fSize));
-data=applyDirectionalFilter(single(dataRP), img);
-[fitP, fitQ, fitG,bMin,bMax] = fitGammaVariatePerPixel(data, time);
-%%
-figure
-imagesc(mean(data,3))
-mask=roipoly;
-
-
-%%
-figure
-img=squeeze(MTT);
-imagesc(img)
-clim(prctile(img(mask(:)),[0.1,99.9]))
-colorbar
-axis image
-colormap jet
-title('MTT')
-set(gcf,'Color','w');
-xticklabels([]);
-yticklabels([]);
-
-%%
-figure
-img=squeeze(fitP(:,:,3));
-imagesc(img)
-clim([0,2.5])
-colorbar
-axis image
-colormap jet
-title('Arrival time')
-set(gcf,'Color','w');
-xticklabels([]);
-yticklabels([]);
-
-figure
-img=squeeze(fitP(:,:,5));
-imagesc(img)
-clim(prctile(img(mask(:)),[0.1,99.9]))
-colorbar
-axis image
-colormap jet
-title('Peak time')
-set(gcf,'Color','w');
-xticklabels([]);
-yticklabels([]);
-
-figure
-img=squeeze(fitP(:,:,4));
-imagesc(img)
-clim([1,4])
-colorbar
-axis image
-colormap jet
-title('Alpha')
-set(gcf,'Color','w');
-xticklabels([]);
-yticklabels([]);
-
-
-%%
-files      = dir(fullfile(resultsFolder,'**','*t_BFI_r.mat')); %<---ALWAYS REFER TO "_K_r.mat" files, but you may use regexp to define specific "_K_r.mat" files of interest
-fNamesVSM  = fullfile({files.folder}', {files.name}');
-fNamesPLS=regexprep(fNamesVSM, '\_t_BFI_r.mat$', '_c_BFI_r.mat');
-
-clearvars vsm
-for i=1:1:numel(fNamesVSM)
-load(fNamesVSM{i},'results');
-vsm(i)=results;
-clearvars results
-end
-
-clearvars pls
-for i=1:1:numel(fNamesPLS)
-load(fNamesPLS{i},'results');
-pls(i)=results;
-clearvars results
-end
-
-f=vsm(1).vasomotion.f;
-pctCenters=vsm(1).vasomotion.pctCenters;
-types={'Arteries','Parenchyma','Veins'};
-conds={'AWK','ISO','K/X'};
-
-pctSpc=zeros(3,3,numel(f),numel(pctCenters));
-
-ampVB=zeros(numel(vsm),3);
-ampCB=zeros(numel(vsm),3);
-
-
-for i=1:1:numel(vsm)
-    ampVB(i,1)= mean(vsm(i).sMetrics.ampMeanVB(strcmp(vsm(i).sMetrics.type,"Artery")));
-    ampVB(i,2)=mean(vsm(i).sMetrics.ampMeanVB(vsm(i).sMetrics.category==1));
-    ampVB(i,3)= mean(vsm(i).sMetrics.ampMeanVB(strcmp(vsm(i).sMetrics.type,"Vein")));
-
-    ampCB(i,1)= mean(vsm(i).sMetrics.ampMeanCB(strcmp(vsm(i).sMetrics.type,"Artery")));
-    ampCB(i,2)=mean(vsm(i).sMetrics.ampMeanCB(vsm(i).sMetrics.category==1));
-    ampCB(i,3)= mean(vsm(i).sMetrics.ampMeanCB(strcmp(vsm(i).sMetrics.type,"Vein")));
-
-    pctSpc(i,1,:,:)= mean(vsm(i).vasomotion.sData.fVectors.VB.ampMeanPct(strcmp(vsm(i).sMetrics.type,"Artery"),:,:),1);
-    pctSpc(i,2,:,:)= mean(vsm(i).vasomotion.sData.fVectors.VB.ampMeanPct(vsm(i).sMetrics.category==1,:,:),1);
-    pctSpc(i,3,:,:)= mean(vsm(i).vasomotion.sData.fVectors.VB.ampMeanPct(strcmp(vsm(i).sMetrics.type,"Vein"),:,:),1);
-end
-
-figure
-for i=1:1:3
-for j=1:1:3
-subplot(3,3,(i-1)*3+j)
-plot(f,squeeze(pctSpc(i,j,:,:)))
-title([conds{i},', ',types{j}])
-ylim([0,0.2])
-xlabel('Frequency, Hz')
-ylabel('WT Amplitude')
-end
-end
-set(gcf,'Color','w');
-
-figure
-for i=1:1:3
-subplot(1,3,i)
-plot(squeeze(ampVB(i,:)))
-hold on
-plot(squeeze(ampCB(i,:)))
-hold off
-xlim([0,4])
-ylabel('Amplitude density')
-legend({'VSM: 0.05-0.25Hz','CTR: 0.4-0.6Hz'})
-xticks([1,2,3]);
-xticklabels(types)
-title(conds{i})
-ylim([0.01,0.07])
-end
-set(gcf,'Color','w');

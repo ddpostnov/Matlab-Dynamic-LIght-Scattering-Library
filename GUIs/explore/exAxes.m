@@ -73,9 +73,27 @@
 %   meaningful "amplitude vs segment number" plot, and the tool must not offer one.
 %   They are registered with .ordered false and no .values, which is what tells
 %   exPlotRules that a per-segment scalar has to be reduced over a selection or
-%   painted back into space through sMap.  line and interval are the opposite case -
-%   position along a vessel and protocol order are both real orderings - and keeping
-%   the two classes apart is the point of registering them separately.
+%   painted back into space through sMap.  line, interval and epoch are the opposite
+%   case - position along a vessel, protocol order and stimulus repetition are all
+%   real orderings - and keeping the two classes apart is the point of registering
+%   them separately.
+%
+%   THE EPOCH AXIS IS THE STIMULUS REPETITION, and it is registered here for the same
+%   reason interval is: a recording has ONE set of them.  runNVC cuts every repetition
+%   out of the whole recording and measures it on its own, so results.nvc.esMetrics.
+%   <signal>.<metric> is [nSeg x nEp] - segment against repetition - and the second
+%   dimension is a coordinate a reader really can walk along: whether the response
+%   fades over a session is a slope on it.  Its VALUES are the repetition NUMBERS and
+%   not results.nvc.epochStart, which is where each one was cut on the recording
+%   clock: the protocol tiles them at a fixed interval, so the start times are a
+%   restatement of the geometry, while "epoch 7" is the thing a reader points at (it
+%   is also what runNVC's own trials page puts on its x).  epochStart therefore
+%   DECLARES the axis and is skipped as a variable, exactly as time is.
+%
+%   AND results.nvc.time IS A SECOND TIME BASE INSIDE A SPECKLE FILE, absorbed by the
+%   ordinary scope rule with no special case: it is the EPOCH clock (0 .. one
+%   repetition), so a leaf under results.nvc that varies along time - the stimulus
+%   boxcar - is sized against it and not against the recording's own 600 s.
 %
 %   Syntax:
 %      A = exAxes(results)
@@ -104,7 +122,7 @@
 %          .inferred  true when the values were guessed rather than read
 %
 %        The axis names: time gsTime timeWT timeDWT f pctLevel pctBin harmonic
-%        plane seg dvs pixel line interval.
+%        plane seg dvs pixel line interval epoch.
 %
 %   EXAMPLE
 %      S = load('LSCI_20240809_1ADCF08BP_t_BFI_r.mat');
@@ -119,7 +137,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 06-August-2026
 
 %------------- BEGIN CODE --------------
 function A = exAxes(results, scopePath, resultsPath)
@@ -183,6 +201,16 @@ if ~isempty(v), A.gsTime = mkAxis(v(:),numel(v),true,'linear','time (s)'); end
 % interval: the analysed windows, in protocol order.  A speckle recording has none.
 k = numel(myographIntervals(R));
 if k>0, A.interval = mkAxis((1:k)',k,true,'categorical','interval'); end
+
+% epoch: the stimulus repetitions runNVC cut, in protocol order.  DECLARED BY
+% results.nvc.epochStart and VALUED BY THE REPETITION NUMBER - see the header for
+% why those are two different things.  A recording with no NVC step has none, and
+% neither has a representative-repetition product, which is correct: the collapse
+% leaves one averaged repetition and nothing to walk along.
+% ITS LABEL IS NOT ITS NAME.  'epoch' is the axis id every rule and every dims list
+% is written against; what a reader sees is the phrase the rest of this step uses.
+n = numel(valueOf(R,'nvc.epochStart'));
+if n>0, A.epoch = mkAxis((1:n)',n,true,'ordinal','stimulus repetition'); end
 end
 
 % =====================================================================

@@ -109,7 +109,7 @@ end
 %the other.  Measured on a real recording, 'gpu' and 'cpu' return the same contrast to
 %rounding at K=25 and K=49 (1.6e-5, 1.3e-5) and differ by 21% at K=50 and 35% at K=24.
 %The callers assume the centre too - getContrastFromRLS sizes its overlap tail from
-%floor(kernelSize/2), runInternalCycle pads its read with it - so the size is refused
+%floor(kernelSize/2), runContrastInternalCycle pads its read with it - so the size is refused
 %here rather than centred one way and left to disagree with everything downstream.
 if ~isscalar(kernelSize) || ~isfinite(kernelSize) || kernelSize < 1 || mod(kernelSize,2) ~= 1
     error('getK:EvenKernel', ...
@@ -370,7 +370,7 @@ end
 function d = allocOut(sz,outputType)
 %allocOut  The result buffer, on the device the caller asked for.  'gpu' skips the
 %   gather in the batch loops below - which is the whole point of the option for
-%   callers that reduce or decimate the contrast immediately (runInternalCycle).
+%   callers that reduce or decimate the contrast immediately (runContrastInternalCycle).
 if strcmpi(outputType,'gpu')
     d = zeros(sz,'single','gpuArray');
 else

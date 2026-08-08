@@ -65,9 +65,43 @@ before it starts and carries a running total for exactly this reason.
 | Workbench | `testWorkbenchFast` | `testWorkbenchExhaustive([includeParfor])` |
 | Myograph | `testMyographFast` | `testMyographExhaustive` |
 | LSCI | `testLSCIFast` | `testLSCIExhaustive` |
+| EPFL (fluorescence) | `testEPFLFast` | `testEPFLExhaustive([includeParfor])` |
 | Reporting | `testReportingFast` | — whole module is ~2 min |
 | Registration | run the two files directly (~12 s) | — |
 | Explore | inside `testWorkbenchFast` | `testExploreExhaustive` (~8 min, **T3**) |
+| Launchers | `testLaunchers` (~0.3 s, in the EPFL exhaustive list) | — |
+
+**`testEPFLFast` is a RUNNER over eight files, and it stopped being one of them at S13.** The
+fluorescence per-edit path grew one file per session from S1 to S10 and each one earned its
+place, but the largest of the eight also wore the runner's name — so there was no way to say
+"run the per-edit path" that did not also mean "read two gigabytes". Its 204 checks are
+`testEPFLSpine` now.
+
+**They are listed cheapest first, and that is the shape to keep.** The first three together are
+3.6 s and cover eight cores and two wrappers end to end, because none of them opens a recording;
+the last is 90–118 s because it reads the 2.1 GB `.cxd` twice. **A new claim belongs in a file
+that opens nothing, by default.**
+
+| file | s | what only it covers |
+|---|---:|---|
+| `testBolusMetrics` | 1 | the five bolus cores, synthetic |
+| `testTopologyMetrics` | 1 | `getTopologyMetrics`, synthetic |
+| `testVesselTypesTree` | **1.6** | `getVascularCues`/`defaultFlowParams` over all five products, the artery/vein guess **with its negative control**, and `setVascularTree` headless on an intensity product. Reads no recording, which is why it is the cheapest file in the module |
+| `testBackgroundRemoval` | 16 | needs a **bolus** product and a crop small enough to clean every frame of — its own 59 MB fixture through `makeBackgroundFixture` |
+| `testIntensityPulsatility` | 21 | `runIntensityPulsatility` against **closed-form** markers, the `pv*`/`wm*`/no-`ps*` prefix guard on one table, and `runVasomotion`'s widened gate on an `_a_I` |
+| `testMotionEnhancementStep` | ~40 | `runMotionEnhancement` end to end on `mePhantom` products |
+| `testRunCTTH` | 45 | the transit-time wrapper on a real bolus product |
+| `testEPFLSpine` | 90–118 | the `_a_I`/`_c_I` name model, the EPFL registry block **by name and in order**, the protocols, `runIntensity` and `runIntensityInternalCycle` end to end on the small `.cxd`, their pre-read refusals, polarity, and the `intensityTwinOf` contract |
+
+**`testEPFLExhaustive` adds `testLaunchers` and `testEPFLReal`** — the claims that had only ever
+been made on phantoms: a real `_c_I` folded out of the module's own recording through both
+cardiac metric steps, `runTopologyAnalysis` as a wrapper (gate, page, mixed-settings warning),
+the fluorescence hierarchy derived from a **measured** arrival, `setVesselTypes`' three widgets
+through the `uiwait` it blocks on, and `runCTTH`'s per-pixel path at 1.68 M pixels.
+`testEPFLExhaustive(true)` appends `testParforToggles`, whose `ctth` axis is this branch's.
+
+They write to `tempdir`, never into the repository. `claude-docs/test-cost-inventory.md` has the
+measured cost and the reasoning behind each split.
 
 The explorer has no fast runner of its own: `testExploreTool` plus the `('synthetic')`
 mode of `testExploreIndex` and `testExplorePlan` live in `testWorkbenchFast`.

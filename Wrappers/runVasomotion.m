@@ -1,7 +1,10 @@
 %runVasomotion  Wavelet analysis of vasomotion amplitude and its dynamics
 %
-%   runVasomotion(s,fNames) loads every *_BFI_r.mat file in fNames (the
-%   blood-flow-index datasets produced by runBFI) and characterises the
+%   runVasomotion(s,fNames) loads every *_BFI_r.mat or *_a_I_r.mat file in fNames
+%   (the blood-flow-index datasets produced by runBFI, or the fluorescence
+%   ANGIOGRAM produced by runIntensity - fluorescence intensity is already
+%   proportional to plasma volume, so that branch has no BFI step and none to
+%   invert) and characterises the
 %   low-frequency oscillations of the signal with a continuous wavelet
 %   transform (analytic Morlet, 'amor').  For each spatial ROI (results
 %   fields sData, dvsData, dvsDiameter and, if present, the full-temporal-
@@ -96,7 +99,9 @@
 %                                   branch: false runs the identical loop body
 %                                   serially in the client and starts no pool.  One
 %                                   field per loop, so the three can be set apart.
-%     fNames   cell array of *_BFI_r.mat paths.
+%     fNames   cell array of *_BFI_r.mat or *_a_I_r.mat paths.  The two never mix
+%              in one call in practice - a recording is an '.rls' or a '.cxd' - and
+%              nothing in the loop below reads which it was given.
 %                • Optional workbench hooks in s (no-op when absent):
 %                  s.stageFcn(stage,detail), s.cancelFcn()->tf.  Cancel is checked
 %                  between files, never inside the parfor.
@@ -159,11 +164,18 @@
 %     Row order of every RESULTS.vasomotion.<sig> array MATCHES the metrics-table
 %     segment order (the 1:nSeg parfor preserves it).
 %
-%   OUTPUT FILES (side-effects)
-%       *_BFI_d.mat   SOURCE   - BFI cube (read only for per-pixel / averaging; not modified)
-%       *_BFI_r.mat   RESULTS  - vasomotion results in RESULTS.vasomotion.* (see OUTPUTS);
+%   OUTPUT FILES (side-effects).  '<P>' is 'BFI' on the speckle branch and 'a_I' on
+%   the fluorescence one; nothing below depends on which.
+%       *_<P>_d.mat   SOURCE   - the cube (read only for per-pixel / averaging; not modified)
+%       *_<P>_r.mat   RESULTS  - vasomotion results in RESULTS.vasomotion.* (see OUTPUTS);
 %                                summary columns also appended to sMetrics/dvsMetrics
-%       *_BFI_s.mat   SETTINGS - field settings.runVasomotion added
+%       *_<P>_s.mat   SETTINGS - field settings.runVasomotion added
+%
+%   ON A FLUORESCENCE ANGIOGRAM dvsDiameter IS THE RIGHT INSTRUMENT and is analysed
+%   like any other signal.  runDynamicSegmentation's per-frame diameter is quantised
+%   at 0.25 px, which is far below a vasomotion swing of whole pixels over tens of
+%   seconds - and far ABOVE a cardiac diameter change, which is why the fluorescence
+%   PULSATILITY step does not carry a pd* column at all (runIntensityPulsatility).
 %
 %   EXAMPLE
 %     s.vFR=[0.05,0.25]; s.cFR=[0.4,0.6]; s.wFR=[0.01,1]; s.wVPO=10;
@@ -172,8 +184,8 @@
 %     s.ppxVsmReturn={'bands'};          % LEAN per-pixel maps ON -> RESULTS.vasomotion.ppx ([] = off)
 %     s.ppxSegmentAveraging=[];          % TEMPORARY per-segment averaging demo (off)
 %     s.segVsmReturn={'bands','moments','series','clustering','reconstruction','spectrum'};
-%     files = dir(fullfile(dataRoot,'*_BFI_r.mat'));
-%     runVasomotion(s, fullfile({files.folder}',{files.name}'));
+%     runVasomotion(s, getFileNamesList(rootFolder,'*_t_BFI_r.mat'));   % speckle
+%     runVasomotion(s, getFileNamesList(rootFolder,'*_a_I_r.mat'));     % fluorescence
 %
 %   DEPENDS ON
 %     Core/Vasomotion/getVasomotionMetrics (shared wavelet vasomotion core),
@@ -182,10 +194,13 @@
 %     (skewness/prctile/findpeaks) and the Parallel Computing Toolbox (parfor over
 %     segments, and over pixels for the per-pixel twin); core LSCI library utilities.
 %
+% See also: getVasomotionMetrics, runBFI, runIntensity, runPulsatility,
+%           runIntensityPulsatility, runDynamicSegmentation
+%
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 26-July-2026
+% Last revision: 08-August-2026
 
 % %Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
@@ -225,10 +240,21 @@
 
 function runVasomotion(s,fNames)
 
-if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_r.mat'), fNames(:)) )
-    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
-        'step takes the RESULTS member of a product - list them with ' ...
-        'getFileNamesList(rootFolder,''*_t_BFI_r.mat'').']);
+%TWO PRODUCTS, ONE GATE, NO FALLBACK.  A blood-flow index on the speckle side and a
+%fluorescence ANGIOGRAM on the other - fluorescence intensity is already proportional to
+%plasma volume [D10], so there is no BFI to make and nothing to invert.  Both are a
+%trace over a real clock, which is all this step reads: the physical quantity is a TREE
+%NODE here (results.vasomotion.sData / .dvsData / .dvsDiameter / .gsData, selected by
+%s.vsmSignals), never a column-name prefix, so one wrapper serves both and the tables it
+%writes cannot confuse them.  '_a_I' ONLY, and not the other two intensity stages: '_c_I'
+%is one averaged beat on a phase axis with no clock to run a wavelet on, and '_b_I' is
+%twenty-five to thirty seconds, which is one to seven cycles of the slowest vasomotion
+%band edge and inside the cone of influence for all of them.
+if ~all( cellfun(@(s) isempty(s) || contains(s,'_BFI_r.mat') || contains(s,'_a_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries contain neither "_BFI_r.mat" nor ' ...
+        '"_a_I_r.mat".  Every step takes the RESULTS member of a product - list them ' ...
+        'with getFileNamesList(rootFolder,''*_t_BFI_r.mat'') or ' ...
+        'getFileNamesList(rootFolder,''*_a_I_r.mat'').']);
 end
 
 %centring statistic used to normalise each signal into the relative fluctuation

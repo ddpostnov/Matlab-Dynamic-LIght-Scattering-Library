@@ -343,7 +343,7 @@ function v = presetVersion(), v = 2; end
 function saveModel(model, pth)
 %saveModel  Serialise the model to a .mat (containers.Map -> plain struct).
 %   wbPreset.schema is the PRESET layout version - 1 (or absent, which is how every
-%   preset written before this field reads) is the layout in which runInternalCycle
+%   preset written before this field reads) is the layout in which the internal cycle
 %   still called its reference-trace limits trustLimitsK/I; 2 is after that rename.
 %   A preset carries the same step-scoped override layers a session does, so it needs
 %   the same migration on load and therefore the same way of dating itself.
@@ -390,7 +390,7 @@ end
 
 % =====================================================================
 function model = migrateMaskLimits(model, version)
-%migrateMaskLimits  Preset layout 2: runInternalCycle's reference-trace mask limits.
+%migrateMaskLimits  Preset layout 2: the internal cycle's reference-trace mask limits.
 %   They used to be called trustLimitsK/trustLimitsI - the names the contrast step uses
 %   for the mask it PROPAGATES - and are now maskLimitsK/maskLimitsI, while
 %   trustLimitsK/trustLimitsI on the internal cycle mean the propagated mask, as they do

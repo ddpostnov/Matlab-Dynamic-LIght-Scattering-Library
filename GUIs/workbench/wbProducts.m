@@ -22,29 +22,29 @@
 %   SUBSTITUTES the product token rather than extending the name: runBFI.m:103 is
 %   strrep(fName,'_K_r.mat','_BFI_r.mat'), so 'Mouse1_t_K_r.mat' becomes
 %   'Mouse1_t_BFI_r.mat' and there is no '_K_BFI' for a prefix test to find.  The
-%   external cycle inserts a flag instead ('Mouse1_t_e_K_r.mat').  The flag chain
-%   cannot separate ancestor from descendant either - '_t_K' and '_t_BFI' both
-%   parse to flags {t}.  So WHICH STEPS are downstream is asked of the registry's
-%   requires graph (wbInvalidate), WHAT each of them writes is its own outSuffix
-%   parsed into a (stage, product) SIGNATURE, and only WHICH FILES ARE THOSE is
-%   answered by the names on disk.  The registry orders; the file name identifies.
+%   flag chain cannot separate ancestor from descendant either - '_t_K' and '_t_BFI'
+%   both parse to flags {t}.  So WHICH STEPS are downstream is asked of the
+%   registry's requires graph (wbInvalidate), WHAT each of them writes is its own
+%   outSuffix parsed into a (stage, product) SIGNATURE, and only WHICH FILES ARE
+%   THOSE is answered by the names on disk.  The registry orders; the file name
+%   identifies.
 %
-%   A SIGNATURE, NEVER A COMPOSED NAME.  outTransform is not a safe way to compose
-%   an output name: externalCycle declares from '_t_K_r.mat' to '_e_K_r.mat' - a
-%   hardcoded '_t' - so on a '_s' or '_c' input the strrep is a no-op and hands
-%   back THE INPUT FILE ITSELF, which a deletion set would then propose for
-%   deletion.  And on a '_t' input the registry composes 'Mouse1_e_K_r.mat' while
-%   runExternalCycle.m:347 actually writes 'Mouse1_t_e_K_r.mat' - the registry and
-%   the wrapper disagree about that name (a known, still-open defect, see
-%   wbStepRegistry.m:78).  Matching a PARSED signature survives the disagreement:
-%   'Mouse1_t_e_K_r.mat' parses to flags {t,e}, stage e, product K, so it carries
-%   the rewritten stage in its chain AND matches externalCycle's signature,
-%   whichever way it was spelled.
+%   A SIGNATURE, NEVER A COMPOSED NAME.  outTransform is a strrep with a hardcoded
+%   from-token, so it is not a safe way to compose an output name: a rule written
+%   '_t_K_r.mat' -> '_x_K_r.mat' is a NO-OP on an '_s' or '_c' input and hands back
+%   THE INPUT FILE ITSELF, which a deletion set would then propose for deletion.  The
+%   step that made that concrete - the external cycle, whose declared '_e_K_r.mat'
+%   and whose actually-written 'Mouse1_t_e_K_r.mat' never agreed - has been retired
+%   with the whole epoch-averaged product (2026-08-05), and every outTransform left
+%   in the registry rewrites an extension or the product token alone.  The rule stays
+%   because it is what makes this module survive the NEXT step whose composed name
+%   and written name disagree: matching a PARSED signature asks what a file IS rather
+%   than what a rule would have called it.
 %
 %   WHEN ANCESTRY IS NOT RECOVERABLE FROM THE NAME, UNDER-DELETE (spec D9a).
 %   Over-deleting destroys the author's data; under-deleting leaves one narrow
 %   case of the bug.  A file matching a downstream signature whose flag chain
-%   cannot be tied to the stage being rewritten - 'Mouse1_e_K_r.mat' when '_t_K'
+%   cannot be tied to the stage being rewritten - a 'Mouse1_c_K_r.mat' when '_t_K'
 %   is the one being recomputed - is returned SEPARATELY as unattributable, for
 %   the caller to name in the log, and is never deleted on a guess.
 %
@@ -122,7 +122,7 @@ end
 % =====================================================================
 function tok = unknownStage()
 %unknownStage  The answer for a name whose stage cannot be read.  It is not a
-%   stage flag (wbFileModel's set is t|s|c|e|b), so it can never collide with a
+%   stage flag (wbFileModel's set is t|s|c|b), so it can never collide with a
 %   real one, and '' is already taken by the flagless recording itself.
 tok = '?';
 end
@@ -135,12 +135,15 @@ function flags = admissibleFlags(reg, sel, type, cstage)
 %
 %   Every branch row the type has contributes the flag its own steps stamp: the
 %   row's raw producer ('_t'/'_s' for contrast, '_c' for the internal cycle) and
-%   any derived step ticked on it that writes a new stage of its own (the external
-%   cycle's '_e').  A step that appends in place, or that keeps its input's stage
-%   (BFI: '_t_K' -> '_t_BFI'), adds nothing - its products already carry a flag
-%   this list holds.  NOTHING HERE NAMES A FLAG: every one of them is read off the
-%   registry's outSuffix, so a new entry step for a new modality is a registry
-%   edit and this function does not change.
+%   any derived step ticked on it that writes a new stage of its own.  A step that
+%   appends in place, or that keeps its input's stage (BFI: '_t_K' -> '_t_BFI'),
+%   adds nothing - its products already carry a flag this list holds.  NOTHING HERE
+%   NAMES A FLAG: every one of them is read off the registry's outSuffix, so a new
+%   entry step for a new modality is a registry edit and this function does not
+%   change.  (No DERIVED step stamps a stage of its own today - the external cycle
+%   was the only one and it is retired - so in practice the list is the raw
+%   producers'.  The loop is still over every ticked step, because which kind a step
+%   is, is the registry's answer and not this file's.)
 if nargin<4, cstage = ''; end
 flags = {''};                                   % the raw recording carries no flag
 if nargin<3 || isempty(type) || isempty(sel) || isempty(reg), return; end
@@ -167,8 +170,8 @@ function st = stageWritten(step, cstage)
 %   '_t' or '_s' per s.contrastType, and the host resolves that per type.  Which
 %   producer that is, is DERIVED rather than named: the given contrast flag is
 %   re-parsed against this step's own product/role, and it wins only when it lands
-%   in the same analysis BRANCH the step's declared suffix does.  A cardiac or
-%   epoch producer is therefore untouched by it.
+%   in the same analysis BRANCH the step's declared suffix does.  A cardiac producer
+%   is therefore untouched by it.
 st = '';
 if nargin<2, cstage = ''; end
 if isempty(step) || ~isstruct(step) || ~isfield(step,'outSuffix'), return; end
@@ -298,10 +301,11 @@ function [hit, sure] = matchesSignature(sigs, m, stage)
 %   to the stage being rewritten?  Two shapes of signature, and they read the file
 %   differently:
 %
-%     the step stamps its OWN stage (externalCycle '_e_K') - the file's stage says
-%       which STEP wrote it, so the base it came from has to be looked for in the
-%       rest of the flag chain: 'Mouse1_t_e_K_d' carries {t,e} and is ours when 't'
-%       is being rewritten; 'Mouse1_e_K_d' carries {e} alone and is UNATTRIBUTABLE.
+%     the step stamps its OWN stage - the file's stage then says which STEP wrote it,
+%       so the base it came from has to be looked for in the rest of the flag chain,
+%       and a name carrying only the step's own flag is UNATTRIBUTABLE.  No step in
+%       the registry is of this kind today: the external cycle was, and its stacked
+%       'Mouse1_t_e_K_d' is what the two-token flag chain existed to read.
 %     the step KEEPS its input's stage (BFI '_BFI') - the file's own stage names
 %       the pipeline it belongs to, so '_t_BFI' is ours and '_c_BFI' is simply the
 %       cardiac side's, not an ambiguity worth reporting.

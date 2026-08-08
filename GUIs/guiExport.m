@@ -71,7 +71,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 04-August-2026
+% Last revision: 08-August-2026
 
 %------------- BEGIN CODE --------------
 function h = guiExport(varargin)
@@ -941,7 +941,14 @@ end
 if isfield(R,'dvsMetrics'),  t{end+1} = 'dvs';         end
 if isfield(R,'pulsatility'), t{end+1} = 'pulsatility'; end
 if isfield(R,'vasomotion'),  t{end+1} = 'vasomotion';  end
-if isfield(R,'CTTH'),        t{end+1} = 'CTTH';        end
+% THE TREE NAMES ARE THE PRODUCERS' AND ARE SPELLED THE WAY THEY WRITE THEM.  This line
+% asked for 'CTTH' and runCTTH has written 'ctth' since the step was rebuilt, so every
+% bolus product reported no transit tree at all - which is the failure mode a probe has:
+% it says nothing rather than throwing.
+if isfield(R,'ctth'),        t{end+1} = 'transit time';    end
+if isfield(R,'wallMotion'),  t{end+1} = 'wall motion';     end
+if isfield(R,'topology'),    t{end+1} = 'vascular density';end
+if isfield(R,'hierarchy'),   t{end+1} = 'vascular tree';   end
 % A myograph recording keeps its results inside its analysed WINDOWS rather than in
 % a per-segment table, so what it offers is read from there.  myographIntervals is
 % what knows the two shapes those windows are stored in - flat for a pressure

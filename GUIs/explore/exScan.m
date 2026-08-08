@@ -41,11 +41,25 @@
 %     it stays a decision.)
 %
 %   AND A FOURTH, WHICH THE SHAPE MODEL IMPLIES RATHER THAN STATES: A COORDINATE IS
-%   NOT A VARIABLE.  time, gsTime, timeWT, timeDWT, f, pctCenters and harmonics are
-%   the axis registry's raw material.  Left in, every real file in the library would
-%   report half a dozen leaves the schema does not cover, and the `inferred` signal -
-%   which is meant to mean "this tree grew something new, go look" - would be noise
-%   on every scan.
+%   NOT A VARIABLE.  time, gsTime, timeWT, timeDWT, f, pctCenters, harmonics and
+%   epochStart are the axis registry's raw material.  Left in, every real file in the
+%   library would report half a dozen leaves the schema does not cover, and the
+%   `inferred` signal - which is meant to mean "this tree grew something new, go look"
+%   - would be noise on every scan.  epochStart is the newest of them and the one
+%   worth a sentence: it is where runNVC cut each stimulus repetition on the recording
+%   clock, and it is what DECLARES the epoch axis, whose coordinates are the
+%   repetition numbers (exAxes' header argues why).  The protocol tiles the cuts at a
+%   fixed interval, so the start times plotted against the repetition number are a
+%   straight line restating the geometry; the cuts report page draws where they fell.
+%
+%   WHICH IS ALSO WHY A DECLARED DIM CAN VANISH.  results.nvc.esMetrics is written by
+%   one producer in either of two legitimate states - one number per (segment,
+%   repetition) on an ordinary product, one per segment on a representative-repetition
+%   one - and the second has no epochStart, so the epoch axis is never registered.
+%   The schema declares the dim either way, because it reads nothing; the tree in hand
+%   is what says whether the coordinate exists, and a trailing dim with no axis and a
+%   singleton slot is dropped here.  A slot that is NOT a singleton keeps the dim and
+%   is flagged, which is the next paragraph's rule and not an exception to it.
 %
 %   NOTHING IS EVER SILENTLY DROPPED FOR BEING WRONG.  After the schema names a
 %   leaf's dims, the trailing sizes are checked against the resolved axis lengths.
@@ -86,8 +100,9 @@
 %                       A component is a struct-array INDEX only when it is
 %                       name(<digits>), which is why the metrics column
 %                       'std(diameter)' can never be mistaken for one
-%          .family      Recording | Flow | Pulsatility | Vasomotion | Diameter |
-%                       Propagation | Maps | Metrics | Other
+%          .family      Recording | Flow | Pulsatility | Vasomotion | Response |
+%                       Transit | Wall motion | Diameter | Propagation |
+%                       Vascular density | Maps | Metrics | Other
 %          .signal      sData | dvsData | dvsDiameter | gsData | ppx | outer | mid |
 %                       inner | <sanitised channel name> | ''
 %          .signalLabel the channel's real name, for the legend; '' when there is one
@@ -128,7 +143,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 08-August-2026
 
 %------------- BEGIN CODE --------------
 function D = exScan(results, resultsPath)
@@ -232,6 +247,13 @@ if strcmp(d.pairRole,'pooled') && ~hasLeafAt(ctx, siblingPath(pth, d.pairedWith)
     d.pairedWith = ''; d.pairRole = '';
 end
 
+% AND A DIM THE RECORDING DOES NOT HAVE IS NOT A DIM OF THIS LEAF.  One container in
+% this library is legitimately in either of two states - runNVC's esMetrics is
+% [nSeg x nEp] on an ordinary product and [nSeg x 1] on a representative-repetition
+% one, where .epochStart is absent and so the epoch axis is never registered - and it
+% has ONE reader for both, by design.  The schema reads nothing, so it declares the
+% dim either way and the tree in hand is what says whether it is there.
+d.dims   = dropAbsentDims(d.dims, d.layout, sz, A);
 d.nUnits = unitCount(sz, d.layout, numel(d.dims));
 if strcmp(r.unit,'auto')
     % Whether a myograph <VSM> holds the whole vessel or one item per row across
@@ -280,6 +302,34 @@ function [nm, idx] = parseComp(c)
 idx = [];
 t = regexp(c,'^(.+)\((\d+)\)$','tokens','once');
 if isempty(t), nm = c; else, nm = t{1}; idx = str2double(t{2}); end
+end
+
+% =====================================================================
+function dims = dropAbsentDims(dims, layout, sz, A)
+%dropAbsentDims  Trailing dims the recording never registered an axis for, and whose
+%   slot in the array is a singleton, are removed.  Both halves are required: an axis
+%   that does not exist means the product does not have that coordinate, and a
+%   singleton slot means the data agrees.  An array that really is longer there has a
+%   dimension nothing explains, which is what verify is for and stays a flag.
+%
+%   ONLY THE LAYOUTS WHOSE DIMS ARE TRAILING, and only from the end.  In unitFirst and
+%   pixel2D the units come first and the dims follow, so dropping the last one
+%   renumbers nothing; in unitLast the item index sits AFTER them, and removing a dim
+%   would move it.  The only container this rule exists for is unitFirst / pixel2D, so
+%   nothing is lost by saying so.
+if isempty(dims) || ~any(strcmp(layout,{'unitFirst','pixel2D'})), return; end
+if strcmp(layout,'pixel2D'), first = 3; else, first = 2; end
+sz = padSize(sz, first+numel(dims)-1);
+while ~isempty(dims)
+    k = numel(dims);
+    if isfield(A, dims{k}) || sz(first+k-1)~=1, break; end
+    dims(k) = [];
+end
+% AND AN EMPTY LIST IS SPELLED ONE WAY.  Deleting the last element of a 1x1 cell
+% leaves a 1x0, which isequal does not call the same thing as the {} every row with
+% no dims carries - so a caller comparing the two would see a difference that is not
+% one.
+if isempty(dims), dims = {}; end
 end
 
 % =====================================================================
@@ -457,11 +507,18 @@ function tf = isSkippedName(f)
 %   And `fs` is a channel's sampling RATE - a property of how the recording was made,
 %   not a quantity it holds.  Neither appears in any speckle tree, so neither costs
 %   the contrast recordings a leaf.
+%
+%   `pixelSize` IS THE SAME STATEMENT, NAMED ONCE FOR THE THREE PLACES IT NOW APPEARS.
+%   The rule above already skips it inside `recording`; the fluorescence branch writes
+%   it in three more (results.pixelSize from the bolus entry step, topology.units and
+%   wallMotion), and a micrometres-per-pixel is a fact about the microscope in every
+%   one of them.  One entry rather than a schema row apiece.
 persistent S
 if isempty(S)
     S = { 'meta','comments','timeCrop','frames','channels','timeStamp','nY', ...
-          'tStart','tEnd','recording','blocks','fs', ...
-          'time','gsTime','timeWT','timeDWT','f','pctCenters','harmonics' };
+          'tStart','tEnd','recording','blocks','fs','pixelSize', ...
+          'time','gsTime','timeWT','timeDWT','f','pctCenters','harmonics', ...
+          'epochStart' };
 end
 tf = any(strcmp(f, S));
 end

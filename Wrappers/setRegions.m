@@ -85,19 +85,26 @@
 %     s.fNamesCopyTo = regexprep(fNames,'_t_K_r.mat$','_c_K_r.mat');
 %     s.nRegions     = 1;      % one region per recording (omit for as many as you like)
 %     setRegions(s,fNames);
-%     % (skip this call entirely, or draw nothing, to segment the whole window)
+%     % (draw nothing to segment the whole window)
+%
+%     % the same on the fluorescence side: one .cxd, up to three co-registered
+%     % products, drawn once
+%     fNames = getFileNamesList(root,'*_a_I_r.mat','[A-Z]+\d+');
+%     s.fNamesCopyTo   = regexprep(fNames,'_a_I_r.mat$','_c_I_r.mat');
+%     setRegions(s,fNames);
 %
 %   DEPENDS ON
-%     enhanceForDisplay (display background), and MATLAB's Image Processing Toolbox
-%     ROI tools (drawpolygon/drawrectangle/drawellipse/drawcircle, createMask).
+%     getVesselPolarity (which way round the vessels are, and which mean image holds
+%     them), enhanceForDisplay (display background), and MATLAB's Image Processing
+%     Toolbox ROI tools (drawpolygon/drawrectangle/drawellipse/drawcircle, createMask).
 %
-% See also: runSegmentation, splitRegions, getPixelCategories, enhanceForDisplay,
-%           getFileNamesList
+% See also: getVesselPolarity, runSegmentation, splitRegions, getPixelCategories,
+%           enhanceForDisplay, getFileNamesList
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 08-August-2026
 
 function setRegions(s,fNames)
 
@@ -129,9 +136,9 @@ for g=1:1:nGroups
         load(getProductPath(fName,'s'),'settings');
         load(fName,'results');
 
-        % --- mean image + modality (only needed for the working frame size / display) ---
-        isK=contains(fName,'_K_r.mat');
-        if isK
+        % --- which way round the vessels are, and which mean image holds them ---
+        [polarity,product]=getVesselPolarity(fName);
+        if strcmp(product,'K')
             if isfield(results,'imgK')
                 imgIni=results.imgK;
             else
@@ -144,7 +151,7 @@ for g=1:1:nGroups
         end
 
         % --- interactive ROI editor (always opens); empty mask => whole window ---
-        [regionsMask,carried]=editRegions(imgIni,isK,carried,s.nRegions);
+        [regionsMask,carried]=editRegions(imgIni,polarity,carried,s.nRegions);
 
         if isempty(regionsMask)
             % no regions drawn: whole window - remove any stale mask, write none, so
@@ -219,8 +226,13 @@ end
 function copyRegionsOnto(s,targetName,regionsMask,rep,fIdx)
 %copyRegionsOnto  Give a co-registered sibling the SAME regions (verbatim mask, or the
 %   removal of a stale one when nothing was drawn) plus the settings stamp.  Nothing
-%   else on the target is touched - it is a different recording of the same FOV.
-%   It is a RECORDING OF ITS OWN, so it gets its own three lines.
+%   else on the target is touched - it is a different recording of the same FOV.  It
+%   is a RECORDING OF ITS OWN, so it gets its own three lines.
+%
+%   THE REGIONS INHERIT BECAUSE THE FIELD OF VIEW IS SHARED, and on a '.cxd' that is
+%   now up to three targets rather than the speckle side's one: the angiogram, the
+%   cardiac cycle and the bolus are three products of ONE recording through ONE
+%   objective, co-registered by construction.
 reportFile(rep,fIdx,targetName);
 clearvars results settings
 load(getProductPath(targetName,'s'),'settings');
@@ -231,12 +243,15 @@ if isempty(regionsMask)
 else
     results.regionsMask=regionsMask;
 end
+% The target's OWN product token: copying a mask from an intensity file onto a
+% contrast one (or the other way) still has to read the right mean image on each.
+[~,tProduct]=getVesselPolarity(targetName);
 
 % The sibling gets the mask verbatim, but it is a DIFFERENT recording: its own
 % report page is the only way to see whether the mask still fits its field of view.
 % The background is the target's own mean image, built exactly as the editor built
 % the source's.
-writeRegionsReport(rep,targetName,targetImage(targetName,results),regionsMask);
+writeRegionsReport(rep,targetName,targetImage(targetName,tProduct,results),regionsMask);
 
 sT=s; sT.fName=targetName;
 settings.setRegions=reportSettings(sT);
@@ -247,11 +262,11 @@ reportSaved(rep);
 end
 
 % =====================================================================
-function imgIni=targetImage(targetName,results)
+function imgIni=targetImage(targetName,product,results)
 %targetImage  The copy target's own mean image - results.imgK / results.imgI when
 %   they are there, the source cube's time-mean when they are not.  Same rule the
-%   main loop uses for the file being edited.
-if contains(targetName,'_K_r.mat')
+%   main loop uses for the file being edited, off the same resolved product token.
+if strcmp(product,'K')
     if isfield(results,'imgK')
         imgIni=results.imgK;
     else
@@ -313,21 +328,24 @@ clim(ax,lims);
 end
 
 % =====================================================================
-function [regionsMask,carried]=editRegions(imgIni,isK,carried,nRegions)
+function [regionsMask,carried]=editRegions(imgIni,polarity,carried,nRegions)
 %editRegions  ROI editor for one file: draw/edit labelled regions on the enhanced
 %   image, return the labelled mask (EMPTY when no ROI is drawn = whole window) plus
 %   the ROI geometry to carry to the next file.  nRegions is the ceiling (Inf =
 %   unlimited): Add ROI is greyed out at the limit, and drawing FEWER is always
 %   allowed - the limit says how many the operator MAY draw, not how many they must.
+%
+%   The drawing panel shows what the SEGMENTATION will see, which is why it follows
+%   the polarity: the operator is choosing where to look for vessels, so the vessels
+%   have to be the bright things in front of them.  The left panel is the untouched
+%   image, so the answer can be checked against it.
 
-% Display-enhanced background the user draws on (mirrors the old runCategories prep).
-if isK
-    img=imgIni;
+% Display-enhanced background the user draws on (mirrors getPixelCategories' prep).
+img=imgIni;
+if strcmp(polarity,'dark')
     img(img(:)>prctile(img(:),99))=prctile(img(:),99);
     img(img(:)<prctile(img(:),1))=prctile(img(:),1);
     img=imcomplement(img);
-else
-    img=imgIni;
 end
 fSize=floor((min(size(img))./20))*2+1;
 img(isnan(img))=0;

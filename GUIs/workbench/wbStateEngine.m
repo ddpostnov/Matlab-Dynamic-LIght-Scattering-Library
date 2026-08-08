@@ -31,11 +31,10 @@
 %   made a half-processed recording read as fully done: a project where only the
 %   cardiac product ever got a BFI reported BFI as done for the contrast file too.
 %   The union is therefore confined to the queried file's own pipeline: settings
-%   files sitting on ANOTHER raw-producer branch are excluded, while a file
-%   derived from this one WITHIN the pipeline (the external cycle's '_e_K',
-%   which is a new stage flag but not a new pipeline) still counts.  Which
-%   branches are independent pipelines is read from the registry
-%   (wbTypeSelection('branches')), never listed by name here.
+%   files sitting on ANOTHER raw-producer branch are excluded, while a file derived
+%   from this one WITHIN the pipeline still counts.  Which branches are independent
+%   pipelines is read from the registry (wbTypeSelection('branches')), never listed
+%   by name here.
 %
 %   A model with NO stage flag - a raw '.rls'/'.cxd' recording, the natural row of
 %   a freshly scanned project - has no pipeline of its own yet and legitimately
@@ -290,10 +289,10 @@ function tf = samePipeline(model, cand, rawBranchList)
 %samePipeline  Whether a settings file belongs to the queried file's pipeline.
 %   A pipeline is what ONE raw producer started, so the only thing that puts a
 %   settings file out of scope is sitting on a DIFFERENT raw-producer branch.
-%   Everything else - the same branch, a stage the pipeline grew into later (the
-%   external cycle's '_e'), or a flagless settings file - is the same pipeline
-%   and its gating fields count.  A queried file that is itself flagless (a raw
-%   recording) has no pipeline yet and takes them all.
+%   Everything else - the same branch, a stage the pipeline grew into later, or a
+%   flagless settings file - is the same pipeline and its gating fields count.  A
+%   queried file that is itself flagless (a raw recording) has no pipeline yet and
+%   takes them all.
 tf = true;
 if isempty(model.branch), return; end
 if isempty(cand.branch) || strcmp(cand.branch, model.branch), return; end

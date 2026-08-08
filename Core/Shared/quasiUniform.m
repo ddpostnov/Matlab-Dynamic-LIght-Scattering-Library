@@ -33,7 +33,7 @@
 %    U = quasiUniform(12,2);                       % 12 starts over 2 shape parameters
 %    tau = exp(log(0.2)+U(:,1)*(log(8)-log(0.2))); % mapped log-uniformly onto [0.2 8]
 %
-% See also: fitNVC, fitVasoreactivity
+% See also: fitVasoreactivity
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.

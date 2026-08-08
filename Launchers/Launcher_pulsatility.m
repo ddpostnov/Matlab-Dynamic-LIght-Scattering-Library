@@ -69,7 +69,7 @@ s.minPromCoef=1/4;%1/2; % in respect to the std of the signal
 fNames=getFileNamesList(rootFolder,'*BP.rls'); %if structured file names were used then the getFileNamesList function can be used to populate them correctly. Otherwise you can generate fNames list manually.
 
 %RUN THE PROCESSING ROUTINE
-runInternalCycle(s,fNames(:));
+runContrastInternalCycle(s,fNames(:));
 
 %% STEP 1b (OPTIONAL) Collect the report pages of STEP 1 into one PDF
 close all
@@ -82,7 +82,7 @@ clearvars -except fNames libraryFolder rootFolder resultsFolder
 %it is '_rep_regions.jpg', after runSegmentation '_rep_categories.jpg' and
 %'_rep_segments.jpg', after runRegistration '_rep_registration.jpg', after
 %setVesselTypes '_rep_vesseltypes.jpg'.
-%runInternalCycle also writes '_rep_cycle-average.jpg' - copy the cell for it too.
+%runContrastInternalCycle also writes '_rep_cycle-average.jpg' - copy the cell for it too.
 tail='_rep_cycle-detect.jpg'; %the page STEP 1 writes, one per recording
 D=getFileNamesList(resultsFolder,['*',tail]); %EVERY page under the results folder, subfolders included
 makeReportPdf(D,fullfile(resultsFolder,'report_cycle-detect.pdf')); %ASSEMBLES THE DOCUMENT

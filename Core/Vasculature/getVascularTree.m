@@ -8,9 +8,12 @@
 %   hierarchy struct H.
 %
 %   METHOD (staged, type-constrained connection search)
-%     A global flow potential phi (from pulse arrival psTimeMin/psTimeMax and
-%     pulsatility psPI) orders every node from the arterial inlet (low) to the
-%     venous outlet (high).  Connections are found in stages:
+%     A global flow potential phi orders every node from the arterial inlet (low) to the
+%     venous outlet (high).  WHICH COLUMNS BUILD IT IS A FACT ABOUT THE PRODUCT, resolved
+%     once by getVascularCues and handed here as s.flowParams: pulse arrival plus
+%     pulsatility on an internal cycle (psTimeMin/psTimeMax/psPI on a speckle one,
+%     pv* on a fluorescence one), and TRACER arrival on a fluorescence bolus
+%     (bsDelay/bsMtt).  Connections are found in stages:
 %       (0) FOV BRIDGING - same-type vessels split by a crossing vessel in the
 %           2D projection are re-linked when their tips (or side walls) come
 %           within s.bridgeTipRadius (s.bridgeWallRadius) px.
@@ -28,10 +31,11 @@
 %    H = getVascularTree(results,s)
 %
 % Inputs:
-%    results - RESULTS struct of a segmented + vessel-typed + pulsatility-
-%              analysed *_BFI_r.mat.  Needs sMetrics (columns category, idx,
-%              nearestVesIdx, optional type, and the flow metrics
-%              psTimeMin/psTimeMax/psPI/BFI/diameter), sMap and cMask.
+%    results - RESULTS struct of a segmented + vessel-typed + timing-analysed product
+%              ('*_c_BFI_r.mat' on the speckle branch, '*_b_I_r.mat' on the
+%              fluorescence one).  Needs sMetrics (columns category, idx,
+%              nearestVesIdx, optional type, and whichever flow metrics
+%              s.flowParams names), sMap and cMask.
 %    s       - parameter struct, FULLY POPULATED with the fields set by
 %              setVascularTree's default block: flowParams (see
 %              defaultFlowParams), connectivity, minBorder,
@@ -48,7 +52,7 @@
 % Depends on: orderForest, getMetric (Core siblings); Image Processing Toolbox
 %    (imdilate, bwdist, strel), Statistics Toolbox (tiedrank), MATLAB graph
 %    objects (graph/digraph/conncomp/toposort/isdag).
-% See also: setVascularTree, orderForest, getMetric, defaultFlowParams
+% See also: setVascularTree, orderForest, getMetric, defaultFlowParams, getVascularCues
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
@@ -108,10 +112,30 @@ end
 phiG = combinePhi(M,s.flowParams,nodeIds,(1:nNodes)',0);
 mm = phiG(isfinite(phiG));
 if isempty(mm) || max(mm)-min(mm)==0
-    warning('setVascularTree:noFlowSignal', ...
-        ['No enabled arrival/pulsatility parameter with data (psTimeMax/' ...
-         'psTimeMin/psPI) - flow direction is undefined.  Run on a ' ...
-         'pulsatility (_c) file, or use s.useReference to propagate.']);
+    % IT IS AN ERROR AND IT USED TO BE A WARNING, and the difference is the whole
+    % answer rather than a severity preference.  Every document about this step says a
+    % run "stops rather than inventing a flow direction"; what the code did was warn and
+    % carry on into `phiG(isnan(phiG)) = 0.5`, and a CONSTANT potential is not a weak
+    % ordering - it puts every uncertain node on the arterial side (constant <= its own
+    % median), empties the venous tree, and returns a hierarchy that looks exactly like
+    % a real one.  A step whose whole output is confidently wrong is the failure this
+    % pair of wrappers was rewritten to remove.  The registry prerequisite (pulsatility
+    % on the speckle branch, the transit-time step on the fluorescence one) means no
+    % supported chain reaches this line.
+    %
+    % AND IT NAMES THE PARAMETERS IT WAS ACTUALLY GIVEN.  It used to name
+    % psTimeMax/psTimeMin/psPI in the message text, which are the columns of ONE
+    % product; a fluorescence bolus is ordered by bsDelay/bsMtt and an angiogram by
+    % nothing at all, so a hard-coded triple sent the reader to look for columns that
+    % were never going to be there.  defaultFlowParams resolves the names per product
+    % and this line reports whichever set arrived.
+    error('getVascularTree:noFlowSignal', ...
+        ['No enabled arrival/pulsatility parameter with data (%s) - flow direction ' ...
+         'is undefined, so no hierarchy is derived.  Run the step that measures the ' ...
+         'timing on this recording (the pulsatility step on an internal cycle, the ' ...
+         'transit-time step on a bolus), or use s.useReference to propagate a ' ...
+         'hierarchy that already exists.'], ...
+        orderingNames(s.flowParams));
 end
 phiG(isnan(phiG)) = 0.5;
 memb = zeros(nNodes,1);                         % 1=artery 2=vein 3=parenchyma
@@ -517,6 +541,20 @@ for k=1:numel(flowParams)
     [sig,w]=addSig(sig,w,v,fp.weight);
 end
 phi=weightedRankMean(sig,w);
+end
+
+function s = orderingNames(fp)
+% The names of the enabled parameters that could have ordered the tree, for the refusal
+% above.  Caliber is excluded on purpose: it is U-shaped and never enters the GLOBAL
+% potential, so a product carrying only a diameter has no flow direction at all.
+s = {};
+for k = 1:numel(fp)
+    if ~fp(k).enabled || fp(k).weight<=0, continue; end
+    role = 'arrival';
+    if isfield(fp,'role') && ~isempty(fp(k).role), role = fp(k).role; end
+    if any(strcmp(role,{'arrival','pulsatility'})), s{end+1}=fp(k).name; end %#ok<AGROW>
+end
+if isempty(s), s = 'none is enabled'; else, s = strjoin(s,'/'); end
 end
 
 function c = confMargin(sortedGaps)

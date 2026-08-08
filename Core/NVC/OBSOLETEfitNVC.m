@@ -1,7 +1,8 @@
 %fitNVC - Stimulus-locked neurovascular-coupling response fit (setup + per-trace fit)
 %
-%   fitNVC centralises the neurovascular-coupling "science" that runFitNVC applies
-%   to every segment trace and every masked pixel of an epoch-averaged product.  It
+%   fitNVC centralises the MODELLED neurovascular-coupling science that runNVC applies
+%   to a segment's stimulus-locked trace: once per segment on the average of its
+%   epochs, and - when s.nvcFit says so - once per segment per EPOCH beside it.  It
 %   builds everything that depends only on the epoch time base ONCE, and reuses it
 %   for every trace on that base.  Two call modes are dispatched by argument count:
 %
@@ -12,7 +13,7 @@
 %     resolves s.segNvcReturn once.  Returns a small `layout` reused per trace.
 %
 %   ANALYSIS  (nargin 3)
-%       m = fitNVC(series, layout, s)     % series = [nT x 1] one epoch-averaged trace
+%       m = fitNVC(series, layout, s)     % series = [nT x 1], ONE epoch or an average
 %     The science for ONE trace.  Returns a FLAT, prefix-free bag `m` (the caller
 %     applies the ns/nd branch prefix, exactly as runPulsatility applies ps/pd);
 %     every numeric field is SINGLE.
@@ -69,6 +70,19 @@
 %     undershoot, and differences in baseline drift are then reported as genotype
 %     differences in undershoot depth.
 %
+%     t0 CANNOT BE NEGATIVE, bounds [0 10] s.  A vascular response does not precede
+%     its stimulus, so a negative latency is never an answer - and with the floor at
+%     -2 s, Onset came out negative in 79.8 % of segments of the reference recording,
+%     median -0.40 s.  What t0 was fitting there is the model's RISE-TIME mismatch, not
+%     a latency: at a 0.25 s sample interval the data wants a rise faster than any
+%     bound allows, and t0 and the fast time constant trade against each other along a
+%     valley.  Bounding it does not cure the degeneracy - it makes it VISIBLE, as an
+%     Onset railed at 0 with Identified 0 beside it, where -0.40 s looked like a
+%     measurement.  Re-parameterising the kernel does not cure it either: the two decay
+%     constants as free parameters directly give R2 0.7913 against 0.7991 and raise the
+%     bound-hit rate from 51.5 % to 88.2 % (EVIDENCE.md 4).  The degeneracy is in the
+%     DATA, and a faster recording is the only thing that removes it.
+%
 %     Because u is a BOXCAR, (h*u)(t) = H(t-tStim) - H(t-tStim-D) where H is the
 %     kernel's step response, and every kernel here has a closed-form H (the
 %     second-order step response, the regularised incomplete gamma, 1-exp).  The
@@ -105,55 +119,80 @@
 %
 %   OUT OF SCOPE FOR v1, DELIBERATELY: the Lindquist-Wager inverse-logit model (7
 %   parameters).  It is the better instrument for GROUP comparisons of amplitude /
-%   latency / width, but it is too many parameters for a per-pixel fit.  It belongs
-%   in a later session if the author wants it - do not add it here by accident.
+%   latency / width, but seven free parameters against the 120 samples of one stimulus
+%   repetition is more freedom than the six here already have - and six of them do not
+%   identify at 4 Hz.  It belongs in a later session if the author wants it, on the
+%   aggregate fit and on a faster recording - do not add it here by accident.
 %
-%   ANALYSIS LEVELS  (s.segNvcReturn; a cell subset of the three names below).
-%   Default (absent or empty) is the COMPLETE set.  The per-pixel path reuses SETUP
-%   with s.segNvcReturn := s.ppxNvcReturn.
-%       'markers'         model-free scalars read straight off the trace.  Always
-%                         computable, no fit:
-%                           Peak       max change from the baseline mean, response window
-%                           PeakRel    the same as a fraction of the baseline mean
-%                           TTP        time of that peak, from the stimulus start
-%                           FWHM       width of the response at half the peak change
-%                           Undershoot most negative change AFTER the peak
-%                           TTU        time of that minimum, from the stimulus start
-%                           URatio     -Undershoot/Peak (positive for a real undershoot)
-%                           AUC        integral of the change over the response window
-%                           BlMean BlStd  baseline-window mean and standard deviation
+%   ANALYSIS LEVELS  (s.segNvcReturn; a cell subset of the two names below).
+%   Default (absent or empty) is BOTH.
 %       'model'           fitted parameters, derived physiology and fit quality
 %                         (runs the fit) - see the scalar list below
 %       'reconstruction'  fData [nT x 1], the fitted curve (runs the fit)
+%   THERE IS NO PER-PIXEL FIT AT ANY SETTING, so no level here is a per-pixel set:
+%   23.2 M fits is 266 hours on the reference recording.
 %
-%   THE MARKERS ARE COMPUTED ON THE RAW TRACE, NOT ON THE RECONSTRUCTION.  This
-%   differs deliberately from getPulsatilityMetrics, which computes its markers on
-%   fData to reproduce a pre-refactor behaviour.  Here the whole point of the
-%   model-free markers is that they are an INDEPENDENT check on the fit: read off
-%   the fit, they would check nothing.  The same five markers are ALSO re-derived
-%   from the fitted curve and stored with a Fit suffix, so the two are directly
-%   comparable in one metrics table.
+%   THIS CORE HAS NO MODEL-FREE MEASUREMENT OF ITS OWN, AND THAT IS THE POINT.  It
+%   carried one - a 'markers' level and a private marker routine - until 05-Aug-2026,
+%   and it was a second definition of what getNVCMetrics already measures better: with
+%   a polarity resolved once per segment, a hold rule on every crossing, and a finale
+%   window to measure the return against.  Two definitions of nsPeak in one tree is the
+%   kind of thing nobody notices until it is quoted, so one of them went.
+%
+%   THE MARKER TWINS ARE getNVCMetrics READ OFF THE FITTED CURVE.  PeakFit, TTPFit,
+%   AUCbFit, TRiseFit, TDecFit and DurFit are that core called on fData, with THIS
+%   trace's settings and THIS segment's resolved polarity - so a twin and its
+%   model-free original are the same measurement of two different curves, and any
+%   difference between them is a statement about the fit rather than about two
+%   definitions.  It is also why s.epochFinaleSec is required here: TRise, TDec and Dur
+%   are not defined without a finale window.
+%   THE TWIN SET IS CURATED RATHER THAN INHERITED.  getNVCMetrics emits twenty scalars
+%   and six of them are twinned; the rest describe the NOISE (BlSd, FinSd, SNR) or the
+%   rule that read it (PeakSign, NoRise, NoDec), and a noise statistic of a smooth
+%   fitted curve measures the fit's own smoothness, not the recording.
 %
 %   SCALARS EMITTED AT THE 'model' LEVEL
 %     Gain Onset Drift Baseline            A, t0, b1, b0
-%     TauS TauF Zeta Omega0 RingPeriod Damping        ('secondOrder' only)
+%     TauS TauF                                       ('secondOrder' only)
+%     Zeta Omega0 RingPeriod Damping       DERIVED from TauS/TauF, and GATED - below
 %     A1 Beta1 A2 Beta2 CRatio                        ('doubleGamma' only)
-%     R2 RMSE AICc NIter Converged StartsAgree        fit quality
-%     PeakFit TTPFit FWHMFit UndershootFit TTUFit     markers re-read off the fit
+%     R2 RMSE AICc NIter Converged StartsAgree Identified      fit quality
+%     PeakFit TTPFit AUCbFit TRiseFit TDecFit DurFit  getNVCMetrics on the fitted curve
 %     DipGain DipTau DipR2 AICcDip                    (s.nvcDip only)
 %   EVERY SCALAR NAME STARTS WITH A CAPITAL, so the caller's prefixed name is a plain
-%   concatenation (ns + Peak = nsPeak) and there is exactly one spelling of each
-%   quantity between this bag, the saved tree and the metrics tables.
+%   concatenation (ns + Gain = nsGain) and there is exactly one spelling of each
+%   quantity between this bag, the saved tree and the metrics tables.  No name here is
+%   a name getNVCMetrics emits, because both cores write into results.nvc.esMetrics
+%   under the same prefix and runNVC refuses a collision rather than overwriting one.
 %   with  Zeta = sqrt(tauF)/(2*tauS),  Omega0 = 1/sqrt(tauF),  RingPeriod = 2*pi/wd
 %   (NaN when there is no ringing to have a period), and Damping = sigma = 1/(2*tauS),
 %   the exponential decay rate in 1/s.
 %
-%   ZETA IS THE HEADLINE NUMBER, and it is why this model was chosen over a
-%   descriptive one.  The undershoot-to-peak ratio equals exp(-pi*zeta/sqrt(1-zeta^2))
-%   in both the impulse and the step limit, which makes zeta far more robust to
-%   differences in stimulus duration than raw undershoot depth: two groups stimulated
-%   for different lengths of time can be compared on zeta and cannot be compared on
-%   Undershoot.
+%   IDENTIFIED IS THE NUMBER THAT SAYS WHETHER THE OTHERS MEAN ANYTHING.  It is 1 when
+%   every BOUNDED parameter of the base model - t0 and the kernel's shape block - came
+%   to rest strictly inside its bounds, and 0 when any of them sat ON one.  It is not a
+%   nicety: measured on real 4 Hz data, tauS sits on its lower bound in 56.4 % of
+%   segments, which means sigma = 1/(2*tauS) is running to infinity and the kernel is
+%   being used as "instant jump plus one slow decay".  A railed parameter reported as a
+%   plain number is the single failure this core exists to prevent.  A fit that reached
+%   no optimum at all leaves Identified NaN rather than claiming either answer.
+%
+%   AND IT GATES THE DERIVED BLOCK.  Zeta, Omega0, RingPeriod and Damping are all
+%   functions of tauS, so when tauS is a bound they are all bound artefacts - Zeta's
+%   median on real data is 3.57 and 94 % of segments read as overdamped, entirely
+%   because of the railing.  They are therefore emitted ONLY when Identified is 1.
+%   TauS and TauF themselves are ALWAYS emitted: what the optimiser did is a fact, and
+%   Identified is what says how to read it.  A single stimulus repetition rails far
+%   more often than the average of twenty, so in practice this block is the aggregate
+%   fit's - which is the level whose SNR supports it.
+%
+%   ZETA IS WHY THIS MODEL WAS CHOSEN OVER A DESCRIPTIVE ONE.  The undershoot-to-peak
+%   ratio equals exp(-pi*zeta/sqrt(1-zeta^2)) in both the impulse and the step limit,
+%   which makes zeta far more robust to differences in stimulus duration than a raw
+%   undershoot depth: two groups stimulated for different lengths of time can be
+%   compared on zeta and cannot be compared on how deep their undershoots went.  On
+%   4 Hz flow data it is usually gated away, and a recording fast enough to resolve the
+%   rise is what would give it back (MODEL.md).
 %
 %   AN INVALID TRACE IS NaN IN EVERY FIELD.  m.valid = all(isfinite(series)); an
 %   invalid trace skips the fit and every emitted scalar, and fData, is NaN.  No
@@ -188,39 +227,50 @@
 %                epochStimStartSec  when the stimulus starts within the epoch, s
 %                stimDurationSec    how long the stimulus lasts, s (REQUIRED)
 %                epochBaselineSec   [t1 t2] pre-stimulus baseline window, s
+%                epochFinaleSec     [-t1 0] end-of-epoch finale window, s (REQUIRED -
+%                                   the marker twins are getNVCMetrics, and TRise,
+%                                   TDec and Dur are measured against the finale)
 %                nvcModel           'secondOrder' (default) | 'doubleGamma'
 %                nvcDip             false (default) | true
-%                segNvcReturn       cell subset of {'markers','model',
-%                                   'reconstruction'} (default: all three); the
-%                                   per-pixel caller passes s.ppxNvcReturn through
-%                                   this field
+%                segNvcReturn       cell subset of {'model','reconstruction'}
+%                                   (default: both)
 %                nvcStarts          number of multi-start points (default 16)
 %                nvcWeights         [nT x 1] per-timepoint weights for a weighted
 %                                   least squares (optional; e.g. 1./SEM.^2 across
 %                                   the accepted epochs).  Absent = unweighted.
+%              plus, read by getNVCMetrics for the marker twins and defaulted there:
+%                nvcMedFiltSec nvcHoldSamples nvcDecayFrac nvcPolarity, and
+%                nvcPolarityResolved - the sign the PRODUCER resolved for this
+%                segment, which is what keeps a twin and its original mirrored the
+%                same way.
 %
 % Outputs:
-%    layout  - (SETUP)    stimulus boxcar, windows, bounds, start grid and .want for
-%                         one time base, plus .scalarNames, the ORDERED list of
-%                         scalars ANALYSIS emits (the caller needs no other
-%                         knowledge of the field set).
+%    layout  - (SETUP)    stimulus boxcar, windows, bounds, start grid, the twin
+%                         core's own layout and .want for one time base, plus
+%                         .scalarNames, the ORDERED list of scalars ANALYSIS emits
+%                         (the caller needs no other knowledge of the field set).
 %    m       - (ANALYSIS) flat, prefix-free, all-single bag for one trace: exactly
 %                         layout.scalarNames, plus fData when 'reconstruction' was
 %                         asked for, plus the logical m.valid.
 %
 % Example:
 %    s.epochStimStartSec=10; s.stimDurationSec=5; s.epochBaselineSec=[0 10];
-%    layout = fitNVC(results.time, s);
-%    m      = fitNVC(results.sData(:,7), layout, s);
-%    fprintf('zeta = %.2f, undershoot/peak = %.2f\n', m.Zeta, m.URatio);
+%    s.epochFinaleSec=[-5 0];
+%    layout = fitNVC(results.nvc.time, s);
+%    m      = fitNVC(epochAverageTrace, layout, s);
+%    if m.Identified
+%        fprintf('zeta = %.2f, gain = %.3g\n', m.Zeta, m.Gain);
+%    else
+%        fprintf('gain = %.3g; the time constants sat on a bound\n', m.Gain);
+%    end
 %
-% See also: runFitNVC, fitVasoreactivity, quasiUniform, getPulsatilityMetrics,
-%           getVasomotionMetrics, runExternalCycle, lsqcurvefit
+% See also: runNVC, getNVCMetrics, fitVasoreactivity, quasiUniform,
+%           getPulsatilityMetrics, getVasomotionMetrics, lsqcurvefit
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 04-August-2026
+% Last revision: 05-August-2026
 
 %------------- BEGIN CODE --------------
 function out = fitNVC(arg1,arg2,arg3)
@@ -238,8 +288,9 @@ end
 % =====================================================================
 function L=nvcSetup(time,s)
 %nvcSetup  Everything that depends only on the epoch time base and the settings.
-%   The per-trace call is then a bounded least-squares and nothing else, which is
-%   what makes the per-pixel path affordable at all.
+%   The per-trace call is then a bounded least-squares and one pass of the twin core,
+%   and nothing else - which is what makes 1938 segments x 20 epochs cost 27 minutes
+%   rather than a day.
 time=double(time(:));
 L.time=time;
 L.nT  =numel(time);
@@ -256,7 +307,7 @@ L.want =nvcParseReturn(s);
 % ---- stimulus geometry -----------------------------------------------------
 % Read on the epoch clock: epochStimStartSec and epochBaselineSec are measured from
 % the START OF THE EPOCH, and the epoch time base starts at time(1) (0 for every
-% product runExternalCycle writes).  Anchoring to time(1) rather than assuming 0
+% product runNVC cuts).  Anchoring to time(1) rather than assuming 0
 % costs one addition and cannot be silently wrong.
 tStim=requireScalar(s,'epochStimStartSec','when the stimulus starts within the epoch');
 D    =requireScalar(s,'stimDurationSec',  'how long the stimulus lasts');
@@ -282,8 +333,10 @@ end
 % than the level at an arbitrary epoch edge extrapolated back along the drift.
 L.tRef=time(1)+mean(bl);
 
-% The response window - everything from the stimulus onward - is where the markers
-% look for the peak.  Stored as indices so the per-trace call does no find().
+% The response window - everything from the stimulus onward - is where the amplitude
+% start point is read off the trace.  Stored as indices so no per-trace call does a
+% find(), and checked here because a fit with no response window in it is a fit of the
+% baseline.
 L.respIdx=find(time>=L.tStim);
 if numel(L.respIdx)<3
     error('fitNVC:shortResponse', ...
@@ -310,6 +363,22 @@ L.weighted=any(L.sw~=1);
 % ---- parameter layout, bounds and the multi-start grid ---------------------
 L=nvcParameterSetup(L,s);
 
+% ---- the marker twins' core, on the SAME time base -------------------------
+% getNVCMetrics is the library's model-free measurement, and the twins ARE it, read off
+% the fitted curve.  Its layout is built here rather than handed in, so the two cores
+% cannot end up with different windows for the same trace: same time base, same s, one
+% call.  Its LEVELS are the twins' own and are deliberately not inherited -
+% s.segNvcReturn is spelled in this core's vocabulary, and 'model' is not one of that
+% core's levels.  Only the model level needs the twins, so a caller who wants nothing
+% but the reconstruction still needs no finale window.
+L.twinNames=nvcTwinNames();
+L.twin=[];
+if L.want.model
+    sTwin=s;
+    sTwin.segNvcReturn={'markers','timing','areas'};
+    L.twin=getNVCMetrics(time,sTwin);
+end
+
 % ---- the scalar contract ---------------------------------------------------
 L.scalarNames=nvcScalarNames(L.model,L.dip,L.want);
 
@@ -332,11 +401,18 @@ function L=nvcParameterSetup(L,s)
 %   counts positions by hand.
 L.iB0=1; L.iB1=2; L.iA=3; L.iT0=4;
 
-% t0 is the response onset relative to the stimulus.  Negative is allowed: a trace
-% whose baseline window is slightly mis-specified, or a genuinely fast region, can
-% start before the nominal stimulus mark, and clipping that at zero would push the
-% error into tauS instead.
-t0Lo=-2; t0Hi=10;
+% t0 is the response onset relative to the stimulus, and it CANNOT BE NEGATIVE - see
+% the header.  A response does not precede its stimulus, and with the floor at -2 s
+% that is exactly what 79.8 % of the reference recording's segments reported, because
+% t0 was absorbing a rise-time mismatch and calling it a latency.  Railing at 0 with
+% Identified 0 beside it is a visible failure; -0.40 s is an invisible one.
+t0Lo=0; t0Hi=10;
+
+% HOW CLOSE TO A BOUND COUNTS AS ON IT (the Identified rule).  A distance from a bound
+% is relative TO THAT BOUND, so one number means the same thing for a 0.05 s and a 20 s
+% time constant.  1 % is far finer than any difference between two time constants a
+% reader would act on, and coarse enough to catch an optimiser that stopped just short.
+L.boundTol=1e-2;
 
 switch L.model
     case 'secondOrder'
@@ -427,10 +503,11 @@ L.starts=S;
 end
 
 % =====================================================================
-function m=nvcAnalyze(series,L,~)
-%nvcAnalyze  The fit and the markers for ONE trace.
-%   (s is accepted for signature symmetry with the pulsatility and vasomotion cores
-%   but unused: every per-trace parameter is baked into `layout` at SETUP.)
+function m=nvcAnalyze(series,L,s)
+%nvcAnalyze  The fit, and getNVCMetrics read off the curve it produced, for ONE trace.
+%   s is read for the marker twins alone - the polarity the PRODUCER resolved for this
+%   segment travels in it, and everything else about the fit is baked into `layout` at
+%   SETUP.
 %
 %   THE BAG IS BUILT NaN-COMPLETE FIRST.  Every name the layout promises is written
 %   as NaN before anything is computed, so the "invalid trace -> NaN in every field"
@@ -445,43 +522,55 @@ if L.want.reconstruction
     m.fData=nan(L.nT,1,'single');
 end
 if ~m.valid, return, end
-
-% ---- model-free markers, ON THE RAW TRACE (see the header) -----------------
-if L.want.markers
-    mk=nvcMarkers(series,L);
-    m.Peak=single(mk.peak);         m.PeakRel  =single(mk.peakRel);
-    m.TTP =single(mk.ttp);          m.FWHM     =single(mk.fwhm);
-    m.Undershoot=single(mk.under);  m.TTU      =single(mk.ttu);
-    m.URatio    =single(mk.uRatio); m.AUC      =single(mk.auc);
-    m.BlMean    =single(mk.blMean); m.BlStd    =single(mk.blStd);
-end
-
 if ~(L.want.model || L.want.reconstruction), return, end
 
 % ---- the fit ---------------------------------------------------------------
+% THE CURVE IS SINGLE FROM THE MOMENT IT EXISTS, which is the one place the storage
+% type is load-bearing rather than merely conventional: the twins below are measured on
+% THIS curve, so running getNVCMetrics again on a saved fData reproduces PeakFit and
+% its five companions exactly, rather than in all but the last bits.  R2, RMSE and
+% AICc are the optimiser's own and come from multiStartFit in double.
 P0=fillDataStarts(L.starts,series,L);
 [p,q]=multiStartFit(series,L,P0,L.lb,L.ub,false);
-fData=nvcEval(p,L,false);
+fData=single(nvcEval(p,L,false));
 
 if L.want.reconstruction
-    m.fData=single(fData);
+    m.fData=fData;
 end
 if ~L.want.model, return, end
 
 m.Gain=single(p(L.iA)); m.Onset=single(p(L.iT0));
 m.Drift=single(p(L.iB1)); m.Baseline=single(p(L.iB0));
 
+% ---- did the optimiser MEASURE the shape, or did it run into a wall? -------
+% Only the BOUNDED parameters can be at a bound - b0, b1 and A are free, and the dip
+% pair belongs to the model fitted beside this one, never to it.  A fit that reached no
+% optimum at all leaves Identified NaN: it has nothing to test, and either answer would
+% be a claim about a fit that does not exist.
+bnd=[L.iT0 L.iShape];
+identified=false;
+if all(isfinite(p(bnd)))
+    identified=~anyAtBound(p,L.lb,L.ub,bnd,L.boundTol);
+    m.Identified=single(identified);
+end
+
 switch L.model
     case 'secondOrder'
         tauS=p(L.iShape(1)); tauF=p(L.iShape(2));
-        sigma=1/(2*tauS); d=1/tauF-sigma^2;         % d = wd^2
         m.TauS=single(tauS); m.TauF=single(tauF);
-        m.Zeta   =single(sqrt(tauF)/(2*tauS));      % damping RATIO (dimensionless)
-        m.Omega0 =single(1/sqrt(tauF));             % natural frequency, rad/s
-        m.Damping=single(sigma);                    % decay RATE, 1/s
-        % a critically- or over-damped response does not ring, so it has no ring
-        % period - NaN rather than Inf, which would look like a very slow ring
-        if d>0, m.RingPeriod=single(2*pi/sqrt(d)); end
+        % THE DERIVED BLOCK IS GATED BY Identified (see the header).  All four are
+        % functions of tauS, so a railed tauS makes all four of them a description of
+        % the bound rather than of the vessel - sigma = 1/(2*tauS) running to infinity
+        % - and a NaN is the honest report of that, where a number is not.
+        if identified
+            sigma=1/(2*tauS); d=1/tauF-sigma^2;     % d = wd^2
+            m.Zeta   =single(sqrt(tauF)/(2*tauS));  % damping RATIO (dimensionless)
+            m.Omega0 =single(1/sqrt(tauF));         % natural frequency, rad/s
+            m.Damping=single(sigma);                % decay RATE, 1/s
+            % a critically- or over-damped response does not ring, so it has no ring
+            % period - NaN rather than Inf, which would look like a very slow ring
+            if d>0, m.RingPeriod=single(2*pi/sqrt(d)); end
+        end
     case 'doubleGamma'
         m.A1=single(p(L.iShape(1))); m.Beta1 =single(p(L.iShape(2)));
         m.A2=single(p(L.iShape(3))); m.Beta2 =single(p(L.iShape(4)));
@@ -492,11 +581,15 @@ m.R2=single(q.r2); m.RMSE=single(q.rmse); m.AICc=single(q.aicc);
 m.NIter=single(q.nIter); m.Converged=single(q.converged);
 m.StartsAgree=single(q.nAgree);
 
-% the same marker routine on the fitted curve, so the model-free and the modelled
-% markers are the same measurement of two different curves and can be compared
-mf=nvcMarkers(fData,L);
-m.PeakFit=single(mf.peak); m.TTPFit=single(mf.ttp); m.FWHMFit=single(mf.fwhm);
-m.UndershootFit=single(mf.under); m.TTUFit=single(mf.ttu);
+% ---- the marker twins: getNVCMetrics, on the FITTED curve ------------------
+% ONE core, two curves.  The polarity this segment resolved, the filter length, the
+% hold rule and the finale window all arrive in s and in L.twin, so the twin is
+% mirrored and windowed exactly as the model-free original was, and the pair can be
+% read side by side as a statement about the fit.
+mf=getNVCMetrics(fData,L.twin,s);
+for k=1:numel(L.twinNames)
+    m.([L.twinNames{k} 'Fit'])=mf.(L.twinNames{k});
+end
 
 % ---- the dip model, fitted BESIDE the base one and never instead of it -----
 if L.dip
@@ -663,64 +756,34 @@ H(pos)=1-exp(-tau(pos)/tauC);
 end
 
 % =====================================================================
-function mk=nvcMarkers(y,L)
-%nvcMarkers  The model-free markers of ONE curve - the raw trace, or the fitted one.
-%   ONE routine for both, so a model-free marker and its Fit twin are the same
-%   measurement of two different curves and any difference between them is a
-%   statement about the fit rather than about the two definitions.
-mk=struct('peak',NaN,'peakRel',NaN,'ttp',NaN,'fwhm',NaN,'under',NaN, ...
-    'ttu',NaN,'uRatio',NaN,'auc',NaN,'blMean',NaN,'blStd',NaN);
-
-bl=y(L.blIdx);
-mk.blMean=mean(bl,'omitnan');
-mk.blStd =std(bl,0,'omitnan');
-
-r =y-mk.blMean;                       % change from the baseline level
-rr=r(L.respIdx);                      % ...over the response window
-tw=L.time(L.respIdx);
-
-[pk,k]=max(rr);
-% A CURVE THAT IS NOT FINITE HAS NO MARKERS.  The raw trace cannot reach here
-% non-finite (m.valid gates it), but the FITTED curve can: every start point of a
-% pathological trace may fail, and max() of an all-NaN vector still returns index 1,
-% which would put a real-looking time into TTPFit.
-if ~isfinite(pk), return, end
-mk.peak=pk;
-mk.ttp =tw(k)-L.tStim;                % measured from the STIMULUS, not the epoch start
-if mk.blMean~=0, mk.peakRel=pk/mk.blMean; end
-mk.auc=trapz(tw,rr);
-
-% ---- FWHM, by linear interpolation of the half-maximum crossings -----------
-% Only meaningful for a positive excursion: for a region that does not respond, or
-% responds downward, "the width at half the peak" is not a width of anything, and a
-% number invented there would be indistinguishable from a real one downstream.
-if pk>0
-    half=pk/2;
-    iL=find(rr(1:k)<half,1,'last');
-    iR=find(rr(k:end)<half,1,'first');
-    tL=NaN; tR=NaN;
-    if ~isempty(iL), tL=crossAt(tw(iL),rr(iL),tw(iL+1),rr(iL+1),half); end
-    if ~isempty(iR)
-        j=k+iR-1;
-        tR=crossAt(tw(j-1),rr(j-1),tw(j),rr(j),half);
-    end
-    mk.fwhm=tR-tL;                    % NaN when the curve never comes back down
+function tf=anyAtBound(p,lb,ub,idx,relTol)
+%anyAtBound  Did any of the bounded parameters come to rest ON one of its bounds?
+%   A DISTANCE FROM A BOUND IS RELATIVE TO THAT BOUND, which is what lets one
+%   tolerance mean the same thing for a 0.05 s and a 20 s time constant.  A bound of
+%   ZERO has no relative distance to be within, and there the width of the parameter's
+%   own range is the only scale the bounds themselves offer - for t0, whose floor is 0,
+%   that makes the band 0.1 s, well under one sample of a 4 Hz recording.
+tf=false;
+for k=idx
+    lo=lb(k); hi=ub(k); width=hi-lo;
+    if isfinite(lo) && abs(p(k)-lo)<=relTol*boundScale(lo,width), tf=true; return, end
+    if isfinite(hi) && abs(p(k)-hi)<=relTol*boundScale(hi,width), tf=true; return, end
+end
 end
 
-% ---- undershoot: the deepest point AFTER the peak --------------------------
-[us,ku]=min(rr(k:end));
-mk.under=us;
-mk.ttu  =tw(k+ku-1)-L.tStim;
-% signed so that a classic response (peak up, undershoot down) gives a POSITIVE
-% ratio directly comparable with the model's exp(-pi*zeta/sqrt(1-zeta^2))
-if pk~=0, mk.uRatio=-us/pk; end
+function sc=boundScale(b,width)
+sc=abs(b);
+if sc==0, sc=abs(width); end
 end
 
 % =====================================================================
-function t=crossAt(t1,y1,t2,y2,level)
-%crossAt  Where a straight line through (t1,y1)-(t2,y2) crosses `level`.
-if y2==y1, t=t2; return, end
-t=t1+(level-y1)*(t2-t1)/(y2-y1);
+function names=nvcTwinNames()
+%nvcTwinNames  The getNVCMetrics scalars that are twinned onto the fitted curve.
+%   CURATED, NOT INHERITED (see the header): the amplitude, its time, the two crossings
+%   and the width and area between them are all properties a fitted curve HAS.  The
+%   rest of that core's set describes the noise (BlSd, FinSd, SNR) or the rule that
+%   read it (PeakSign, NoRise, NoDec), and neither is a property of a smooth curve.
+names={'Peak','TTP','AUCb','TRise','TDec','Dur'};
 end
 
 % =====================================================================
@@ -730,10 +793,6 @@ function names=nvcScalarNames(model,dip,want)
 %   result columns from this list and never has to know which model ran.  The list
 %   lives here, beside the code that fills it, and nowhere else.
 names={};
-if want.markers
-    names=[names,{'Peak','PeakRel','TTP','FWHM','Undershoot','TTU','URatio','AUC', ...
-        'BlMean','BlStd'}];
-end
 if want.model
     names=[names,{'Gain','Onset','Drift','Baseline'}];
     switch model
@@ -742,8 +801,8 @@ if want.model
         case 'doubleGamma'
             names=[names,{'A1','Beta1','A2','Beta2','CRatio'}];
     end
-    names=[names,{'R2','RMSE','AICc','NIter','Converged','StartsAgree'}];
-    names=[names,{'PeakFit','TTPFit','FWHMFit','UndershootFit','TTUFit'}];
+    names=[names,{'R2','RMSE','AICc','NIter','Converged','StartsAgree','Identified'}];
+    names=[names,strcat(nvcTwinNames(),'Fit')];
     if dip
         names=[names,{'DipGain','DipTau','DipR2','AICcDip'}];
     end
@@ -753,10 +812,11 @@ end
 % =====================================================================
 function want=nvcParseReturn(s)
 %nvcParseReturn  Resolve s.segNvcReturn into per-level compute logicals.
-%   Absent OR empty gives the documented default, the complete set.  The per-pixel
-%   caller passes s.ppxNvcReturn through this field, exactly as the pulsatility core
-%   takes s.ppxPulsReturn through s.segPulsReturn.
-levels={'markers','model','reconstruction'};
+%   Absent OR empty gives the documented default, both levels.  THE VOCABULARY IS THIS
+%   CORE'S, not getNVCMetrics': the two cores read the same field name out of the same
+%   settings struct, so a caller that wants the fit says {'model'} and this core hands
+%   the other one its own levels itself.
+levels={'model','reconstruction'};
 if isfield(s,'segNvcReturn') && ~isempty(s.segNvcReturn)
     sel=s.segNvcReturn;
     if ischar(sel)||isstring(sel), sel=cellstr(sel); end

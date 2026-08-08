@@ -296,7 +296,8 @@ P.nUnits = U.n;
 red = reduceMode(opts.units, ax);
 switch plotId
     case {'box','bar'},                P = scalarPayload(P, M, U, red);
-    case {'curve.time','curve.f','curve.pct','curve.harmonic','curve.position'}
+    case {'curve.time','curve.f','curve.pct','curve.harmonic','curve.position', ...
+          'curve.epoch'}
                                        P = curvePayload(P, M, U, red, d, ax);
     case 'curves.family',              P = familyPayload(P, M, U, d, ax);
     case 'image',                      P = imagePayload(P, M, U, d);
@@ -1183,6 +1184,10 @@ end
 
 function k = sliceKey(dimName)
 %sliceKey  The four names the cascade speaks, against the axis names the tree uses.
+%   'frame' is the catch-all and it is the right one for the stimulus REPETITION: the
+%   cascade's frame control is "which one of them am I looking at", which is exactly
+%   the question a per-pixel response map asks of an epoch.  A fifth control named
+%   'epoch' would be a second spelling of the same widget.
 switch char(dimName)
     case 'f',                                  k = 'f';
     case {'pctLevel','pctBin'},                k = 'pct';

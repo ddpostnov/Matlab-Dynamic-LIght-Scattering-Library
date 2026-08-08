@@ -12,7 +12,15 @@
 %     and resolves s.segPulsReturn once.  Returns a small `layout` struct built
 %     ONCE per time base and reused for every waveform on that base:
 %       .time     [nT x 1] one-cycle time base (= time(:)); the marker-time source
-%       .T        cycle duration (= time(end))
+%       .T        cycle duration = time(end)+time(1).  ONE expression for the TWO
+%                 sample conventions this library currently writes, not a fallback:
+%                 runContrastInternalCycle samples the cycle at its ENDPOINTS
+%                 (time(1) is exactly 0, so T is time(end)), runIntensityInternalCycle
+%                 at its BIN CENTRES (time(1) is half a bin, so the period is
+%                 time(end) plus that half bin).  Both producers are live; on a
+%                 25-bin cardiac cycle taking time(end) alone under-states the period
+%                 by two per cent and moves symRatio and the timeMin wrap with it,
+%                 silently.  The speckle side is unchanged to the bit.
 %       .x        [nT*5 x 1] fit abscissa linspace(0,5,nT*5) (five tiled cycles)
 %       .xx       [nT x 1]   reconstruction abscissa linspace(0,1,nT) (one cycle)
 %       .nHarm    number of harmonics (s.nHarm, default 5)
@@ -81,12 +89,20 @@
 %                        (selected levels only, plus logical m.valid).
 %
 %   DEPENDS ON
-%     MATLAB Curve Fitting Toolbox (fittype/fitoptions/fit).
+%     MATLAB Curve Fitting Toolbox (fittype/fitoptions/fit) - ONLY when the 'model' or
+%     'reconstruction' level is selected.  A markers-only call needs no toolbox.
+%
+%   THE CORE IS AGNOSTIC ABOUT WHAT THE WAVEFORM MEASURES, and that is what lets two
+%   wrappers share it: runPulsatility applies a ps/pd prefix to what comes back and
+%   runIntensityPulsatility a pv one.  Nothing here knows or asks.
+%
+% See also: runPulsatility, runIntensityPulsatility, getVasomotionMetrics,
+%           runContrastInternalCycle, runIntensityInternalCycle
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 25-July-2026
+% Last revision: 08-August-2026
 
 function out = getPulsatilityMetrics(arg1,arg2,arg3)
 if nargin==2
@@ -109,7 +125,16 @@ function layout=pulsSetup(time,s)
 %   computes the same set of levels.
 nHarm=resolveNHarm(s);
 layout.time =time(:);
-layout.T    =time(end);
+%THE PERIOD, FOR BOTH SAMPLE CONVENTIONS, IN ONE EXPRESSION.  An endpoint-sampled cycle
+%starts at t=0 and its last sample IS the period; a centre-sampled one starts half a bin
+%in and its last sample is half a bin short of it.  time(end)+time(1) is exact for both
+%and reduces to the old time(end) on the speckle side, where time(1) is exactly zero -
+%so no golden moves.  It is NOT a back-compatibility branch: both producers are current
+%(runContrastInternalCycle, runIntensityInternalCycle) and 02-cardiac.md records why the
+%centres convention is REQUIRED on '_c_I' - with endpoints the first and last bin hold
+%the same phase and a mean over the bins double-counts the cardiac foot, which is
+%exactly the quantity [D11] needs to equal the mean image.
+layout.T    =time(end)+time(1);
 layout.x    =linspace(0,5,numel(time)*5)';     % five tiled cycles (fit domain)
 layout.xx   =linspace(0,1,numel(time))';       % one cycle (reconstruction domain)
 layout.nHarm=nHarm;

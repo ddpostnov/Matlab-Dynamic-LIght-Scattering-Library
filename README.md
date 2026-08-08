@@ -14,7 +14,8 @@ The library takes raw speckle recordings (`.rls`, `.mraw`, `.cxd`, `.dv`) and tu
 
 - **Contrast** and **blood flow index (BFI)** image sequences — `getK`, `runContrastFromRLS`, `getContrastFromRLS`, `runBFI`;
 - **Vascular segmentation** and per-segment traces — `setRegions`, `runSegmentation`, `runDynamicSegmentation`, `setVesselTypes`;
-- **Pulsatility**, **vasomotion**, **neurovascular-coupling** and **bolus / CTTH** metrics — `runPulsatility`, `runVasomotion`, `runInternalCycle`, `runExternalCycle`, `runCTTH`;
+- **Pulsatility**, **vasomotion**, **neurovascular-coupling** and **bolus / CTTH** metrics — `runPulsatility`, `runVasomotion`, `runContrastInternalCycle`, `runNVC`, `runCTTH`;
+- **wide-field fluorescence** (`.cxd`, an intravascular tracer) as a pipeline of its own — see [Fluorescence recordings](#fluorescence-recordings-cxd) below;
 - optional **registration** across recordings (`runRegistration`, `registerRetinaLSCI`) and **Excel export** (`exportToExcel`).
 
 You drive that pipeline in one of two ways: from the **Processing Workbench** (`GUIs/guiWorkbench`) — curate your recordings, configure the pipeline once per recording **type**, press Run, and it orders, parametrises and calls the steps for you; the recommended starting point — or from a **launcher script** (`Launchers/`), the scripted alternative for reproducible, batch, or headless work. Both call exactly the same `run…` / `set…` steps.
@@ -53,12 +54,13 @@ steps / seam), `Launchers` (orchestration templates), and the consumers (`GUIs`,
 | `Core/Registration` | Landmark / mask registration — `registerToReference`, `enhanceForRegistration`, `registerRetinaLSCI`, `manualByPointRegistration` |
 | `Core/Vasomotion` | `getVasomotionMetrics` (modular wavelet vasomotion core; `s.segVsmReturn` selects which levels — bands / moments / series / clustering / reconstruction / spectrum — are computed, default all six; `runVasomotion`'s per-pixel path is driven by the separate `s.ppxVsmReturn`; used by both `runVasomotion` and `getMyographVasomotion`) and `assembleVasomotionTree` (builds the shared band-branched `results.vasomotion.<sig>` tree — scalars / fVectors / timeVectors / spectrum × VB/CB — from the core's flat metric bag) |
 | `Core/Pulsatility` | `getPulsatilityMetrics` (modular harmonic pulsatility core mirroring `getVasomotionMetrics`: a two-mode SETUP/ANALYSIS that fits an `s.nHarm`-harmonic sine to one averaged cardiac cycle and returns model-free markers + harmonic coefficients; `s.segPulsReturn` / `s.ppxPulsReturn` select the levels — markers / model / reconstruction; used by `runPulsatility`) |
+| `Core/NVC` | Stimulus-response cores, **model-free since 06-Aug-2026** — `getNVCMetrics` (a two-mode SETUP/ANALYSIS that measures ONE repetition of ONE trace: the levels it is referred to, six amplitudes absolute and relative to baseline, and one time per entry of `s.nvcAreaPcts` — the moments at which that share of the repetition's accumulated change had been delivered, interpolated and read on the stimulus clock; `s.segNvcReturn` selects which of the three groups reach the product), `getNVCConfidence` (how far one *(segment, repetition)* can be believed, as two numbers between 0 and 1 — the geometric mean of every check and the weakest single one — plus a plain sentence per check, which is the only phrasebook the two windows read), `getNVCEpochTrust` (which repetitions the *recording* trusts, from the share of the segmented field that responded coherently) and `editNVCEpochs` (the optional editor that shows those numbers per repetition and lets the operator change the decision before anything is written). There is no fitted model: `OBSOLETEfitNVC` is what used to be one |
 | `Core/Vasculature` | Vascular hierarchy derivation — `getVascularTree` (pure staged flow-potential parent→daughter tree with FOV-bridging, Horton-Strahler order & generation; consumed by `setVascularTree`), plus the helpers `orderForest`, `getMetric` and `defaultFlowParams` |
 | `Core/Shared` | Shared signal primitives — `getFFT` |
 | `Core/Myograph` | Myograph diameter / vasomotion / propagation suite, headless (shares the wavelet core `getVasomotionMetrics` and the `assembleVasomotionTree` output tree; `getMyographVasomotion` returns one `<VSM>` tree stored as `intervals(iv).vasomotion`). `myographProduct` is the one place the `_MYO` triplet is opened, saved and named — exactly one function creates it (the entry step), every other step is load-modify-save; `editMyographIntervals` is the shared interval editor (one blocking window per recording, in a pressure or a wire mode) and `getMyographTrace` builds what it draws — the measured diameter, a coarse brightness profile read from the video when nothing has been measured yet, or the recorded channels with their comments for a wire myograph |
 | `Wrappers` | High-level pipeline steps — the `run…` / `set…` functions that read and write the `_d`/`_r`/`_s` file triplet (contrast → regions → segmentation → BFI → cycles / pulsatility / vasomotion; segmentation is `setRegions` (interactive multi-ROI editor → `results.regionsMask`) → `runSegmentation` (fully automatic categorize + label + per-segment traces; `s.fNamesCopyTo` copies the segmentation onto co-registered siblings, replacing the old `assignCategories`) → optional `runDynamicSegmentation` (per-frame vessel diameter / flow) — `runVasomotion` writes the band-branched `results.vasomotion` tree per segment, and when `s.ppxVsmReturn` is non-empty also a LEAN per-pixel twin `results.vasomotion.ppx` — band-amplitude scalar `[Y×X]` maps plus an optional decimated `spectrum.amp`/`.phase` (`s.ppxVsmReturn` ∈ {`bands`,`spectrum`}); `runPulsatility` likewise writes the `results.pulsatility` tree per segment — `ps`/`pd`-prefixed markers + an `s.nHarm`-harmonic fit via the shared core `getPulsatilityMetrics` — and, when `s.ppxPulsReturn` is non-empty, the per-pixel twin `results.pulsatility.ppx`), plus `runRegistration`, `splitRegions`, the guided front-ends (`runGuidedContrast`, `runGuidedIntensity`) and the two myograph chains — pressure (`runMyographVideo` → optional `setMyographPresetIntervals` *or* `setMyographCrop` → `runMyographDiameter` → `setMyographIntervals` → `runMyographPropagation` / `runMyographVasomotion`) and wire (`runLabChart` → `setMyographIntervals` → `runMyographVasomotion`), all writing one `_MYO` triplet per recording; `setMyographIntervals` and `runMyographVasomotion` are literally the same steps for both and branch once on `source.modality`, and the `setMyograph…` steps open the shared interval editor once per recording |
 | `Launchers` | Ready-to-edit example pipelines — the scripted way to drive the same steps |
-| `GUIs` | Interactive apps — **three programs that share one session file**: `guiWorkbench` (**the Processing Workbench: start here**; it runs the LSCI pipeline and writes the session), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiExplore` (the **standalone** results explorer: pick files, scan a folder or load a session, then plot and compare by experimental group / recording index / animal / recording type and export publication figures — and **the only place a myograph figure comes from**, since no myograph step writes a report page) |
+| `GUIs` | Interactive apps — **three programs that share one session file**: `guiWorkbench` (**the Processing Workbench: start here**; it runs the LSCI pipeline and writes the session), `guiExport` (the **standalone** export tool: pick files, scan a folder or load a workbench session, choose parameters and how to average them, write one workbook per recording or one merged workbook for statistics — the interactive route to the same `exportToExcel` the launchers call) and `guiExplore` (the **standalone** results explorer: pick files, scan a folder or load a session, then plot and compare by experimental group / recording index / animal / recording type and export publication figures — and **the only place a myograph figure comes from**, since no myograph step writes a report page). Beside them `guiResponse` opens **one** recording that carries a stimulus or a drug response and draws the trace with the markers on it — where the response rose, how big it was, by when it had been delivered, whether it came back — each one drawn where it happened, over the cumulative curve the times are read off. It reads only the `_r` and `_s` members, so a laptop can browse a recording whose data cube is twenty gigabytes |
 | `GUIs/workbench` | The workbench's own components — the headless brain: `wbStepRegistry` (the step specs — **the linchpin**; adding a step or a modality is a data edit here), `wbDiscoverFiles`, `wbFileModel`, `wbTypeModel` (the animal / type / group label axes), `wbTypeSelection` (which steps each (type, product) row runs), `wbTypePresets` (the standard protocols), `wbPrereqs`, `wbStateEngine`, `wbSettingsModel`, `wbInvalidate`, `wbRefBranch` (which branch of an animal's reference a step takes), `wbRunRange` (the From/To rule), `wbExecutor` (the run loop — and the only place a step's actual branch products are resolved), `wbArtifacts`, `wbModalGuard` — plus `wbSession`, the versioned session file that is the **only** coupling between the three programs above |
 | `Utilities` | Terminal consumers of finished results — `exportToExcel` (`exportToExcel(fNames)` writes the full workbook; the optional `exportToExcel(fNames,opts)` selects `opts.sheets` / `opts.format`, averages over labels or vessel type with `opts.groupBy` / `opts.weightByArea`, subsets `opts.columns`, and merges every file into one labelled workbook with `opts.merge` / `opts.labels` / `opts.outFile`. `GUIs/guiExport` is the interactive front-end for exactly these options) |
 | `Simulation` | Synthetic dynamic-speckle generation (`getDynamicSpeckles`, `Launcher_speckleSimulation`) — self-contained |
@@ -145,8 +147,20 @@ The processing steps you run are dictated by your protocol, not by the entry poi
 
 Each processing step appends flags to the original file name, e.g.:
 
-- `_t_e_K_d.mat` — (t) temporal contrast, (e) estimated epoch, (K) contrast, (d) 3-D data;
+- `_t_K_d.mat` — (t) temporal contrast, (K) contrast, (d) 3-D data;
 - `_c_BFI_r.mat` — (c) cardiac cycle, (BFI) blood flow index, (r) results.
+
+The stage flag is a **single** token — `t` / `s` (temporal or spatial contrast), `a`
+(angiogram), `c` (cardiac cycle) or `b` (bolus). The product token is `K` / `BFI` on the
+speckle branch and **`I`** on the fluorescence one, so a fluorescence product is
+`_a_I_r.mat`, `_c_I_r.mat` or `_b_I_r.mat`. There is no epoch-averaged stage: the NVC step measures every
+stimulus repetition in place on the contrast product rather than averaging them into a
+product of their own. Its optional **representative repetition** is not an exception —
+asked for it, the step averages the repetitions the recording trusted and writes that
+**over** the same product, under the same name. That is deliberate and it cannot be
+undone: the individual repetitions and the recording clock are gone, the report page is
+the only record of which repetitions went in, and the step refuses to run a second time
+on what it produced.
 
 **A product is named by its `_r.mat`.** Every step reads and writes the RESULTS file, while
 only some of them open the 3-D data at all — so the file list you hand a step (`fNames`) is
@@ -202,7 +216,8 @@ re-compress there (load, then `save(…, '-v7.3')`) rather than changing the pip
 `source.time` and `results.time` are **column** vectors, `[T × 1]`, in seconds — frames run
 *down the rows*, matching `results.sData` / `dvsData` `[nT × nSeg]` and the `[nT × 1]` axes of
 the pulsatility and vasomotion trees. Every producer writes that orientation
-(`runContrastFromRLS`, `runInternalCycle`, `runExternalCycle`, `runBolus`, `runIntensity`), and
+(`runContrastFromRLS`, `runContrastInternalCycle`, `runIntensityInternalCycle`,
+`runBolus`, `runIntensity`), and
 a consumer that needs a definite shape should still say `time(:)` rather than assume one.
 
 ---
@@ -231,6 +246,81 @@ Plan your file/folder naming in advance — it saves a lot of time later.
 | **Slow dynamics (e.g. vasoreactivity)** | ≥ 5 Hz | ≥ 30 min | Register stimulus timing; ensure position stability (else split into multiple files). |
 | **Multiple conditions (e.g. stroke)** | — | — | Keep the system configuration constant; match FOV; prioritise tilt/focus matching over translation. |
 | **Longitudinal / cross-group** | — | — | Calibrate at each timepoint (ideally each day); keep configuration constant; match FOV. |
+
+---
+
+## Fluorescence recordings (`.cxd`)
+
+A second imaging branch, for wide-field recordings of an **intravascular fluorescent
+tracer** (FITC in plasma) rather than of speckle. It is the same library: the same
+`run…` / `set…` steps, the same `_d` / `_r` / `_s` triplets, the same Processing
+Workbench, the same explorer and the same Excel export. What differs is what a pixel
+value means — fluorescence intensity is proportional to how much labelled plasma is in
+the light path — and that is enough to change several of the measurements' names.
+
+### THE VESSELS MUST BE BRIGHTER THAN THE TISSUE
+
+This is the branch's one stated assumption and it is not checked anywhere. Four places
+read the picture that way: the cardiac gate takes the brightest 15 % of the field as the
+vessels, background removal estimates the haze by removing small **bright** structures,
+the wall-motion estimator looks for a bright lumen between two darker walls, and the
+segmentation's sensitivity is tuned for it.
+
+**A dark-vessel recording therefore produces ordinary-looking numbers that are wrong**,
+with nothing anywhere saying so — the background step would take the vasculature and
+leave the glow, and the cardiac gate would average the tissue. Recordings of that kind do
+exist; processing them needs a polarity choice this version deliberately does not carry,
+because a switch nobody can test is worse than a stated limit. Check your recording once,
+by eye, before the first step.
+
+### Three products out of one recording
+
+Which one you make is the protocol's answer rather than a setting, and all three are
+co-registered — one recording through one objective — so regions are drawn once and the
+vessel hierarchy is worked out on the injection and copied onto the other two.
+
+| Entry step | Writes | What it is for |
+|---|---|---|
+| `runIntensity` | `_a_I` — **angiogram** | the vessels, a trace per frame, and the slow oscillations `runVasomotion` reads |
+| `runIntensityInternalCycle` | `_c_I` — **cardiac** | one averaged heartbeat in absolute intensity, **plus matched controls** built from the same beats with their timing scrambled |
+| `runIntensityBolus` | `_b_I` — **bolus** | an injection: where the tracer arrives, when, and which vessel feeds which |
+
+Everything after them — regions, background removal, segmentation, dynamic segmentation,
+vascular density — is offered on all three. The measurements each belong to one product
+and say so: vasomotion to the angiogram, wall motion and pulsatile plasma volume to the
+averaged beat, transit time and the flow hierarchy to the bolus.
+
+**The averaged beat carries its own null.** Nothing about a magnified movie or a
+per-vessel amplitude looks wrong when it is measuring noise, so `runIntensityInternalCycle`
+stores `source.control` beside the beat and `runMotionEnhancement` refuses a product
+without it. On a real field most vessels do not clear that floor and report nothing rather
+than a small number — which is the intended answer, not a disappointment.
+
+### The column names say what was measured
+
+`ps*` is a pulsatile **flow** (speckle), `pd*` a pulsatile **diameter**; on this branch
+the cardiac trace step writes **`pv*`** — a pulsatile **plasma volume** — and no `pd*` at
+all, because a per-frame diameter is quantised at a quarter of a pixel against a cardiac
+change ten times smaller. How much each vessel's *width* moved over the beat is the
+wall-motion step's answer, in its own `wm*` columns. The transit step writes `bs*`. **No
+two of those families may be pooled into one column**, which is why they have different
+prefixes rather than one name and a note.
+
+### One pixel size, asked once
+
+Every length on this branch scales with it and there is **no default anywhere**: a number
+carried over from another objective is a silent wrong answer. `Launcher_intensity` STEP 0
+sets it once and the four cells that measure a real distance take it from there; in the
+workbench it is a shared setting. Background removal and wall motion **refuse by name**
+without it; vascular density reports in pixels instead and says so on its page.
+
+### Getting started
+
+Pick **Fluorescence angiogram**, **Fluorescence cardiac** or **Fluorescence bolus** in the
+Processing Workbench's Constructor, or run `Launchers/Launcher_intensity.m` cell by cell.
+Opening a 60 GB `.cxd` takes about seventeen minutes before the first frame arrives, so
+each entry step reads the recording exactly once and streams it a frame at a time; nothing
+after them opens it again.
 
 ---
 
@@ -420,8 +510,8 @@ protocol is the fastest way to understand what the workbench is doing on your be
 | `Launcher_pulsatility` | Cardiac pulsatility (cranial window, ≥ 194 fps advised). |
 | `Launcher_vasoreactivity` | Vasoreactivity / vasomotion (≥ 25 fps for vasomotion). |
 | `Launcher_pulsatility_vasomotion` | Combined pulsatility + vasomotion. |
-| `Launcher_NVC` | Externally-triggered neurovascular-coupling responses. |
-| `Launcher_CTTH` | Bolus-injection (CTTH) analysis from wide-field fluorescence. |
+| `Launcher_NVC` | Stimulus-locked neurovascular-coupling responses, every repetition measured on its own — markers and a confidence per *(segment, repetition)*, no fitted model, and an optional collapse to one representative repetition. |
+| `Launcher_intensity` | **Wide-field fluorescence (`.cxd`), the whole branch** — one recording into an angiogram, an averaged heartbeat or a bolus, then regions, background removal, segmentation, vascular density, wall motion, vasomotion, pulsatile plasma volume, transit time, vessel types and the flow hierarchy. Fifteen step cells; the pixel size is asked once, in STEP 0. |
 | `Launcher_DLSI_basic` | DLSI pipeline: raw `.mraw` recordings → per-pixel g2 / decorrelation-time fit. |
 | `Launcher_guided` | Guided full-resolution per-segment trace extraction (demo on the bundled test data). |
 | `Launcher_myograph` | Pressure myograph (`.avi`) end to end, with the wire-myograph (`.adicht`) variant commented under each step. |

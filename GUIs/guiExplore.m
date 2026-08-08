@@ -291,7 +291,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 04-August-2026
+% Last revision: 08-August-2026
 
 %------------- BEGIN CODE --------------
 
@@ -1584,7 +1584,8 @@ if nargout>0, h = fig; end
         P = currentPlot();
         if isempty(P), title(ax,'Choose what to plot'); return; end
         switch P
-            case {'curve.time','curve.f','curve.position'}, renderCurve(ax);
+            case {'curve.time','curve.f','curve.position','curve.epoch'}
+                                      renderCurve(ax);
             case {'box','bar'},       renderMetric(ax);
             case 'curve.harmonic',    renderHarmonics(ax);
             case 'curve.pct',         renderAmpPct(ax, onePayload());
@@ -3129,8 +3130,10 @@ if isempty(v), return; end
 % Recording comes FIRST: it is the trace as it was recorded, and everything else in
 % a wire myograph file is derived from it.  A family missing from this list sorts
 % after Other, which is how a new one announces itself rather than hiding.
-fam = {'Recording','Flow','Pulsatility','Vasomotion','Diameter','Propagation', ...
-       'Maps','Metrics','Other'};
+% Wall motion sits with the other things measured over one heartbeat; Vascular
+% density with the maps, because it describes a field rather than a vessel.
+fam = {'Recording','Flow','Pulsatility','Vasomotion','Response','Transit', ...
+       'Wall motion','Diameter','Propagation','Vascular density','Maps','Metrics','Other'};
 [~,fi] = ismember({v.family}, fam); fi(fi==0) = numel(fam)+1;
 % one element per row even when a row left .suspect unset - a shorter column here
 % would not sort wrongly, it would fail to concatenate at all
@@ -3272,6 +3275,7 @@ switch char(plotId)
     case 'curve.pct',          s = 'Against percentile';
     case 'curve.harmonic',     s = 'Against harmonic';
     case 'curve.position',     s = 'Along the vessel';
+    case 'curve.epoch',        s = 'Repetition by repetition';
     case 'curves.family',      s = 'A family of curves';
     case 'image',              s = 'Map';
     case 'image.fromSegments', s = 'Map, painted from the segments';
@@ -3451,10 +3455,9 @@ function r = branchRank(br)
 switch char(br)
     case 'contrast', r = 1;
     case 'cardiac',  r = 2;
-    case 'epoch',    r = 3;
-    case 'bolus',    r = 4;
-    case 'myograph', r = 5;
-    otherwise,       r = 6;
+    case 'bolus',    r = 3;
+    case 'myograph', r = 4;
+    otherwise,       r = 5;
 end
 end
 

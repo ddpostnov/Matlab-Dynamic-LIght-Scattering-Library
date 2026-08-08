@@ -18,17 +18,70 @@
 %       dvsMetrics        (if present) raw dynamic-vessel metrics
 %       dvsData           (if present) flow traces per vessel ROI
 %       dvsDiameter       (if present) diameter traces per vessel ROI
-%       pulsatility       (if present) per-segment pulsatility tree scalars for
-%                         the flow signal (markers psMin..psSymRatio/psR2 +
-%                         harmonic hAmp/hPhase), aligned to sMetrics rows by idx
-%       dvsPulsatility    (if present) per dynamic vessel: flow (ps*) + diameter
-%                         (pd*) pulsatility scalars, aligned to dvsMetrics rows
+%       pulsatility       (if present) per-segment pulsatility tree scalars,
+%                         aligned to sMetrics rows by idx
+%       dvsPulsatility    (if present) per dynamic vessel: every pulsatility signal
+%                         the file carries, side by side, aligned to dvsMetrics rows
+%       wallMotion        (if present) per segment: the wall-motion measurement
+%                         BEFORE its gates, the floor it was judged against, and
+%                         which gate refused a row
+%       topology          (if present) one row per ANALYSED AREA - the whole
+%                         segmented field, then one per drawn region - with the
+%                         vascular densities and the units they are in
+%       nvcTrials         (if present) LONG: one row per segment per stimulus
+%                         repetition - idx, the repetition, where it was cut, whether
+%                         it was kept, and every response marker of the flow (ns*)
+%                         and guided-contrast (ng*) traces, each with the two
+%                         confidence numbers beside it
+%       dvsNvcTrials      (if present) the same, one row per tracked vessel per
+%                         repetition: flow (ns*) and diameter (nd*)
 %
 %   NOTE  runPulsatility is now non-destructive: the sData / dvsData / dvsDiameter
 %   trace sheets carry the RAW averaged cycle (its harmonic-fit reconstruction
 %   lives in results.pulsatility, not in these traces); sMetrics / dvsMetrics gain
-%   the ps*/pd* pulsatility columns.  The per-pixel maps results.pulsatility.ppx
+%   the pulsatility columns.  The per-pixel maps results.pulsatility.ppx
 %   are image data and are NOT exported here.
+%
+%   THE PULSATILITY PREFIX NAMES THE QUANTITY AND THREE OF THEM EXIST.  ps* is a
+%   pulsatile FLOW, pd* a pulsatile DIAMETER, pv* a pulsatile PLASMA VOLUME - the
+%   fluorescence branch's, where an intravascular tracer makes the intensity
+%   proportional to the labelled plasma - and NO TWO OF THEM MAY BE POOLED, in a column
+%   or in a figure.  The producers write the prefix into the marker names, so this file
+%   names none of them: it reads the prefix off the tree and uses it for the fitted
+%   model's hAmp / hPhase, which are the only two leaves the producers leave unprefixed
+%   and therefore the only two that could otherwise be stacked across branches in one
+%   merged column.  A wm* column, from the wall-motion step, is a fourth quantity again:
+%   a wall DISPLACEMENT, peak to peak, per segment.
+%
+%   A MIXED WORKING SET IS AN ORDINARY CASE NOW, and two things make it work.  Files
+%   legitimately carry disjoint column sets - a speckle recording has a BFI and a
+%   pv*-free metrics table, an intensity one has neither BFI nor ps* - so every column
+%   test here asks the table what it holds rather than naming a column, and merged mode
+%   takes the UNION of the sheets it stacks (stackTables), a file missing a column
+%   contributing empty cells there rather than dropping everybody else's.
+%
+%   THE NVC SHEETS ARE THE ONLY LONG ONES, and they have to be.  Every other metric
+%   sheet is one row per segment, because every other analysis gives a segment ONE
+%   answer; runNVC gives it one per stimulus repetition, and that second axis is the
+%   whole point of the step - a response that fades over a session is a slope along
+%   it, and an average of twenty repetitions hides it completely.  A wide sheet would
+%   need a column per (metric, repetition) and could not be filtered or grouped, so
+%   the repetition becomes a COLUMN and the rows multiply: 1940 segments x 20
+%   repetitions is 38 800 rows, well inside Excel's 1 048 576.
+%
+%   A REPRESENTATIVE-REPETITION PRODUCT WRITES THE SAME SHEET, ONE ROW PER SEGMENT.
+%   runNVC's optional collapse averages the trusted repetitions over each other and
+%   replaces the recording with that average, so the product has no repetitions left
+%   to be long in: the epoch columns are ABSENT rather than filled with blanks, and
+%   the markers are the markers of the average.  It is also the only place those
+%   markers appear at all - the metrics table carries five of them and this sheet
+%   carries every one.
+%
+%   The trusted-repetition mean of five markers lands in sMetrics / dvsMetrics (and
+%   so in sMetricsROI / sMetricsType) on its own, because runNVC writes those into
+%   the tables as ordinary columns; their names come from the analysis settings, so
+%   this file names none of them.  The per-pixel maps results.nvc.ppx are not
+%   exported: they are image data, exactly like results.pulsatility.ppx.
 %
 %   MYOGRAPH RECORDINGS TAKE A SECOND SHEET SET, chosen FROM THE DATA and never
 %   from the file name: a recording whose RESULTS carry analysed WINDOWS is a
@@ -91,7 +144,8 @@
 %                         the UNION of both sheet sets - {sMetrics, sData,
 %                          sMetricsROI, sDataROI, sMetricsType, sDataType,
 %                          dvsMetrics, dvsData, dvsDiameter, pulsatility,
-%                          dvsPulsatility} for a segmented recording and
+%                          dvsPulsatility, wallMotion, topology, nvcTrials,
+%                          dvsNvcTrials} for a segmented recording and
 %                         {settings, comments, intervals, propagation, vasomotion,
 %                          ampPct, spectra, ampPctSpectra, diameterTraces} for a
 %                         myograph one.
@@ -103,7 +157,7 @@
 %                .format  output extension, '.xlsx' (default) or '.xls'.
 %                .groupBy the ROW GRANULARITY of the metric sheets, and with it
 %                         the DEFAULT sheet set:
-%                           ''       (default) per-segment rows - all 9 legacy
+%                           ''       (default) per-segment rows - all 11 legacy
 %                                    sheets, including the label-averaged ROI pair,
 %                                    plus the 9 myograph sheets, so a bare call
 %                                    writes whichever of them the file is about;
@@ -118,7 +172,7 @@
 %                         recording contributes nothing to them; its own averaging
 %                         axis is the interval, which it always has.
 %                         .sheets, when given, still selects freely across all
-%                         twenty names.
+%                         twenty-two names.
 %                .weightByArea  logical, TRUE by default: aggregated rows are
 %                         weighted by results.sMetrics.area, the weights the ROI
 %                         sheets have always used.  FALSE gives a plain unweighted
@@ -186,12 +240,13 @@
 %     used throughout the Dynamic Light Scattering Imaging toolbox.
 %
 % See also: guiExport, setVesselTypes, guiWorkbench, wbSession, myographProduct,
-%           guiExplore
+%           runNVC, runIntensityPulsatility, runMotionEnhancement,
+%           runTopologyAnalysis, guiExplore
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 02-August-2026
+% Last revision: 08-August-2026
 
 function exportToExcel(fNames, opts)
 
@@ -237,8 +292,22 @@ end
 
 function sink = emitSegmentSheets(sink, results, O, wantSheet)
 %emitSegmentSheets  THE per-segment sheet set: the nine legacy sheets plus the two
-%   opt-in vessel-type ones.  This is the body a bare exportToExcel(fNames) has
-%   always run, unchanged - the myograph branch is beside it, never inside it.
+%   opt-in vessel-type ones and the two the fluorescence branch added.  This is the
+%   body a bare exportToExcel(fNames) has always run - the myograph branch is beside
+%   it, never inside it.
+%
+%   A PRODUCT THAT HAS NOT BEEN SEGMENTED HAS NONE OF THESE SHEETS TO WRITE, and on the
+%   fluorescence branch that is an ordinary file rather than a broken one:
+%   Launcher_intensity's export cell globs every product of every branch, and an
+%   angiogram straight from the entry step carries a picture and a clock and no table.
+%   It is skipped exactly as an absent sheet is, which leaves no workbook for that file
+%   rather than an empty one - and, more to the point, leaves the OTHER files of the
+%   call exported instead of stopping the batch on a missing column.
+
+    if ~isfield(results,'sMetrics') || ~istable(results.sMetrics) ...
+            || height(results.sMetrics)==0
+        return
+    end
 
     catNames = ["background"  "parenchyma"  "unsegmented" ...
         "outerWall"   "innerWall"   "lumen"];          % 1×6
@@ -256,13 +325,15 @@ function sink = emitSegmentSheets(sink, results, O, wantSheet)
 
 
     idxAll    = results.sMetrics.idx(:)';
-    goodMask  = ~isnan(idxAll) & idxAll~=0 & ~isnan(results.sMetrics.BFI(:)');
-    roiIdx    = idxAll(goodMask);
-    roiData   = results.sData(:,goodMask);
-    roiNames  = matlab.lang.makeValidName(compose("ROI %04d",roiIdx) );
-    T = [ table(results.time(:),'VariableNames', {'Time'}), array2table(roiData,'VariableNames',roiNames) ];
+    goodMask  = measuredRows(results.sMetrics);
+    if isfield(results,'sData') && isfield(results,'time')
+        roiIdx    = idxAll(goodMask);
+        roiData   = results.sData(:,goodMask);
+        roiNames  = matlab.lang.makeValidName(compose("ROI %04d",roiIdx) );
+        T = [ table(results.time(:),'VariableNames', {'Time'}), array2table(roiData,'VariableNames',roiNames) ];
 
-    sink=emitSheet(sink,T,'sData',wantSheet);
+        sink=emitSheet(sink,T,'sData',wantSheet);
+    end
 
     % ---- averages over the LABEL axis (the historical ROI sheets) -----------
     % One aggregation routine serves both axes: this call is the legacy
@@ -294,21 +365,25 @@ function sink = emitSegmentSheets(sink, results, O, wantSheet)
         sink=emitSheet(sink,T,'dvsMetrics',wantSheet);
 
         idxAll   = results.dvsMetrics.idx(:)';       % row vector
-        goodMask = ~isnan(idxAll) & idxAll~=0 & ~isnan(results.dvsMetrics.BFI(:)');
+        goodMask = measuredRows(results.dvsMetrics);
         roiIdx   = idxAll(goodMask);
         roiNames = matlab.lang.makeValidName(compose("ROI %04d", roiIdx));
 
-        T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
-            array2table(results.dvsData(:,goodMask), ...
-            'VariableNames',roiNames) ];
+        if isfield(results,'dvsData') && isfield(results,'time')
+            T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
+                array2table(results.dvsData(:,goodMask), ...
+                'VariableNames',roiNames) ];
 
-        sink=emitSheet(sink,T,'dvsData',wantSheet);
+            sink=emitSheet(sink,T,'dvsData',wantSheet);
+        end
 
-        T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
-            array2table(results.dvsDiameter(:,goodMask), ...
-            'VariableNames',roiNames) ];
+        if isfield(results,'dvsDiameter') && isfield(results,'time')
+            T = [ table(results.time(:), 'VariableNames',{'Time'}), ...
+                array2table(results.dvsDiameter(:,goodMask), ...
+                'VariableNames',roiNames) ];
 
-        sink=emitSheet(sink,T,'dvsDiameter',wantSheet);
+            sink=emitSheet(sink,T,'dvsDiameter',wantSheet);
+        end
     end
 
     % ---- pulsatility summary sheets (per-segment results.pulsatility scalars) ---
@@ -317,7 +392,7 @@ function sink = emitSegmentSheets(sink, results, O, wantSheet)
     % results.pulsatility.ppx are image data and are intentionally NOT exported.
     if isfield(results,'pulsatility')
         if isfield(results.pulsatility,'sData') && isfield(results.pulsatility.sData,'scalars')
-            Tp = pulsScalarTable(results.pulsatility.sData.scalars,'');
+            Tp = pulsScalarTable(results.pulsatility.sData.scalars);
             if ~isempty(Tp)
                 sink=emitSheet(sink,[idTable(results.sMetrics), Tp],'pulsatility',wantSheet);
             end
@@ -325,14 +400,112 @@ function sink = emitSegmentSheets(sink, results, O, wantSheet)
         if isfield(results,'dvsMetrics') && isfield(results.pulsatility,'dvsData') ...
                 && isfield(results.pulsatility.dvsData,'scalars')
             Tp = [idTable(results.dvsMetrics), ...
-                  pulsScalarTable(results.pulsatility.dvsData.scalars,'ps')];
+                  pulsScalarTable(results.pulsatility.dvsData.scalars)];
             if isfield(results.pulsatility,'dvsDiameter') ...
                     && isfield(results.pulsatility.dvsDiameter,'scalars')
-                Tp = [Tp, pulsScalarTable(results.pulsatility.dvsDiameter.scalars,'pd')];
+                Tp = [Tp, pulsScalarTable(results.pulsatility.dvsDiameter.scalars)];
             end
             sink=emitSheet(sink,Tp,'dvsPulsatility',wantSheet);
         end
     end
+
+    % ---- the wall motion, one row per segment (results.wallMotion) --------------
+    % The metrics sheet already carries the eight wm* columns, which are the answer
+    % AFTER three gates and are NaN in all eight wherever any of them refused.  This is
+    % the evidence underneath: the same measurements before the gates, the floor each
+    % was judged against, and which gate refused a row.  A per-row struct is a sheet.
+    sink=emitLazy(sink,wantSheet,'wallMotion',@() wallMotionTable(results));
+
+    % ---- the vascular density, one row per analysed area (results.topology) -----
+    % NOT one row per segment, and that is the whole shape of it: a density is a
+    % property of an AREA - the whole analysed field first, then one row per drawn
+    % region - so it joins nothing and stands on its own.
+    sink=emitLazy(sink,wantSheet,'topology',@() topologyTable(results));
+
+    % ---- the per-repetition NVC sheets (results.nvc.esMetrics) ------------------
+    % LONG, one row per (unit, repetition) - see the header for why this is the one
+    % shape that can carry the epoch axis.  Built lazily, because a 38 800-row table
+    % is not something a narrower selection should pay for.
+    if isfield(results,'nvc') && isfield(results,'sMetrics')
+        sink=emitLazy(sink,wantSheet,'nvcTrials', ...
+            @() nvcTrialTable(results,results.sMetrics,{'sData','gsData'}));
+    end
+    if isfield(results,'nvc') && isfield(results,'dvsMetrics')
+        sink=emitLazy(sink,wantSheet,'dvsNvcTrials', ...
+            @() nvcTrialTable(results,results.dvsMetrics,{'dvsData','dvsDiameter'}));
+    end
+end
+
+function T = nvcTrialTable(results, M, sigs)
+%nvcTrialTable  ONE ROW PER UNIT PER STIMULUS REPETITION, for the signals that share
+%   one metrics table.  sData and gsData are both per SEGMENT and go in the sMetrics
+%   sheet; dvsData and dvsDiameter are both per tracked VESSEL and go in the
+%   dvsMetrics one - the same pairing dvsPulsatility already uses, and for the same
+%   reason: two signals measured on one set of rows are columns of one sheet, not two
+%   sheets that have to be joined by hand afterwards.
+%
+%   THE COLUMNS COME FROM THE TREE AND NEVER FROM A LIST HERE.  runNVC emits 17
+%   numbers per signal with the default levels - the fourteen markers, which
+%   s.segNvcReturn gates, and the two confidence numbers and the trust flag, which it
+%   never does - and three of the fourteen are named from s.nvcAreaPcts, so a list
+%   typed in this file could not even be written down without reading the settings.
+%   The names are already prefixed (ns / ng / nd) by the producer, so two signals
+%   never collide in one sheet even where they measure the same quantity - which is
+%   exactly what keeps a diameter response out of a flow column.
+%
+%   EVERY REPETITION IS A ROW, UNTRUSTED ONES INCLUDED, and epochTrust says which the
+%   recording kept.  Dropping them here would hide the thing they were dropped for,
+%   and runNVC deliberately measures them all for the same reason.  epochTrust is the
+%   RECORDING'S decision, one flag per repetition; whether a repetition was any good
+%   for THIS unit is the ns*Trust column beside the markers, and the two are
+%   different questions.
+%
+%   A COLLAPSED PRODUCT TAKES THE ONE BRANCH IN THIS FUNCTION.  It has no
+%   .epochStart, so there is nothing to number, nothing to place on the recording
+%   clock and no per-repetition decision: the three epoch columns are left OUT rather
+%   than written as blanks, and the sheet is one row per unit.
+T = table();
+N = results.nvc;
+if ~isfield(N,'esMetrics'), return; end
+
+nUnit = height(M);
+if nUnit==0, return; end
+nEp   = numel(fieldOrEmpty(N,'epochStart'));
+collapsed = nEp==0;
+if collapsed, nEp = 1; end
+
+% The identity block, one row per (unit, repetition).  THE ROWS RUN UNIT-FASTEST,
+% which is not a free choice: a [nUnit x nEp] metric flattens column-major, so v(:)
+% already runs that way and the two orders have to agree or every number lands
+% against the wrong repetition.
+T = idTable(M);
+T = T(repmat((1:nUnit)', nEp, 1), :);
+if ~collapsed
+    T.epoch      = reshape(repmat(1:nEp, nUnit, 1), [], 1);
+    T.epochStart = reshape(repmat(double(N.epochStart(:))', nUnit, 1), [], 1);
+    trust = [];
+    if isfield(N,'epochTrust'), trust = reshape(logical(N.epochTrust),1,[]); end
+    if numel(trust)==nEp, T.epochTrust = reshape(repmat(trust, nUnit, 1), [], 1); end
+end
+
+nMet = 0;
+for k = 1:numel(sigs)
+    if ~isfield(N.esMetrics, sigs{k}), continue; end
+    S  = N.esMetrics.(sigs{k});
+    fn = fieldnames(S);
+    for j = 1:numel(fn)
+        v = double(S.(fn{j}));
+        % A metric of a different height belongs to a different set of units and is
+        % skipped rather than reshaped into this sheet - the same "skip what does not
+        % fit this file" rule every other sheet here follows.
+        if size(v,1)~=nUnit || size(v,2)~=nEp, continue; end
+        T.(fn{j}) = v(:);
+        nMet = nMet + 1;
+    end
+end
+% No metric of these signals fits this table, so the sheet would be an index and
+% nothing else - skipped, like an absent sheet.
+if nMet==0, T = table(); end
 end
 
 %% ===================== THE MYOGRAPH SHEET SET ========================== %%
@@ -933,15 +1106,31 @@ if ismember('type', M.Properties.VariableNames),  Ti.type  = string(M.type(:)); 
 if ismember('label',M.Properties.VariableNames),  Ti.label = string(M.label(:)); end
 end
 
-function Tp = pulsScalarTable(S,harmPrefix)
+function Tp = pulsScalarTable(S)
 % Flatten one results.pulsatility.<sig>.scalars struct (per-segment) into a table:
 % each [nSeg x 1] scalar becomes a column under its own name; the harmonic
-% coefficients hAmp/hPhase [nSeg x nHarm] expand to <harmPrefix>hAmp1..N /
-% <harmPrefix>hPhase1..N (harmPrefix disambiguates the bare flow vs diameter
-% coefficients when a sheet carries both).  Non-[nSeg x 1] extras are skipped;
-% returns an empty table when nothing usable is present.
+% coefficients hAmp/hPhase [nSeg x nHarm] expand to <prefix>hAmp1..N /
+% <prefix>hPhase1..N.  Non-[nSeg x 1] extras are skipped; returns an empty table when
+% nothing usable is present.
+%
+% THE PREFIX IS NOT PASSED IN, IT IS READ OFF THE STRUCT, and that is the difference
+% between this and the version that took it as an argument.  Every marker the producers
+% write already carries it - psPI is a pulsatile FLOW, pdPI a pulsatile DIAMETER, pvPI a
+% pulsatile PLASMA VOLUME, and no two of the three may be pooled - so a literal here is
+% a second place for the same fact to be written down and a second way for it to be
+% wrong.  It was wrong: the dvsPulsatility sheet passed 'ps' unconditionally, which on a
+% fluorescence product put a column named for a pulsatile flow on a sheet whose every
+% other column is a plasma volume.
+%
+% AND hAmp / hPhase ARE WHY THIS MATTERS ON THE OTHER SHEET TOO.  They are the only two
+% leaves the producers leave unprefixed, so a MERGED workbook - one row per file - would
+% otherwise stack a speckle recording's flow harmonics and a fluorescence recording's
+% plasma-volume harmonics into one column called hAmp1.  Tagging them with the prefix
+% their siblings carry is what keeps the two apart, and it is why the tag is not
+% conditional on the sheet holding two signals.
 Tp = table();
 if ~isstruct(S), return; end
+harmPrefix = harmonicPrefix(S);
 fn = fieldnames(S); cols = {}; names = {};
 for i = 1:numel(fn)
     v = S.(fn{i});
@@ -958,6 +1147,103 @@ for i = 1:numel(fn)
 end
 if ~isempty(cols)
     Tp = array2table([cols{:}],'VariableNames',names);
+end
+end
+
+function pre = harmonicPrefix(S)
+%harmonicPrefix  The two-letter quantity prefix this signal's OWN markers carry - 'ps'
+%   for a pulsatile flow, 'pd' for a pulsatile diameter, 'pv' for a pulsatile plasma
+%   volume.  '' when there is nothing to read it off, which is the only case in which
+%   nothing is claimed: a struct holding harmonics and no markers at all, and one
+%   holding two prefixes at once, which no producer writes.
+pre = '';
+t = regexp(fieldnames(S), '^(p[a-z])[A-Z]', 'tokens', 'once');
+t = t(~cellfun(@isempty, t));
+if isempty(t), return; end
+u = unique(cellfun(@(c) c{1}, t, 'UniformOutput', false));
+if isscalar(u), pre = u{1}; end
+end
+
+function m = measuredRows(T)
+%measuredRows  WHICH ROWS OF A METRICS TABLE ARE A REAL, MEASURED SEGMENT, as a row
+%   logical over the table's height.  A row whose idx is missing or zero is an empty
+%   table slot; and on a recording that carries a flow index, a row whose index was
+%   never computed is not a segment anybody measured.
+%
+%   THE FLOW INDEX IS ASKED FOR RATHER THAN NAMED, and that is what lets one export take
+%   a mixed working set.  The fluorescence branch writes NO BFI column at all - there is
+%   nothing to invert, an intravascular tracer already makes the intensity proportional
+%   to the plasma volume - so naming it here refused every intensity product outright,
+%   with an error that stopped the whole batch rather than skipping one file.  Asking
+%   the table what it holds is the same statement this file already makes about
+%   dvsMetrics and about every absent sheet.
+idx = T.idx(:)';
+m   = ~isnan(idx) & idx~=0;
+if ismember('BFI', T.Properties.VariableNames)
+    m = m & ~isnan(T.BFI(:)');
+end
+end
+
+function T = wallMotionTable(results)
+%wallMotionTable  ONE ROW PER SEGMENT: the wall-motion measurement BEFORE its gates, the
+%   floor it was judged against, and which gate refused it.
+%
+%   THE ROW ORDER IS THE METRICS TABLE'S, and the producer asserts it (wallMotion.idx ==
+%   sMetrics.idx), so the join is by row and no key column is needed beyond the idx that
+%   every metric sheet already carries.
+%
+%   THE COLUMNS COME FROM THE TREE AND NEVER FROM A LIST HERE, exactly as the NVC sheets'
+%   do: a field that is one value per row is a column, and a field that is not - the
+%   pixel size, how many matched controls each vessel was compared with, the two band
+%   edges of a continuous run - describes the whole measurement rather than a vessel.
+%   The one place that rule is ambiguous is a recording with a single segment, where a
+%   scalar and a column are the same shape; that is not a recording anyone analyses.
+%
+%   THE REASON COLUMN IS KEPT AND IT IS TEXT.  'why' is the producer's own sentence for a
+%   segment that was never offered a cut at all, and a sheet that dropped it would leave
+%   a reader with a row of NaNs and nothing to read.
+T = table();
+if ~isfield(results,'wallMotion') || ~isstruct(results.wallMotion), return; end
+if ~isfield(results,'sMetrics')   || ~istable(results.sMetrics),    return; end
+W = results.wallMotion;
+n = height(results.sMetrics);
+if n==0, return; end
+
+T   = idTable(results.sMetrics);
+n0  = width(T);
+fn  = fieldnames(W);
+for i = 1:numel(fn)
+    if strcmp(fn{i},'idx'), continue; end            % idTable already carries it
+    v = W.(fn{i});
+    if (isnumeric(v) || islogical(v)) && isvector(v) && numel(v)==n
+        T.(fn{i}) = double(v(:));
+    elseif iscell(v) && numel(v)==n && all(cellfun(@(x) ischar(x)||isstring(x), v(:)))
+        T.(fn{i}) = string(v(:));
+    end
+end
+if width(T)<=n0, T = table(); end                    % nothing per-row: no sheet
+end
+
+function T = topologyTable(results)
+%topologyTable  results.topology.metrics as the step wrote it - ONE ROW PER ANALYSED
+%   AREA, the whole segmented field first and then one row per drawn region - with the
+%   units the numbers are in written onto every row.
+%
+%   THE UNITS ARE PART OF THE SHEET AND NOT A NOTE SOMEWHERE.  The same column is
+%   micrometres on a calibrated recording and pixels on one whose micrometres per pixel
+%   nobody supplied, the choice is made per recording, and a merged workbook stacks both
+%   kinds - so a sheet that did not carry them would be a column of numbers that cannot
+%   be read.
+T = table();
+if ~isfield(results,'topology') || ~isstruct(results.topology), return; end
+if ~isfield(results.topology,'metrics') || ~istable(results.topology.metrics), return; end
+T = results.topology.metrics;
+u = fieldOrEmpty(results.topology,'units');
+if ~isstruct(u), return; end
+for f = {'lengthUnit','areaUnit','densityUnit'}
+    if isfield(u,f{1}) && (ischar(u.(f{1})) || isstring(u.(f{1})))
+        T.(f{1}) = repmat(string(u.(f{1})), height(T), 1);
+    end
 end
 end
 
@@ -979,8 +1265,7 @@ Tm = table(); Td = table();
 V = results.sMetrics.Properties.VariableNames;
 if ~ismember(keyVar, V), return; end
 
-idxAll   = results.sMetrics.idx(:)';
-goodMask = ~isnan(idxAll) & idxAll~=0 & ~isnan(results.sMetrics.BFI(:)');
+goodMask = measuredRows(results.sMetrics);
 
 keep = goodMask' & strlength(results.sMetrics.(keyVar)) > 0  ...
     & ~ismember(results.sMetrics.category, ["outerWall","innerWall","unsegmented"]);
@@ -1199,10 +1484,13 @@ end
 end
 
 function names = legacySheets()
-%legacySheets  The nine sheets a bare exportToExcel(fNames) has always written,
-%   in write order.  THE definition of "everything" for a segmented recording.
+%legacySheets  The sheets a bare exportToExcel(fNames) writes for a segmented
+%   recording, in write order.  THE definition of "everything" for one.  The two NVC
+%   sheets are the newest and, like every other, they are simply absent from a file
+%   the step was never run on.
 names = {'sMetrics','sData','sMetricsROI','sDataROI','dvsMetrics','dvsData', ...
-         'dvsDiameter','pulsatility','dvsPulsatility'};
+         'dvsDiameter','pulsatility','dvsPulsatility','wallMotion','topology', ...
+         'nvcTrials','dvsNvcTrials'};
 end
 
 function names = myographSheets()

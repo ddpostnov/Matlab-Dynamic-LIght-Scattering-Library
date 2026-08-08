@@ -1,7 +1,7 @@
 %setVascularTree  Derive & edit the vascular parent-daughter hierarchy
 %
 %   setVascularTree(s,fNames) is the logical post-processing step that
-%   follows setVesselTypes.  For every *_BFI_r.mat dataset in fNames it
+%   follows setVesselTypes.  For every *_BFI_r.mat or *_I_r.mat dataset in fNames it
 %   automatically derives a
 %   parent->daughter vascular hierarchy over the segmented vessels and
 %   parenchyma via the Core routine getVascularTree, stores the result in a
@@ -10,10 +10,24 @@
 %   the derived hierarchy can be inspected and corrected before it is
 %   written back.
 %
+%   WHICH PRODUCT CARRIES THE POTENTIAL DIFFERS BY BRANCH, and the step is run where the
+%   timing was measured:
+%     SPECKLE        the internal cycle '_c_BFI', where runPulsatility writes the pulse
+%                    arrival (psTimeMax/psTimeMin) and the pulsatility index (psPI)
+%     FLUORESCENCE   the BOLUS '_b_I', where runCTTH writes the TRACER arrival (bsDelay)
+%                    and the mean transit time (bsMtt).  A tracer spreads its arrivals
+%                    over seconds where a pulse phase is confined inside one beat and
+%                    wraps, so the bolus is the better-conditioned potential by a wide
+%                    margin - claude-docs/intensity-branch/10-vessel-types-tree.md has
+%                    the measurements.
+%   In both cases the derived hierarchy is then INHERITED by the recording's other
+%   products, which share its segmentation (s.propagatePartners).
+%
 %   METHOD (staged, type-constrained connection search)
-%     A global flow potential phi (from pulse arrival psTimeMin/psTimeMax and
-%     pulsatility psPI) orders every node from the arterial inlet (low) to
-%     the venous outlet (high).  Connections are then found in stages:
+%     A global flow potential phi (from the arrival and pulsatility columns of whichever
+%     product this is - defaultFlowParams resolves them) orders every node from the
+%     arterial inlet (low) to the venous outlet (high).  Connections are then found in
+%     stages:
 %       (0) FOV BRIDGING - because the image is a 2D projection, a crossing
 %           vessel of the opposite type can split one vessel in two so its
 %           halves do not touch.  Same-type vessels whose pixels come within
@@ -47,18 +61,24 @@
 %                • autoOnly       true = derive & save without the GUI
 %                                 (batch / headless).  Default false.
 %                • flowParams     struct array of the monotone parameters
-%                                 used to order the tree; fields name / dirn
-%                                 (+1 increases, -1 decreases downstream) /
-%                                 weight (0 = off) / enabled / label.  Default
-%                                 (defaultFlowParams): psTimeMax, psTimeMin,
-%                                 psPI enabled at weight 1.  Editable
-%                                 live in the GUI.  BFI/diameter are U-shaped
-%                                 and are not used to order the tree.  Two
-%                                 role='tip' parameters (tipVessel off,
-%                                 tipParench on) are geometric, not part of the
-%                                 potential: they reward a connection landing
-%                                 near the vessel tip OPPOSITE its committed
-%                                 vessel link (see METHOD stage 3).
+%                                 used to order the tree; fields name / role /
+%                                 weight (0 = off) / enabled / label.  Left
+%                                 unset it is resolved PER FILE by
+%                                 defaultFlowParams from the product's own name:
+%                                 psTimeMax/psTimeMin/psPI on a speckle internal
+%                                 cycle, bsDelay/bsMtt on a fluorescence bolus,
+%                                 pvTimeMax/pvTimeMin/pvPI on a fluorescence
+%                                 beat, all at weight 1.  Editable live in the
+%                                 GUI.  BFI/diameter are U-shaped and are not
+%                                 used to order the tree.  Two role='tip'
+%                                 parameters (tipVessel off, tipParench on) are
+%                                 geometric, not part of the potential: they
+%                                 reward a connection landing near the vessel tip
+%                                 OPPOSITE its committed vessel link (see METHOD
+%                                 stage 3).  SET IT YOURSELF AND IT IS USED
+%                                 VERBATIM ON EVERY FILE - which is how a
+%                                 fluorescence tree can be built off the cardiac
+%                                 product's pv* columns instead.
 %                • connectivity   4 or 8 pixel adjacency.  Default 8.
 %                • minBorder      min shared-border pixels for adjacency.
 %                                 Default 1.
@@ -67,27 +87,35 @@
 %                                 this file's (matching) segmentation.  The
 %                                 reference file itself (s.fName==s.refFName)
 %                                 is still derived + editable.  Use this to
-%                                 carry the pulsatility-derived hierarchy to
+%                                 carry the timing-derived hierarchy to
 %                                 a registered vasomotion "_t" partner.
-%                • refFName       path to the reference *_BFI_r.mat (the
-%                                 pulsatility "_c" file, which already holds
-%                                 results.hierarchy).
+%                • refFName       path to the reference product (the "_c_BFI"
+%                                 pulsatility file or the "_b_I" bolus one,
+%                                 which already holds results.hierarchy).
 %                • propagatePartners  cellstr of recording-variant letters;
-%                                 after a "_c" file is derived, the hierarchy
-%                                 is auto-copied to sibling recordings whose
-%                                 name has _c_BFI replaced by _<L>_BFI, when
-%                                 they exist.  Default {'t','s'}; {} disables.
-%     fNames   cell array of *_BFI_r.mat paths.
+%                                 after the deriving file is done, the hierarchy
+%                                 is auto-copied to sibling products whose name
+%                                 has _<thisStage>_<product> replaced by
+%                                 _<L>_<product>, when they exist.  Left unset
+%                                 it is resolved per file: {'t','s'} from a
+%                                 "_c_BFI", {'a','c'} from a "_b_I", and {} from
+%                                 anything that is not the deriving stage.
+%                                 {} disables it.
+%     fNames   cell array of *_BFI_r.mat or *_I_r.mat paths.
 %     Optional workbench hooks in s (no-op when absent): s.stageFcn(stage,detail) and
 %     s.cancelFcn()->tf (between files).
 %
 %   SIDE-EFFECTS (per file)
-%     *_BFI_r.mat   RESULTS – new sMetrics columns parentIdx, daughterIdx
+%     *_r.mat       RESULTS – new sMetrics columns parentIdx, daughterIdx
 %                   (cell), treeID, generation, strahlerOrder,
 %                   hierarchyConfidence, flowPotential, isRoot, isOutlet;
 %                   plus RESULTS.hierarchy (edge list / adjacency / roots /
 %                   params / version) and RESULTS.mapTree overlay image.
-%     *_BFI_s.mat   SETTINGS – field settings.setVascularTree added.
+%     *_s.mat       SETTINGS – field settings.setVascularTree added.  It records the
+%                   flowParams THAT FILE was ordered by, which is the auditable fact
+%                   once they are resolved per product rather than typed once — and,
+%                   when the tree editor re-derived, the parameters it re-derived WITH
+%                   rather than the ones this call was handed.
 %
 %   EXAMPLE
 %     s.autoOnly = false;
@@ -100,23 +128,26 @@
 %     preview); Image Processing Toolbox (imdilate/medfilt2), Statistics Toolbox
 %     (tiedrank) and MATLAB graph objects (digraph/conncomp/toposort/isdag); core
 %     LSCI library utilities.  Consumes the output of runSegmentation,
-%     runPulsatility and setVesselTypes.
+%     setVesselTypes, and whichever step measured the timing on this branch -
+%     runPulsatility on a speckle internal cycle, runCTTH on a fluorescence bolus.
 %
-% See also: getVascularTree, setVesselTypes, runPulsatility, runSegmentation, runVasomotion
+% See also: getVascularTree, getVascularCues, defaultFlowParams, setVesselTypes,
+%           runPulsatility, runCTTH, runSegmentation, runVasomotion
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 21-July-2026
+% Last revision: 08-August-2026
 
 %%Example of s structure parametrisation
 % s.libraryFolder=libraryFolder;
 % %ADJUSTED (OR VERIFIED) PER PROTOCOL - HIERARCHY DERIVATION
 % s.autoOnly=false; % true to derive & save without opening the GUI
 % %DETECTION PARAMETERS - easiest to tune live in the GUI. Leave s.flowParams
-% %unset to use the defaults (psTimeMax,psTimeMin,psPI at weight 1).
+% %unset and each file is ordered by the columns its own product carries
+% %(psTimeMax,psTimeMin,psPI on a "_c_BFI"; bsDelay,bsMtt on a "_b_I").
 % %To trust peak timing more and PI less (build the struct explicitly):
-% % s.flowParams=struct('name',{'psTimeMax','psTimeMin','psPI'},'label',{'peak','foot','PI'},'dirn',{1,1,-1},'weight',{2,1,0.5},'enabled',{true,true,true});
+% % s.flowParams=struct('name',{'psTimeMax','psTimeMin','psPI'},'label',{'peak','foot','PI'},'role',{'arrival','arrival','pulsatility'},'scope',{'','',''},'weight',{2,1,0.5},'enabled',{true,true,true});
 % s.connectivity=8; % 4 or 8 pixel adjacency between segments
 % s.minBorder=1; % minimum shared-border pixels to treat two segments as touching
 % %FOV BRIDGING - reconnect same-type vessels split by a crossing vessel in the
@@ -130,18 +161,33 @@
 % %(no pulse timing there, so inherit instead of deriving):
 % % s.useReference=true; s.refFName=fNames{1}; % the matching _c_BFI_r.mat
 % % setVascularTree(s, getFileNamesList(rootFolder,'*_t_BFI_r.mat'));
+% %ON THE FLUORESCENCE BRANCH the tree is derived on the BOLUS, where the tracer
+% %arrival is, and inherited by the angiogram and the cardiac cycle:
+% % fNames=getFileNamesList(resultsFolder,'*_b_I_r.mat');
+% % setVascularTree(s,fNames(:));
 
 function setVascularTree(s,fNames)
 
-if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_r.mat'), fNames(:)) )
-    error(['One or more *non-empty* entries do not contain "_BFI_r.mat".  Every ' ...
-        'step takes the RESULTS member of a product - list them with ' ...
-        'getFileNamesList(rootFolder,''*_c_BFI_r.mat'').']);
+% ONE EXPRESSION, NO FALLBACK.  The speckle branch orders a blood-flow-index product and
+% the fluorescence branch an intensity one; both are current, so this is the gate of a
+% step that serves two modalities rather than a reader of an old name.
+if ~all( cellfun(@(x) isempty(x) || contains(x,'_BFI_r.mat') || contains(x,'_I_r.mat'), fNames(:)) )
+    error(['One or more *non-empty* entries are neither a "_BFI_r.mat" nor an ' ...
+        '"_I_r.mat" product.  Every step takes the RESULTS member of a product - ' ...
+        'list them with getFileNamesList(rootFolder,''*_c_BFI_r.mat'') or ' ...
+        'getFileNamesList(resultsFolder,''*_b_I_r.mat'').']);
 end
 
 % ---- defaults ----------------------------------------------------------
+% TWO OF THEM ARE RESOLVED PER FILE, INSIDE THE LOOP, and cannot be resolved here:
+% s.flowParams names the columns that order the tree and s.propagatePartners the stages
+% that inherit it, and BOTH are facts about the product rather than about the run.  What
+% is decided here is only whether the user typed them, because a typed value is used
+% verbatim on every file - which is the escape hatch that lets a fluorescence tree be
+% built off the cardiac product's pv* columns instead of the bolus's bs*.
+paramsGiven   = isfield(s,'flowParams')        && ~isempty(s.flowParams);
+partnersGiven = isfield(s,'propagatePartners');
 if ~isfield(s,'autoOnly'),         s.autoOnly=false;        end
-if ~isfield(s,'flowParams')||isempty(s.flowParams), s.flowParams=defaultFlowParams(); end
 if ~isfield(s,'connectivity'),     s.connectivity=8;        end
 if ~isfield(s,'minBorder'),        s.minBorder=1;           end
 % Parenchyma connection degree caps (adjustable, split by vessel type):
@@ -166,7 +212,6 @@ if ~isfield(s,'bridgeWallRadius'), s.bridgeWallRadius=0;    end  % px gap search
 if ~isfield(s,'bridgeTipBand'),    s.bridgeTipBand=0.2;     end  % border fraction near each end = "tip"
 if ~isfield(s,'useReference'),     s.useReference=false;    end
 if ~isfield(s,'refFName'),         s.refFName='';           end
-if ~isfield(s,'propagatePartners'),s.propagatePartners={'t','s'}; end
 
 % reportOpen (Core/Reporting) owns the hook seam: the optional workbench callbacks
 % are resolved to no-ops when absent and ride in rep.  s is never mutated, and
@@ -184,6 +229,24 @@ for fidx=1:1:numel(fNames)
         load(getProductPath(s.fName,'s'),'settings');
         load(s.fName,'results');
 
+        % THE TWO PER-FILE ANSWERS.  A run may hold products of more than one branch -
+        % setVesselTypes is handed every product of a recording - so the columns that
+        % order this file and the stages that inherit from it are resolved from THIS
+        % file's name.  They then ride into reportSettings, so the sidecar records what
+        % actually ordered this file rather than what was typed once at the top.
+        cues = getVascularCues(s.fName);
+        if ~paramsGiven,   s.flowParams        = defaultFlowParams(s.fName); end
+        if ~partnersGiven, s.propagatePartners = cues.partners;              end
+
+        % WHAT ACTUALLY DERIVED THIS FILE, WHICH IS NOT ALWAYS WHAT WAS TYPED.  The tree
+        % editor re-derives from its own controls, so one click makes s the question and
+        % sEff the answer.  results.hierarchy.params has always recorded the truth; the
+        % sidecar recorded the pre-edit numbers, and two members of one product
+        % disagreeing about how it was made is exactly the fault the '_s.mat' exists to
+        % prevent.  IT IS A SEPARATE VARIABLE RATHER THAN AN ASSIGNMENT BACK TO s: the
+        % loop reuses s for the next file, so writing the editor's numbers into it would
+        % silently derive file 2 with a correction made while looking at file 1.
+        sEff = s;
         if s.useReference && ~isempty(s.refFName) && ~strcmp(s.fName,s.refFName)
             % ---- reference mode: inherit hierarchy from the reference ----
             % (the reference must share the segmentation - guaranteed within a
@@ -204,20 +267,25 @@ for fidx=1:1:numel(fNames)
 
             % ---- interactive correction ---------------------------------
             if ~s.autoOnly
-                results = vascularTreeGUI(results,s);
+                [results,sEff] = vascularTreeGUI(results,s);
             end
         end
 
-        settings.setVascularTree=reportSettings(s);
+        settings.setVascularTree=reportSettings(sEff);
         reportWriting(rep);
         save(s.fName,'results','-v7.3','-nocompression');
         save(getProductPath(s.fName,'s'),'settings','-v7.3','-nocompression');
         reportSaved(rep);
 
-        % auto-propagate the hierarchy to registered partner recordings
-        % (same base name, different variant letter: _c_BFI -> _t_BFI/_s_BFI)
-        if ~s.useReference && isfield(results,'hierarchy') && contains(s.fName,'_c_BFI')
-            propagateToPartners(results.hierarchy,s);
+        % auto-propagate the hierarchy to the recording's other products, which share
+        % its segmentation (_c_BFI -> _t_BFI/_s_BFI, _b_I -> _a_I/_c_I).  The list is
+        % empty on any product that is NOT the deriving stage, which is what stops a
+        % file that inherited a hierarchy from handing it on again.
+        % sEff here too: a partner inherits THIS file's hierarchy, so the settings it
+        % records have to be the ones that derived it.  The editor touches none of the
+        % three fields read below, so this changes what is written and nothing else.
+        if ~sEff.useReference && isfield(results,'hierarchy') && ~isempty(sEff.propagatePartners)
+            propagateToPartners(results.hierarchy,sEff,cues);
         end
     end
 end
@@ -226,15 +294,21 @@ end
 
 
 %% ====================  PARTNER PROPAGATION  ========================= %%
-function propagateToPartners(H,s)
-% Copy the hierarchy onto sibling recordings that share the segmentation
-% (same base name, different variant letter, e.g. _c_BFI -> _t_BFI / _s_BFI).
-% Silent: a partner is the SAME acquisition in another contrast branch, not
-% another recording, so it is part of this file's work and not a file of its own.
+function propagateToPartners(H,s,cues)
+% Copy the hierarchy onto sibling products that share the segmentation (same base name,
+% different stage letter, e.g. _c_BFI -> _t_BFI / _s_BFI, or _b_I -> _a_I / _c_I).
+% Silent: a partner is the SAME acquisition on another branch, not another recording, so
+% it is part of this file's work and not a file of its own.
+%
+% THE SUBSTITUTION IS BUILT FROM THE PRODUCT rather than written out.  It used to be a
+% literal strrep of '_c_BFI', which is the speckle branch's deriving stage - correct
+% there and silently a no-op on every fluorescence product, which would have left the
+% angiogram and the cardiac cycle without the hierarchy and said nothing.
 parts=s.propagatePartners; if ischar(parts), parts={parts}; end
+thisTag=['_' cues.stage '_' cues.product];
 for i=1:numel(parts)
     L=parts{i};
-    partnerR=strrep(s.fName,'_c_BFI',['_' L '_BFI']);
+    partnerR=strrep(s.fName,thisTag,['_' L '_' cues.product]);
     if strcmp(partnerR,s.fName), continue; end
     partnerS=getProductPath(partnerR,'s');
     if exist(partnerR,'file')~=2, continue; end
@@ -331,7 +405,7 @@ end
 
 
 %% ============================  GUI  ================================= %%
-function results = vascularTreeGUI(results,s)
+function [results,s] = vascularTreeGUI(results,s)
 % Interactive inspector/editor for the derived hierarchy, modelled on
 % setVesselTypes.  Left panel: a background image (popup-selectable).  Right
 % panel: the hierarchy coloured by a popup-selectable attribute (generation
@@ -340,6 +414,14 @@ function results = vascularTreeGUI(results,s)
 % Each node carries an up-link (parent, for arteries/parenchyma) and/or a
 % down-link (daughter, for veins/parenchyma); editing sets one of these by
 % clicking a segment then a touching up/down neighbour.  Finish saves.
+%
+% IT RETURNS THE SETTINGS IT ENDED ON, NOT THE ONES IT WAS HANDED.  'Re-derive with
+% these parameters' reads the flow-parameter weights and enables, the parenchyma degree
+% caps and the two bridge radii off the panel and calls getVascularTree again, so after
+% one click the hierarchy on screen is no longer the answer s asks for.  The edited copy
+% lives in st.s and is harvested with the rest of the edited state below.  A control the
+% user typed in but did NOT re-derive with is not in it: guiRederive is the only reader
+% of those boxes, which is what keeps the returned settings equal to what actually ran.
 
 H=results.hierarchy;
 sMap=results.sMap; cMask=results.cMask;
@@ -359,14 +441,21 @@ cy=accumarray(cc,yy,[nNodes 1],@mean,NaN);
 [linkUp,linkDn,pEdges,adjC,autoConf]=linkStateFromH(H,comp,nNodes);
 userSet=false(nNodes,1);
 
-% per-node metrics for the inspector
+% per-node metrics for the inspector.  WHICH COLUMNS THEY ARE IS THE PRODUCT'S ANSWER,
+% not three names typed here: a fluorescence bolus has no psPI and no BFI, and a hover
+% panel that read them would have shown NaN in every field with nothing saying why.  The
+% inspector shows the calibre cue, the pulsatility index (when the product has one) and
+% the two arrival columns, whatever they are called on this branch.
+cues=getVascularCues(s.fName);
 M=results.sMetrics;
-bfiN=getNode(M,'BFI',nodeIds); piN=getNode(M,'psPI',nodeIds);
-footN=getNode(M,'psTimeMin',nodeIds); peakN=getNode(M,'psTimeMax',nodeIds);
+inspLbl={nthName(cues.caliber,1), cues.pulsatility, ...
+         nthName(cues.arrival,2), nthName(cues.arrival,1)};
+bfiN =getNode(M,inspLbl{1},nodeIds);   piN  =getNode(M,inspLbl{2},nodeIds);
+footN=getNode(M,inspLbl{3},nodeIds);   peakN=getNode(M,inspLbl{4},nodeIds);
 diamN=getNode(M,'diameter',nodeIds);
 
 % background image (as in setVesselTypes)
-if isfield(results,'imgBFI'), img=sqrt(double(results.imgBFI)); else, img=double(cMask>0); end
+if isfield(results,cues.image), img=sqrt(double(results.(cues.image))); else, img=double(cMask>0); end
 lo=double(prctile(img(cMask(:)>0),[5,99])); if lo(1)==lo(2), lo=[min(img(:)) max(img(:))+eps]; end
 img=mat2gray(img,lo);
 fSize=floor((min(size(img))./20))*2+1;
@@ -377,7 +466,8 @@ f=figure('Name','Vascular hierarchy','Color','w','WindowState','maximized', ...
     'CloseRequestFcn',@(~,~)uiresume(gcbf));
 TL=tiledlayout(f,1,5,'TileSpacing','none','Padding','compact');
 axL=nexttile(TL,[1 2]); imagesc(axL,img); axis(axL,'image','off'); colormap(axL,'parula');
-try, clim(axL,prctile(img(cMask(:)>0),[1,99])); catch, end; title(axL,'BFI');
+try, clim(axL,prctile(img(cMask(:)>0),[1,99])); catch, end
+title(axL,cues.image,'Interpreter','none');
 axR=nexttile(TL,[1 2]);
 hMapR=imagesc(axR,nan(size(sMap))); axis(axR,'image','off'); title(axR,'Hierarchy');
 axCtl=nexttile(TL); axis(axCtl,'off');
@@ -468,6 +558,7 @@ st=struct('s',s,'results',results,'linkUp',linkUp,'linkDn',linkDn,'memb',H.memb,
     'nodeIds',nodeIds,'comp',comp,'compImg',compImg,'cx',cx,'cy',cy,'autoConf',autoConf, ...
     'userSet',userSet,'nNodes',nNodes,'imsz',size(sMap),'phi',H.phi,'nodeType',H.nodeType, ...
     'typeCode',typeCodeFromH(H,nNodes),'bfiN',bfiN,'piN',piN,'footN',footN,'peakN',peakN, ...
+    'inspLbl',{inspLbl}, ...
     'diamN',diamN,'cMask',cMask,'isWallPix',(cMask==3|cMask==4),'showWalls',true, ...
     'paramCtl',{paramCtl},'axL',axL,'axR',axR,'hMapR',hMapR,'sel',[],'mode','inspect', ...
     'showEdges',false,'gen',[],'strahler',[],'treeID',[],'conf',[],'kUp',[],'kDn',[],'pEdges',pEdges, ...
@@ -479,7 +570,7 @@ guiRefresh(f);                 % compute orders + first overlay
 uiwait(f);
 
 % ---- harvest edited state & write back --------------------------------
-st=guidata(f); results=st.results; linkUp=st.linkUp; linkDn=st.linkDn; pEdges=st.pEdges; userSet=st.userSet;
+st=guidata(f); results=st.results; s=st.s; linkUp=st.linkUp; linkDn=st.linkDn; pEdges=st.pEdges; userSet=st.userSet;
 H=results.hierarchy; autoConf=st.autoConf; memb=st.memb;
 nodeIds=st.nodeIds; nNodes=st.nNodes; delete(f);
 H2=rebuildHierarchy(H,linkUp,linkDn,pEdges,userSet,autoConf,nodeIds,nNodes,memb);
@@ -511,8 +602,19 @@ tc(H.nodeType=="Artery")=1; tc(H.nodeType=="Vein")=2; tc(H.nodeType=="Parench")=
 end
 
 function v=getNode(M,name,nodeIds)
-if any(strcmp(name,M.Properties.VariableNames)), col=double(M.(name)); else, col=nan(height(M),1); end
+if ~isempty(name) && any(strcmp(name,M.Properties.VariableNames))
+    col=double(M.(name));
+else
+    col=nan(height(M),1);
+end
 v=col(nodeIds);
+end
+
+function n=nthName(c,k)
+%nthName  The k-th entry of a cellstr, or '' when the product does not have one.  What
+%   turns "this branch has only two arrival columns" into an inspector row that is
+%   simply not there, rather than into an index error.
+if numel(c)>=k, n=c{k}; else, n=''; end
 end
 
 function guiReposition(f,tileAx,panel,WH)
@@ -564,7 +666,16 @@ for k=1:numel(bg)
     if isfinite(bv)&&bv>=0, st.s.(bf{k})=bv; end
 end
 guiSetInfo(f,'Re-deriving with the current parameters...'); drawnow;
-H=getVascularTree(st.results,st.s);
+% THE CORE REFUSES WHEN NOTHING ORDERS THE TREE, which the editor can reach in one click:
+% untick every arrival and pulsatility box and there is no potential left.  The refusal
+% belongs in the info panel the user is looking at, not in the console behind it, and the
+% previous hierarchy stays on screen rather than being replaced by a meaningless one.
+try
+    H=getVascularTree(st.results,st.s);
+catch ME
+    guiSetInfo(f,sprintf('Not re-derived.\n%s',ME.message));
+    return
+end
 st.results=applyHierarchy(st.results,H);
 [st.linkUp,st.linkDn,st.pEdges,st.adjC,st.autoConf]=linkStateFromH(H,st.comp,st.nNodes);
 st.memb=H.memb; st.phi=H.phi; st.nodeType=H.nodeType; st.typeCode=typeCodeFromH(H,st.nNodes);
@@ -663,9 +774,16 @@ if x<1||y<1||x>st.imsz(2)||y>st.imsz(1), return; end
 h=st.compImg(y,x); if h==0, guiSetInfo(f,'(background)'); return; end
 [par,dau]=linksOf(h,st.kUp,st.kDn);
 pid=st.nodeIds(par); did=st.nodeIds(dau);
-txt=sprintf(['seg %d  (%s)\nBFI %.0f  PI %.3f\nfoot %.4f  peak %.4f\ndiam %.1f  phi %.2f\n' ...
+% THE FOUR INSPECTOR ROWS ARE NAMED BY THE PRODUCT, and their labels go in as %s
+% ARGUMENTS rather than being pasted into the format - a label pasted into a format
+% string is one stray per-cent away from eating the next number.  The values print as
+% %.4g on every branch because a BFI runs to thousands and a tracer delay to tenths of a
+% second, so no fixed precision suits both.
+txt=sprintf(['seg %d  (%s)\n%s %.4g   %s %.4g\n%s %.4g   %s %.4g\ndiam %.1f  phi %.2f\n' ...
     'gen %d  strahler %d  tree %d\nconf %.2f%s\nparents: %s\ndaughters: %s'], ...
-    st.nodeIds(h), char(st.nodeType(h)), st.bfiN(h), st.piN(h), st.footN(h), st.peakN(h), ...
+    st.nodeIds(h), char(st.nodeType(h)), ...
+    lblOr(st.inspLbl{1}), st.bfiN(h),  lblOr(st.inspLbl{2}), st.piN(h), ...
+    lblOr(st.inspLbl{3}), st.footN(h), lblOr(st.inspLbl{4}), st.peakN(h), ...
     st.diamN(h), st.phi(h), st.gen(h), st.strahler(h), st.treeID(h), st.conf(h), ...
     tern(st.userSet(h),' (edited)',''), numstr(pid), numstr(did));
 guiSetInfo(f,txt);
@@ -905,3 +1023,7 @@ function s=numstr(v)
 if isempty(v), s='(none)'; else, s=strtrim(sprintf('%d ',v(:))); end
 end
 function o=tern(c,a,b), if c, o=a; else, o=b; end, end
+function n=lblOr(n)
+%lblOr  An inspector row's name, or a dash when this product has no such column.
+if isempty(n), n='-'; end
+end

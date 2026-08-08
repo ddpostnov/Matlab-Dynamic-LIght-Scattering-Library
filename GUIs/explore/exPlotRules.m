@@ -20,12 +20,30 @@
 %   axis is a label id is stripped from the plot key and averaged away, so it cannot
 %   reach an axis even by the inferred fallback path.
 %
-%   line AND interval ARE COORDINATES, and this is the distinction the old code
-%   blurred.  Position along a vessel is a real ordering, so curve.position and the
-%   position-time kymograph are legitimate; protocol order is a real ordering, so
+%   line, interval AND epoch ARE COORDINATES, and this is the distinction the old
+%   code blurred.  Position along a vessel is a real ordering, so curve.position and
+%   the position-time kymograph are legitimate; protocol order is a real ordering, so
 %   interval is a legitimate categorical x on a box - it arrives as the COMPARISON
 %   axis of a box or bar, which is why box and bar report x with an empty name and
 %   a categorical scale rather than naming an axis of their own.
+%
+%   AND A STIMULUS REPETITION IS THE THIRD.  results.nvc.esMetrics.<sig>.<metric> is
+%   [nSeg x nEp], and the second axis is the repetition the number was measured in -
+%   an ordering the whole per-trial redesign exists to make visible, because a
+%   response that fades over a session is a slope along it and an average of twenty
+%   hides it completely.  So epoch reaches an x, on curve.epoch, and a per-pixel map
+%   scrubs along it exactly as it scrubs along time.
+%
+%   WHAT THE EPOCH ROWS DELIBERATELY DO NOT OFFER IS A REDUCTION OVER REPETITIONS.
+%   box and image.fromSegments both read M(:,1,1) - they have never been reached by a
+%   leaf with a dimension to reduce, and neither honours ax.reduce - so offering them
+%   here would silently plot repetition 1 and call it the segment's answer.  Nothing
+%   is lost by leaving them out: the per-segment aggregate ALREADY EXISTS in the file,
+%   as the ns*/nd* columns of the metrics table, and it is the MEAN over the
+%   repetitions the RECORDING trusted - the same set for every segment - which is the
+%   reduction the data model specifies rather than one this table would have
+%   invented.  A rule that would have to average is a rule whose answer belongs to
+%   the producer.
 %
 %   ONE LEAF, SEVERAL KINDS.  A per-segment scalar is Scalar (a box across strata)
 %   AND Image (the same numbers painted back into the map); an [nSeg x nF x nD]
@@ -55,6 +73,13 @@
 %                        family of curves that only an ORDERED unit makes meaningful
 %     seg/dvs x time     a per-segment time series          -> video.fromSegments,
 %                        the video an LSCI recording really has
+%     seg/dvs x epoch    a per-repetition response metric   -> curve.epoch, a NEW id,
+%                        plus the same painted video.  It is a new id because no
+%                        existing one names the axis: curve.time would put "time (s)"
+%                        under a count of stimulus repetitions
+%     pixel  x epoch     a per-repetition response map      -> as pixel x pct
+%     whole  x epoch     which repetitions were kept, how   -> curve.epoch
+%                        much of the field responded in each
 %
 %   A combination with no row returns an EMPTY plot list, deliberately: a leaf the
 %   tool can see but cannot draw is a hole in the rule table, and testExplorePlan
@@ -100,7 +125,7 @@
 %     plotId  one of:
 %               box  bar
 %               curve.time  curve.f  curve.pct  curve.harmonic  curve.position
-%               curves.family
+%               curve.epoch  curves.family
 %               image  image.fromSegments  image.timeAverage  image.frame
 %               heat.ft  heat.fpct  heat.positionTime
 %               video  video.fromSegments
@@ -147,7 +172,7 @@
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 03-August-2026
+% Last revision: 06-August-2026
 
 %------------- BEGIN CODE --------------
 function varargout = exPlotRules(varargin)
@@ -191,6 +216,12 @@ switch unitClass(d.unit)
             case 'harmonic', P = {'curve.harmonic'};
             case 'f',        P = {'curve.f'};
             case 'time',     P = {'curve.time','video.fromSegments'};
+            % THE REPETITION ROW IS THE TIME ROW'S TWIN, and for the same two
+            % reasons: the axis is a real ordering, so a curve along it means
+            % something; and each repetition's own number painted back through sMap,
+            % one frame per repetition, is a picture of how the response moved over
+            % the session.  No box and no image.fromSegments - see the header.
+            case 'epoch',    P = {'curve.epoch','video.fromSegments'};
             case 'f,time',   P = {'heat.ft','curve.f','curve.time'};
             case 'f,pct',    P = {'curves.family','heat.fpct'};
         end
@@ -211,7 +242,7 @@ switch unitClass(d.unit)
         switch key
             case '',                         P = {'image'};
             case 'frame',                    P = {'image.frame'};
-            case {'pct','harmonic','f'}
+            case {'pct','harmonic','f','epoch'}
                                              P = {'video','image.frame'};
             case 'time',                     P = {'video','image.timeAverage'};
             case 'f,time',                   P = {'video','image.timeAverage','heat.ft'};
@@ -237,6 +268,7 @@ switch unitClass(d.unit)
         switch key
             case '',         P = {'box'};
             case 'time',     P = {'curve.time'};
+            case 'epoch',    P = {'curve.epoch'};
             case 'f',        P = {'curve.f'};
             case 'pct',      P = {'curve.pct'};
             case 'harmonic', P = {'curve.harmonic'};
@@ -264,7 +296,7 @@ function k = kindOf(plotId)
 %kindOf  What the user sees on the axes, which is not the same as what the array is.
 switch char(plotId)
     case {'box','bar'},                                  k = 'Scalar';
-    case {'curve.time','curve.f','curve.pct', ...
+    case {'curve.time','curve.f','curve.pct','curve.epoch', ...
           'curve.harmonic','curve.position','curves.family'}, k = 'Vector';
     case {'image','image.fromSegments','image.timeAverage', ...
           'image.frame','heat.ft','heat.fpct','heat.positionTime'}, k = 'Image';
@@ -276,7 +308,7 @@ end
 
 function ids = allPlotIds()
 ids = {'box','bar','curve.time','curve.f','curve.pct','curve.harmonic', ...
-       'curve.position','curves.family','image','image.fromSegments', ...
+       'curve.position','curve.epoch','curves.family','image','image.fromSegments', ...
        'image.timeAverage','image.frame','heat.ft','heat.fpct', ...
        'heat.positionTime','video','video.fromSegments'};
 end
@@ -311,6 +343,7 @@ switch char(nm)
     case 'harmonic',                           c = 'harmonic';
     case 'plane',                              c = 'frame';
     case 'line',                               c = 'position';
+    case 'epoch',                              c = 'epoch';
     otherwise,                                 c = '';
 end
 end
@@ -342,6 +375,7 @@ fD = dimOfClass(d,'f');
 pD = dimOfClass(d,'pct');
 hD = dimOfClass(d,'harmonic');
 lD = dimOfClass(d,'position');
+eD = dimOfClass(d,'epoch');
 % commonMask's plane needs no name of its own: the only plots it reaches are the
 % scrubbed ones, which take their dimension from scrubAx.
 
@@ -379,6 +413,14 @@ switch plotId
         ax.x = mkAx(hD, 'harmonic', 'ordinal', hD, A);
         ax.y = mkVar(vLab);
         ax.reduce = drawableDims(d, {hD});
+
+    case 'curve.epoch'
+        % The x is the repetition NUMBER, which is what the axis registry carries and
+        % what runNVC's own trials page puts on its x.  Ordinal rather than linear:
+        % there is no repetition 2.5, and the ticks should not suggest one.
+        ax.x = mkAx(eD, 'epoch', 'ordinal', eD, A);
+        ax.y = mkVar(vLab);
+        ax.reduce = drawableDims(d, {eD});
 
     case 'curve.position'
         % Two shapes reach here: a per-line leaf, whose x IS the line axis, and an
@@ -593,6 +635,11 @@ switch char(nm)
     case 'harmonic',                           s = 'harmonic';
     case 'plane',                              s = 'mask layer';
     case 'line',                               s = 'position along the vessel';
+    % THE AXIS ID IS 'epoch' AND THE READER NEVER SEES IT.  Every user-visible string
+    % this step writes - the registry labels, the editor, the schema's own words -
+    % says REPETITION, and an axis labelled with its own internal name was the one
+    % place that broke.  Found by opening the window on a real recording, 06-Aug-2026.
+    case 'epoch',                              s = 'stimulus repetition';
     otherwise,                                 s = char(nm);
 end
 end
@@ -602,6 +649,7 @@ switch char(nm)
     case 'f',         s = 'log';
     case 'harmonic',  s = 'ordinal';
     case 'plane',     s = 'ordinal';
+    case 'epoch',     s = 'ordinal';
     otherwise,        s = 'linear';
 end
 end

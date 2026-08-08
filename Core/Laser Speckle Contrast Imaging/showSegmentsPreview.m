@@ -1,13 +1,15 @@
 %showSegmentsPreview - draw the segments report page into a figure
 %
-%   showSegmentsPreview(fh,dataCube,cMask,sMap,isK)
-%   showSegmentsPreview(fh,dataCube,cMask,sMap,isK,dvsMap)
+%   showSegmentsPreview(fh,dataCube,cMask,sMap,polarity)
+%   showSegmentsPreview(fh,dataCube,cMask,sMap,polarity,dvsMap)
 %
 % DESCRIPTION
 %   Draws a two-tile preview of a segmented recording into the figure it is given.
-%   The left tile is the enhanced mean image (percentile-scaled, inverted for _K /
-%   min-offset for _I, background-subtracted by enhanceForDisplay, then masked to
-%   cMask>0); the right tile is the golden-angle colour-mapped segment label map
+%   The left tile is the enhanced mean image (percentile-scaled, then brought to
+%   vessels-bright-on-a-zero-floor either way round - inverted when the vessels are
+%   dark, floor-subtracted when they are already bright - background-subtracted by
+%   enhanceForDisplay, then masked to cMask>0); the right tile is the
+%   golden-angle colour-mapped segment label map
 %   sMap.  This is the segments preview shared by the static runSegmentation and the
 %   dynamic runDynamicSegmentation - lifted verbatim from the runSegmentation local
 %   it used to be, mirroring how the enhancement idiom became enhanceForDisplay.
@@ -37,7 +39,9 @@
 %   dataCube  source data cube; mean over dim 3 builds the background image.
 %   cMask     merged category mask; cMask>0 masks the background image.
 %   sMap      indexed segment label map (right tile; 0 = background).
-%   isK       true for contrast (_K) data (imcomplement), false for intensity (_I).
+%   polarity  'bright' or 'dark' - are the vessels brighter or darker than the
+%             tissue, from getVesselPolarity.  Both arms end with the vessels
+%             bright against a zero floor, which is what the colour scale assumes.
 %
 % OPTIONAL
 %   dvsMap    accepted dynamic-segment label map; its nonzero boundaries are drawn
@@ -50,21 +54,21 @@
 %   enhanceForDisplay and MATLAB's Image Processing Toolbox (visboundaries,
 %   hsv2rgb, mat2gray, imcomplement).
 %
-% See also: runSegmentation, runDynamicSegmentation, enhanceForDisplay,
-%           reportFigure, reportSave
+% See also: getVesselPolarity, runSegmentation, runDynamicSegmentation,
+%           enhanceForDisplay, reportFigure, reportSave
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 31-July-2026
+% Last revision: 08-August-2026
 
-function showSegmentsPreview(fh,dataCube,cMask,sMap,isK,dvsMap)
+function showSegmentsPreview(fh,dataCube,cMask,sMap,polarity,dvsMap)
 
 if nargin<6, dvsMap=[]; end
 
 img=mean(dataCube,3);
 img=mat2gray(img,double(prctile(img(cMask(:)>0),[5,99])));
-if isK
+if strcmp(polarity,'dark')
     img=imcomplement(img);
 else
     img=img-min(img(cMask(:)>0 & img(:)>0));

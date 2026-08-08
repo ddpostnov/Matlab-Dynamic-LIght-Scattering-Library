@@ -1,44 +1,76 @@
 %getPixelCategories - binarize an LSCI mean image into a 5-level category mask
 %
 %   [cMask,edgeSize,mask,imgVis] = getPixelCategories(imgIni,regionsMask, ...
-%                                                     existingMask,isK,s)
+%                                                     existingMask,product,polarity,s)
 %
 % DESCRIPTION
 %   The automatic categorization core lifted verbatim from runCategories: it turns
 %   a mean LSCI image into the five-level categorical mask cMask
 %     0 background | 1 parenchyma | 2 unsegmented | 3 external wall |
 %     4 internal wall | 5 lumen
-%   The pipeline is: getEdgeSizeSLSCI -> per-modality prep -> enhanceForDisplay ->
-%   trust mask -> per-region normalisation -> anisotropic diffusion -> multiscale
-%   top-hat + adaptive threshold -> morphological cleanup.  Only the automatic math
-%   lives here; the file I/O and the interactive region GUI stay in the wrapper,
-%   which supplies regionsMask.
+%   The pipeline is: edge size -> polarity prep -> enhanceForDisplay -> trust mask ->
+%   per-region normalisation -> anisotropic diffusion -> multiscale top-hat +
+%   adaptive threshold -> morphological cleanup.  Only the automatic math lives
+%   here; the file I/O and the interactive region GUI stay in the wrapper, which
+%   supplies regionsMask.
+%
+%   FOUR DECISIONS, AND THEY DO NOT MOVE TOGETHER.  Until 2026-08-08 all four were
+%   taken by one boolean called isK, which meant "this came from a _K file" - a
+%   single name for four unrelated questions that were only ever asked of the same
+%   files.  The fluorescence branch broke that coincidence, so each one now says
+%   what it follows:
+%
+%     inversion       follows POLARITY.  In speckle contrast fast flow is dark, so
+%                     the image is inverted to look for vessels as bright ridges.
+%                     A plasma-labelled fluorescence recording is already the right
+%                     way round and inverting it would segment the tissue BETWEEN
+%                     the vessels.  Which way round an intensity recording is, is
+%                     the operator's answer, not the file name's - see
+%                     getVesselPolarity.
+%     edge size       follows the PRODUCT TOKEN.  getEdgeSizeSLSCI measures the
+%                     border a spatial-contrast kernel leaves round the frame; a
+%                     fluorescence frame has no such border whichever way round its
+%                     vessels are, so this is 0 for '_I' and stays that way.
+%     trust mask      follows the PRODUCT TOKEN.  s.trustLimitsK bounds a CONTRAST,
+%                     and there is no contrast on an intensity product to bound -
+%                     the intensity twin does not even carry the setting.  An
+%                     intensity product's trust mask is left fully open unless the
+%                     caller hands one in as existingMask.
+%     diffusion       follows s.diffusionSchedule, and is the one of the four that
+%                     is a TUNING choice rather than a fact about the file.  The
+%                     multi-scale schedule was written for speckle contrast's noise
+%                     and may well suit a fluorescence image too; nobody has
+%                     measured it, so it is a setting with per-step defaults that
+%                     reproduce what each branch did before, and moving it is a
+%                     measurement somebody can now make without a code change.
 %
 %   The trust mask is automatic (not interactive): an existing same-size mask
 %   (existingMask, typically results.mask from runContrastFromRLS) is reused as-is,
-%   otherwise - for contrast (_K) data - it is derived from the ordfilt2 min/max
+%   otherwise - for contrast ('K') data - it is derived from the ordfilt2 min/max
 %   of imgIni against s.trustLimitsK.  The mean image imgIni (NOT the enhanced
 %   image) drives that ordfilt2, so it is passed alongside the enhancement.
 %
 % INPUT
 %   imgIni        2-D mean image (results.imgK for contrast, results.imgI for
-%                 intensity).  Used both for edge-size / enhancement and, for _K,
+%                 intensity).  Used both for edge-size / enhancement and, for 'K',
 %                 for the trust-mask ordfilt2.
 %   regionsMask   integer label image (0 = excluded).  1..N select regions to
 %                 categorize and normalise; the wrapper builds it (GUI or whole
 %                 window).  Its size sets the working frame.
 %   existingMask  a mask to reuse verbatim (e.g. results.mask), or [] to derive
 %                 one.  Reused only when it matches size(imgIni).
-%   isK           true for contrast (_K) data, false for intensity (_I).  Selects
-%                 the imcomplement + multi-scale diffusion schedule (_K) versus the
-%                 plain path (_I); do NOT sniff the file name inside the core.
-%   s             parameter struct.  Reads: iniSizeN, trustLimitsK (K only),
-%                 lSizeN, sSizeN, sens, deSens, sSizeScale, lThinN, imOpen,
-%                 iEdge, eEdge.
+%   product       'K' for contrast, 'I' for intensity.  The wrapper reads it off
+%                 the file name through getVesselPolarity; do NOT sniff the file
+%                 name inside the core.
+%   polarity      'bright' or 'dark' - are the vessels brighter or darker than the
+%                 tissue.  'dark' clips the extreme percentiles and inverts.
+%   s             parameter struct.  Reads: iniSizeN, trustLimitsK ('K' only),
+%                 diffusionSchedule, lSizeN, sSizeN, sens, deSens, sSizeScale,
+%                 lThinN, imOpen, iEdge, eEdge.
 %
 % OUTPUT
 %   cMask     int32 five-level category mask, size(imgIni).
-%   edgeSize  border width (px) getEdgeSizeSLSCI found (0 for _I); the scalar the
+%   edgeSize  border width (px) getEdgeSizeSLSCI found (0 for 'I'); the scalar the
 %             wrapper stores in settings and the label stage reuses.
 %   mask      double 0/1 trust-and-region mask BEFORE the edge trim; the wrapper
 %             turns it into results.mask via (mask == (regionsMask>0)).
@@ -49,25 +81,33 @@
 %   (ordfilt2, imdiffuseest, imdiffusefilt, imtophat, adaptthresh, imbinarize,
 %   bwareaopen, imclose, imopen, imdilate, bwmorph, padarray, mat2gray).
 %
-% See also: runSegmentation, getSegmentationLabels, enhanceForDisplay, getEdgeSizeSLSCI
+% See also: getVesselPolarity, runSegmentation, getSegmentationLabels,
+%           enhanceForDisplay, getEdgeSizeSLSCI
 %
 % Author: Dmitry D Postnov, CFIN, Aarhus University (dpostnov@cfin.au.dk)
 % Copyright 2026 Dmitry D Postnov, Aarhus University.
 % Header generation and script formatting were done with Claude Code.
-% Last revision: 26-July-2026
+% Last revision: 08-August-2026
 
-function [cMask,edgeSize,mask,imgVis] = getPixelCategories(imgIni,regionsMask,existingMask,isK,s)
+function [cMask,edgeSize,mask,imgVis] = getPixelCategories(imgIni,regionsMask,existingMask,product,polarity,s)
 
-% --- edge size + per-modality preparation of the mean image ---
-if isK
+isContrast=strcmp(product,'K');
+
+% --- the SLSCI border, which only a contrast image has ---
+if isContrast
     edgeSize=getEdgeSizeSLSCI(imgIni,0.8);
-    img=imgIni;
+else
+    edgeSize=0;
+end
+
+% --- polarity: everything after this looks for vessels as BRIGHT ridges ---
+% The percentile clip belongs to the inversion rather than beside it: one hot pixel
+% becomes an extreme low after imcomplement and drags the enhancement with it.
+img=imgIni;
+if strcmp(polarity,'dark')
     img(img(:)>prctile(img(:),99))=prctile(img(:),99);
     img(img(:)<prctile(img(:),1))=prctile(img(:),1);
     img=imcomplement(img);
-else
-    edgeSize=0;
-    img=imgIni;
 end
 
 fSize=floor((min(size(img))./20))*2+1;
@@ -75,11 +115,13 @@ img(isnan(img))=0;
 img=enhanceForDisplay(img,fSize,min(15,fSize));
 imgVis=img;
 
-% --- trust mask: reuse an existing same-size mask, else contrast-limit (K only) ---
+% --- trust mask: reuse an existing same-size mask, else contrast-limit ('K' only) ---
+% s.trustLimitsK bounds a CONTRAST, so it is the product token that decides this and
+% not the polarity: a dark-vessel intensity image has no contrast to bound either.
 mask=ones(size(img));
 if ~isempty(existingMask) && size(existingMask,1)==size(img,1) && size(existingMask,2)==size(img,2)
     mask=double(existingMask>0);
-elseif isK
+elseif isContrast
     mask=mask.*ordfilt2(imgIni,1,ones(s.iniSizeN),'symmetric')>=s.trustLimitsK(1) & ordfilt2(imgIni,s.iniSizeN.*s.iniSizeN,ones(s.iniSizeN),'symmetric')<=s.trustLimitsK(2);
 end
 
@@ -101,7 +143,12 @@ img(isnan(img))=0;
 % --- anisotropic diffusion (padded) ---
 img=padarray(img,[s.lSizeN,s.lSizeN],'symmetric');
 [gradThresh,numIter] = imdiffuseest(img,'ConductionMethod','quadratic');
-if isK
+% A TUNING CHOICE, AND THE ONLY ONE OF THE FOUR THAT IS.  'multiscale' adds nine
+% coarse-to-fine passes at falling gradient thresholds; it was written for speckle
+% contrast, which is a ratio of two small-kernel statistics and therefore noisy.
+% Whether a fluorescence mean image wants it too is a measurement nobody has made,
+% so it is a setting and each step's preset reproduces what that branch did before.
+if strcmp(s.diffusionSchedule,'multiscale')
     img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',[gradThresh,(9/10*min(gradThresh)):(-min(gradThresh)/10):(min(gradThresh)/10)],'NumberOfIterations',numIter+9);
 else
     img = imdiffusefilt(img,'ConductionMethod','quadratic', 'GradientThreshold',gradThresh,'NumberOfIterations',numIter);
